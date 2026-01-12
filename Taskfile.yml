@@ -1,0 +1,139 @@
+version: '3'
+
+vars:
+  API_DIR: ./api
+  WEB_DIR: ./web
+
+tasks:
+  # API tasks
+  api:deps:
+    desc: Download Go dependencies
+    dir: '{{.API_DIR}}'
+    cmds:
+      - go mod tidy
+      - go mod download
+
+  api:build:
+    desc: Build the API
+    dir: '{{.API_DIR}}'
+    env:
+      CGO_ENABLED: "1"
+    cmds:
+      - go build -o ../bin/refyne-api ./cmd/refyne-api
+
+  api:dev:
+    desc: Run API in development mode with hot reload
+    dir: '{{.API_DIR}}'
+    dotenv: ['.env', '.env.local']
+    env:
+      CGO_ENABLED: "1"
+      LOG_FORMAT: text
+      DATABASE_URL: file:../refyne-dev.db
+      CORS_ORIGINS: http://localhost:3000
+    cmds:
+      - air
+
+  api:run:
+    desc: Run API without hot reload
+    dir: '{{.API_DIR}}'
+    dotenv: ['.env', '.env.local']
+    env:
+      CGO_ENABLED: "1"
+      LOG_FORMAT: text
+      DATABASE_URL: file:../refyne-dev.db
+      CORS_ORIGINS: http://localhost:3000
+    cmds:
+      - go run ./cmd/refyne-api
+
+  api:test:
+    desc: Run API tests
+    dir: '{{.API_DIR}}'
+    cmds:
+      - go test -v ./...
+
+  api:lint:
+    desc: Lint API code
+    dir: '{{.API_DIR}}'
+    cmds:
+      - golangci-lint run
+
+  # Web tasks
+  web:deps:
+    desc: Install frontend dependencies
+    dir: '{{.WEB_DIR}}'
+    cmds:
+      - npm install
+
+  web:build:
+    desc: Build frontend
+    dir: '{{.WEB_DIR}}'
+    cmds:
+      - npm run build
+
+  web:dev:
+    desc: Run frontend in development mode
+    dir: '{{.WEB_DIR}}'
+    cmds:
+      - npm run dev
+
+  web:lint:
+    desc: Lint frontend code
+    dir: '{{.WEB_DIR}}'
+    cmds:
+      - npm run lint
+
+  # Database tasks
+  db:migrate:
+    desc: Run database migrations (happens automatically on startup)
+    dir: '{{.API_DIR}}'
+    cmds:
+      - echo "Migrations run automatically on API startup"
+
+  # Combined tasks
+  deps:
+    desc: Install all dependencies
+    cmds:
+      - task: api:deps
+      - task: web:deps
+
+  build:
+    desc: Build everything
+    cmds:
+      - task: api:build
+      - task: web:build
+
+  dev:
+    desc: Start development servers (run in separate terminals)
+    cmds:
+      - echo "Run 'task api:dev' in one terminal"
+      - echo "Run 'task web:dev' in another terminal"
+
+  test:
+    desc: Run all tests
+    cmds:
+      - task: api:test
+
+  # Docker tasks
+  docker:build:
+    desc: Build Docker images
+    cmds:
+      - docker build -f deployments/docker/Dockerfile.api -t refyne-api:latest .
+      - docker build -f deployments/docker/Dockerfile.web -t refyne-web:latest .
+
+  docker:up:
+    desc: Start Docker Compose
+    cmds:
+      - docker-compose -f deployments/docker/docker-compose.yml up -d
+
+  docker:down:
+    desc: Stop Docker Compose
+    cmds:
+      - docker-compose -f deployments/docker/docker-compose.yml down
+
+  # Cleanup
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm -rf bin/
+      - rm -rf web/.next/
+      - rm -rf web/node_modules/

@@ -1,0 +1,26 @@
+# Binaries
+bin/
+*.exe
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
+# Environment files (keep .env.example)
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/

@@ -1,0 +1,18 @@
+# Binary
+/refyne-api
+
+# Environment
+.env
+.env.local
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Test artifacts
+test.db
+coverage.out
+
+# Air hot reload
+tmp/
