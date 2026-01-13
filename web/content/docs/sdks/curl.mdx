@@ -1,0 +1,133 @@
+---
+title: cURL / HTTP
+description: Direct REST API usage with cURL
+---
+
+Use the Refyne API directly with cURL or any HTTP client.
+
+## Base URL
+
+```
+https://api.refyne.uk
+```
+
+## Authentication
+
+Include your API key in the `Authorization` header:
+
+```bash
+-H "Authorization: Bearer YOUR_API_KEY"
+```
+
+## Extract
+
+Extract data from a single page:
+
+```bash
+curl -X POST https://api.refyne.uk/api/v1/extract \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com/product",
+    "schema": {
+      "name": "string",
+      "price": "number",
+      "description": "string"
+    }
+  }'
+```
+
+## Crawl
+
+Start a multi-page crawl job:
+
+```bash
+curl -X POST https://api.refyne.uk/api/v1/crawl \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com/products",
+    "schema": {
+      "name": "string",
+      "price": "number"
+    },
+    "options": {
+      "follow_selector": "a.product-link",
+      "max_pages": 20
+    }
+  }'
+```
+
+## Check Job Status
+
+```bash
+curl https://api.refyne.uk/api/v1/jobs/JOB_ID \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+## Get Job Results
+
+```bash
+# Individual results
+curl https://api.refyne.uk/api/v1/jobs/JOB_ID/results \
+  -H "Authorization: Bearer YOUR_API_KEY"
+
+# Merged results
+curl "https://api.refyne.uk/api/v1/jobs/JOB_ID/results?merge=true" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+## Analyze Site
+
+```bash
+curl -X POST https://api.refyne.uk/api/v1/analyze \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com",
+    "depth": 1
+  }'
+```
+
+## API Keys
+
+List your API keys:
+
+```bash
+curl https://api.refyne.uk/api/v1/keys \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+Create a new API key:
+
+```bash
+curl -X POST https://api.refyne.uk/api/v1/keys \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Production Key"
+  }'
+```
+
+## Error Responses
+
+Errors return JSON with an `error` field:
+
+```json
+{
+  "error": "Invalid API key",
+  "status": 401
+}
+```
+
+## Rate Limits
+
+Rate limit info is returned in response headers:
+
+```
+X-RateLimit-Limit: 60
+X-RateLimit-Remaining: 59
+X-RateLimit-Reset: 1705312800
+```
+
+For full API reference, see the [API Reference](/docs/api-reference).

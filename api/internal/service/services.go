@@ -26,6 +26,9 @@ type Services struct {
 	Schema     *SchemaService
 	Billing    *BillingService
 	Admin      *AdminService
+	Analyzer   *AnalyzerService
+	Storage    *StorageService
+	UserLLM    *UserLLMService
 }
 
 // NewServices creates all service instances.
@@ -58,12 +61,20 @@ func NewServices(cfg *config.Config, repos *repository.Repositories, logger *slo
 		return nil, fmt.Errorf("failed to create LLM config service: %w", err)
 	}
 
-	// Create encryptor for admin service (to encrypt service keys)
+	// Create encryptor for admin service and user LLM service (to encrypt service keys)
 	var encryptor *crypto.Encryptor
 	if len(cfg.EncryptionKey) > 0 {
 		encryptor, _ = crypto.NewEncryptor(cfg.EncryptionKey)
 	}
 	adminSvc := NewAdminServiceWithClerk(repos, encryptor, cfg.ClerkSecretKey, logger)
+	analyzerSvc := NewAnalyzerServiceWithBilling(cfg, repos, billingSvc, logger)
+	userLLMSvc := NewUserLLMService(repos, encryptor, logger)
+
+	// Create storage service (Tigris/S3-compatible)
+	storageSvc, err := NewStorageService(cfg, logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create storage service: %w", err)
+	}
 
 	return &Services{
 		Auth:       authSvc,
@@ -77,5 +88,8 @@ func NewServices(cfg *config.Config, repos *repository.Repositories, logger *slo
 		Schema:     schemaSvc,
 		Billing:    billingSvc,
 		Admin:      adminSvc,
+		Analyzer:   analyzerSvc,
+		Storage:    storageSvc,
+		UserLLM:    userLLMSvc,
 	}, nil
 }

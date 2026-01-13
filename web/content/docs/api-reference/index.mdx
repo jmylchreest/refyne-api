@@ -1,0 +1,101 @@
+---
+title: API Reference
+description: Complete API reference for Refyne
+---
+
+Interactive API documentation with code examples and a testing playground.
+
+## Base URL
+
+```
+https://api.refyne.uk
+```
+
+## Authentication
+
+All endpoints require authentication via Bearer token:
+
+```bash
+Authorization: Bearer YOUR_API_KEY
+```
+
+Get your API key from the [Dashboard](/dashboard).
+
+## Endpoint Categories
+
+<Cards>
+  <Card title="Extraction" href="/docs/api-reference/extraction">
+    Extract structured data from single pages
+  </Card>
+  <Card title="Crawling" href="/docs/api-reference/crawling">
+    Multi-page crawling and job creation
+  </Card>
+  <Card title="Jobs" href="/docs/api-reference/jobs">
+    Job status and results retrieval
+  </Card>
+  <Card title="Schemas" href="/docs/api-reference/schemas">
+    Schema catalog management
+  </Card>
+  <Card title="Sites" href="/docs/api-reference/sites">
+    Saved site configuration
+  </Card>
+  <Card title="Usage" href="/docs/api-reference/usage">
+    Usage statistics and billing
+  </Card>
+  <Card title="API Keys" href="/docs/api-reference/api-keys">
+    API key management
+  </Card>
+  <Card title="LLM Configuration" href="/docs/api-reference/llm-configuration">
+    LLM provider and fallback chain settings
+  </Card>
+</Cards>
+
+## Rate Limits
+
+Rate limits depend on your subscription tier:
+
+| Tier | Requests/min | Concurrent Jobs |
+|------|--------------|-----------------|
+| Free | 10 | 1 |
+| Standard | 60 | 5 |
+| Pro | 300 | 20 |
+
+Rate limit info is returned in response headers:
+
+```
+X-RateLimit-Limit: 60
+X-RateLimit-Remaining: 59
+X-RateLimit-Reset: 1705312800
+```
+
+## Error Responses
+
+All errors return JSON with an `error` field:
+
+```json
+{
+  "error": "Invalid API key",
+  "status": 401
+}
+```
+
+Common HTTP status codes:
+
+| Code | Description |
+|------|-------------|
+| 400 | Bad Request - Invalid parameters |
+| 401 | Unauthorized - Invalid or missing API key |
+| 403 | Forbidden - Insufficient permissions |
+| 404 | Not Found - Resource doesn't exist |
+| 429 | Too Many Requests - Rate limit exceeded |
+| 500 | Internal Server Error |
+
+## OpenAPI Specification
+
+The full OpenAPI specification is available at:
+
+```
+https://api.refyne.uk/openapi.json
+```
+
+Import this into tools like Postman, Insomnia, or any OpenAPI-compatible client.

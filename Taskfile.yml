@@ -3,6 +3,20 @@ version: '3'
 vars:
   API_DIR: ./api
   WEB_DIR: ./web
+  VERSION_PKG: github.com/jmylchreest/refyne-api/internal/version
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo "0.0.0-dev"
+  COMMIT:
+    sh: git rev-parse --short HEAD 2>/dev/null || echo "unknown"
+  DATE:
+    sh: date -u +"%Y-%m-%dT%H:%M:%SZ"
+  DIRTY:
+    sh: git diff --quiet 2>/dev/null && echo "false" || echo "true"
+  LDFLAGS: >-
+    -X {{.VERSION_PKG}}.Version={{.VERSION}}
+    -X {{.VERSION_PKG}}.Commit={{.COMMIT}}
+    -X {{.VERSION_PKG}}.Date={{.DATE}}
+    -X {{.VERSION_PKG}}.Dirty={{.DIRTY}}
 
 tasks:
   # API tasks
@@ -14,12 +28,20 @@ tasks:
       - go mod download
 
   api:build:
-    desc: Build the API
+    desc: Build the API with version info
     dir: '{{.API_DIR}}'
     env:
       CGO_ENABLED: "1"
     cmds:
-      - go build -o ../bin/refyne-api ./cmd/refyne-api
+      - go build -ldflags "{{.LDFLAGS}}" -o ../bin/refyne-api ./cmd/refyne-api
+
+  api:build-prod:
+    desc: Build optimized API binary for production
+    dir: '{{.API_DIR}}'
+    env:
+      CGO_ENABLED: "0"
+    cmds:
+      - go build -trimpath -ldflags "-s -w {{.LDFLAGS}}" -o ../bin/refyne-api ./cmd/refyne-api
 
   api:dev:
     desc: Run API in development mode with hot reload
@@ -28,6 +50,7 @@ tasks:
     env:
       CGO_ENABLED: "1"
       LOG_FORMAT: text
+      LOG_LEVEL: debug
       DATABASE_URL: file:../refyne-dev.db
       CORS_ORIGINS: http://localhost:3000
     cmds:
@@ -40,10 +63,11 @@ tasks:
     env:
       CGO_ENABLED: "1"
       LOG_FORMAT: text
+      LOG_LEVEL: debug
       DATABASE_URL: file:../refyne-dev.db
       CORS_ORIGINS: http://localhost:3000
     cmds:
-      - go run ./cmd/refyne-api
+      - go run -ldflags "{{.LDFLAGS}}" ./cmd/refyne-api
 
   api:test:
     desc: Run API tests
@@ -137,3 +161,12 @@ tasks:
       - rm -rf bin/
       - rm -rf web/.next/
       - rm -rf web/node_modules/
+
+  # Version info
+  version:
+    desc: Show version information
+    cmds:
+      - echo "Version{{":"}} {{.VERSION}}"
+      - echo "Commit{{":"}}  {{.COMMIT}}"
+      - echo "Date{{":"}}    {{.DATE}}"
+      - echo "Dirty{{":"}}   {{.DIRTY}}"

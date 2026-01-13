@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jmylchreest/refyne-api/internal/models"
 	"github.com/jmylchreest/refyne-api/internal/repository"
 	"github.com/jmylchreest/refyne-api/internal/service"
@@ -15,8 +17,10 @@ import (
 // Worker processes background jobs.
 type Worker struct {
 	jobRepo       repository.JobRepository
+	jobResultRepo repository.JobResultRepository
 	extractionSvc *service.ExtractionService
 	webhookSvc    *service.WebhookService
+	storageSvc    *service.StorageService
 	pollInterval  time.Duration
 	concurrency   int
 	stop          chan struct{}
@@ -33,8 +37,10 @@ type Config struct {
 // New creates a new worker.
 func New(
 	jobRepo repository.JobRepository,
+	jobResultRepo repository.JobResultRepository,
 	extractionSvc *service.ExtractionService,
 	webhookSvc *service.WebhookService,
+	storageSvc *service.StorageService,
 	cfg Config,
 	logger *slog.Logger,
 ) *Worker {
@@ -49,8 +55,10 @@ func New(
 	}
 	return &Worker{
 		jobRepo:       jobRepo,
+		jobResultRepo: jobResultRepo,
 		extractionSvc: extractionSvc,
 		webhookSvc:    webhookSvc,
+		storageSvc:    storageSvc,
 		pollInterval:  cfg.PollInterval,
 		concurrency:   cfg.Concurrency,
 		stop:          make(chan struct{}),
@@ -178,19 +186,80 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 
 	// Set defaults
 	if options.MaxDepth == 0 {
-		options.MaxDepth = 1
+		options.MaxDepth = 2 // Default to following links one level from seed
 	}
-	if options.MaxPages == 0 {
-		options.MaxPages = 10
-	}
+	// Note: MaxPages == 0 means no limit, don't override it
 	if options.MaxURLs == 0 {
 		options.MaxURLs = 50
 	}
 	if options.Concurrency == 0 {
 		options.Concurrency = 3
 	}
+	// SameDomainOnly defaults to true (only follow links on same domain)
+	// Note: Go zero value for bool is false, so we check if it wasn't explicitly set
+	// by checking if the JSON had any content at all
+	if job.CrawlOptionsJSON == "" || !strings.Contains(job.CrawlOptionsJSON, "same_domain_only") {
+		options.SameDomainOnly = true
+	}
 
-	result, err := w.extractionSvc.Crawl(ctx, job.UserID, service.CrawlInput{
+	// Track page count incrementally for SSE updates
+	var pageCountMu sync.Mutex
+	pageCount := 0
+
+	// Callback to save each result incrementally for SSE streaming
+	resultCallback := func(pageResult service.PageResult) error {
+		now := time.Now()
+		dataJSON := ""
+		if pageResult.Data != nil {
+			if d, err := json.Marshal(pageResult.Data); err == nil {
+				dataJSON = string(d)
+			}
+		}
+
+		// Determine crawl status based on error
+		crawlStatus := models.CrawlStatusCompleted
+		if pageResult.Error != "" {
+			crawlStatus = models.CrawlStatusFailed
+		} else {
+			// Only count successful extractions
+			pageCountMu.Lock()
+			pageCount++
+			currentCount := pageCount
+			pageCountMu.Unlock()
+
+			// Update job's page count in database for SSE polling
+			job.PageCount = currentCount
+			if err := w.jobRepo.Update(ctx, job); err != nil {
+				w.logger.Error("failed to update job page count", "job_id", job.ID, "error", err)
+			}
+		}
+
+		jobResult := &models.JobResult{
+			ID:                uuid.NewString(),
+			JobID:             job.ID,
+			URL:               pageResult.URL,
+			ParentURL:         pageResult.ParentURL,
+			Depth:             pageResult.Depth,
+			CrawlStatus:       crawlStatus,
+			DataJSON:          dataJSON,
+			ErrorMessage:      pageResult.Error,
+			TokenUsageInput:   pageResult.TokenUsageInput,
+			TokenUsageOutput:  pageResult.TokenUsageOutput,
+			FetchDurationMs:   pageResult.FetchDurationMs,
+			ExtractDurationMs: pageResult.ExtractDurationMs,
+			DiscoveredAt:      &now,
+			CompletedAt:       &now,
+			CreatedAt:         now,
+		}
+
+		if err := w.jobResultRepo.Create(ctx, jobResult); err != nil {
+			w.logger.Error("failed to save job result", "job_id", job.ID, "url", pageResult.URL, "error", err)
+		}
+
+		return nil
+	}
+
+	result, err := w.extractionSvc.CrawlWithCallback(ctx, job.UserID, service.CrawlInput{
 		URL:    job.URL,
 		Schema: json.RawMessage(job.SchemaJSON),
 		Options: service.CrawlOptions{
@@ -205,25 +274,51 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 			SameDomainOnly:   options.SameDomainOnly,
 			ExtractFromSeeds: options.ExtractFromSeeds,
 		},
-	})
+	}, resultCallback)
 	if err != nil {
 		w.failJob(ctx, job, err.Error())
 		return
 	}
 
-	// Update job with results
+	// Update job with final results
 	resultData, _ := json.Marshal(result.Results)
-	now := time.Now()
+	completedAt := time.Now()
 	job.Status = models.JobStatusCompleted
 	job.PageCount = result.PageCount
 	job.TokenUsageInput = result.TotalTokensInput
 	job.TokenUsageOutput = result.TotalTokensOutput
 	job.CostCredits = result.TotalCredits
 	job.ResultJSON = string(resultData)
-	job.CompletedAt = &now
+	job.CompletedAt = &completedAt
 
 	if err := w.jobRepo.Update(ctx, job); err != nil {
 		w.logger.Error("failed to update job", "job_id", job.ID, "error", err)
+	}
+
+	// Store results to object storage (Tigris) for later retrieval
+	if w.storageSvc != nil && w.storageSvc.IsEnabled() {
+		jobResults := &service.JobResults{
+			JobID:       job.ID,
+			UserID:      job.UserID,
+			Status:      string(job.Status),
+			TotalPages:  result.PageCount,
+			CompletedAt: completedAt,
+			Results:     make([]service.JobResultData, 0, len(result.PageResults)),
+		}
+
+		for _, pageResult := range result.PageResults {
+			dataJSON, _ := json.Marshal(pageResult.Data)
+			jobResults.Results = append(jobResults.Results, service.JobResultData{
+				ID:        pageResult.URL, // Use URL as ID for now
+				URL:       pageResult.URL,
+				Data:      dataJSON,
+				CreatedAt: completedAt,
+			})
+		}
+
+		if err := w.storageSvc.StoreJobResults(ctx, jobResults); err != nil {
+			w.logger.Error("failed to store job results to object storage", "job_id", job.ID, "error", err)
+		}
 	}
 
 	// Send webhook if configured

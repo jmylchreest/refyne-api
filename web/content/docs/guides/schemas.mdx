@@ -1,0 +1,127 @@
+---
+title: Schemas
+description: Define schemas for consistent data extraction
+---
+
+Schemas define the structure of the data you want to extract. Well-designed schemas produce better, more consistent results.
+
+## Schema Basics
+
+A schema is a JSON object describing the data structure:
+
+```json
+{
+  "title": "string",
+  "price": "number",
+  "available": "boolean"
+}
+```
+
+## Type Reference
+
+### Primitives
+
+```json
+{
+  "name": "string",
+  "count": "number",
+  "active": "boolean"
+}
+```
+
+### Arrays
+
+```json
+{
+  "tags": ["string"],
+  "prices": ["number"],
+  "items": [{
+    "name": "string",
+    "qty": "number"
+  }]
+}
+```
+
+### Nested Objects
+
+```json
+{
+  "product": {
+    "name": "string",
+    "brand": {
+      "name": "string",
+      "country": "string"
+    }
+  }
+}
+```
+
+## Best Practices
+
+### Be Specific
+
+Instead of generic field names, use descriptive ones:
+
+```json
+// Good
+{
+  "product_name": "string",
+  "price_usd": "number",
+  "stock_quantity": "number"
+}
+
+// Less good
+{
+  "name": "string",
+  "price": "number",
+  "qty": "number"
+}
+```
+
+### Use Appropriate Types
+
+Match types to expected data:
+
+```json
+{
+  "rating": "number",        // 4.5
+  "rating_text": "string",   // "4.5 out of 5"
+  "review_count": "number"   // 1234
+}
+```
+
+### Handle Missing Data
+
+The LLM will return `null` for missing fields. Design schemas to handle this gracefully.
+
+## Schema Catalog
+
+Save and reuse schemas via the API:
+
+```bash
+# Create a schema
+curl -X POST https://api.refyne.uk/api/v1/schemas \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "E-commerce Product",
+    "schema_yaml": "name: string\nprice: number\ndescription: string"
+  }'
+```
+
+## YAML Format
+
+Schemas can also be defined in YAML for readability:
+
+```yaml
+name: string
+price: number
+description: string
+specifications:
+  - key: string
+    value: string
+reviews:
+  - author: string
+    rating: number
+    text: string
+```

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/tursodatabase/go-libsql"
@@ -23,8 +24,9 @@ func New(dsn string) (*sql.DB, error) {
 	tursoToken := os.Getenv("TURSO_AUTH_TOKEN")
 
 	var db *sql.DB
+	isTurso := tursoURL != "" && tursoToken != ""
 
-	if tursoURL != "" && tursoToken != "" {
+	if isTurso {
 		// Embedded replica mode: local file synced with remote Turso
 		dbPath := strings.TrimPrefix(dsn, "file:")
 		dbPath = strings.Split(dbPath, "?")[0] // Remove query params
@@ -37,6 +39,11 @@ func New(dsn string) (*sql.DB, error) {
 			return nil, fmt.Errorf("failed to create Turso connector: %w", err)
 		}
 		db = sql.OpenDB(connector)
+
+		// Turso handles write serialization on their servers
+		// Use generous connection pool for concurrent operations
+		db.SetMaxOpenConns(25)
+		db.SetMaxIdleConns(10)
 	} else {
 		// Local mode: file or http URL
 		var err error
@@ -44,11 +51,39 @@ func New(dsn string) (*sql.DB, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to open database: %w", err)
 		}
+
+		// Local SQLite: reads can be parallel, writes are serialized
+		// Use number of CPUs for reads, Go's sql.DB handles write serialization
+		maxConns := runtime.NumCPU()
+		if maxConns < 4 {
+			maxConns = 4
+		}
+		db.SetMaxOpenConns(maxConns)
+		db.SetMaxIdleConns(maxConns / 2)
 	}
 
-	// Enable foreign keys
-	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
+	// Configure SQLite PRAGMAs for performance and concurrency
+	// Note: PRAGMAs that return values must use QueryRow, not Exec
+	pragmas := []struct {
+		query string
+		name  string
+	}{
+		{"PRAGMA journal_mode = WAL", "WAL mode"},           // Better concurrency
+		{"PRAGMA busy_timeout = 30000", "busy timeout"},     // Wait 30s on lock
+		{"PRAGMA foreign_keys = ON", "foreign keys"},        // Referential integrity
+		{"PRAGMA synchronous = NORMAL", "synchronous mode"}, // Safe with WAL, faster
+		{"PRAGMA temp_store = memory", "temp store"},        // Faster temp tables
+	}
+
+	for _, p := range pragmas {
+		// Use QueryRow to handle PRAGMAs that return values
+		var result string
+		if err := db.QueryRow(p.query).Scan(&result); err != nil {
+			// Some PRAGMAs don't return values, try Exec as fallback
+			if _, execErr := db.Exec(p.query); execErr != nil {
+				return nil, fmt.Errorf("failed to set %s: %w", p.name, execErr)
+			}
+		}
 	}
 
 	// Test connection
@@ -79,4 +114,14 @@ func GetAppliedMigrations(db *sql.DB) ([]migrations.AppliedMigration, error) {
 // GetPendingMigrations returns migrations that haven't been applied yet.
 func GetPendingMigrations(db *sql.DB) ([]migrations.Migration, error) {
 	return migrations.GetPendingMigrations(db)
+}
+
+// GetLatestSchemaVersion returns the latest applied migration version.
+func GetLatestSchemaVersion(db *sql.DB) (string, error) {
+	return migrations.GetLatestVersion(db)
+}
+
+// GetMigrationCount returns the total number of applied migrations.
+func GetMigrationCount(db *sql.DB) (int, error) {
+	return migrations.GetMigrationCount(db)
 }

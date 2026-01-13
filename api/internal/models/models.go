@@ -50,6 +50,7 @@ type JobType string
 const (
 	JobTypeExtract JobType = "extract"
 	JobTypeCrawl   JobType = "crawl"
+	JobTypeAnalyze JobType = "analyze"
 )
 
 // Job represents an extraction or crawl job.
@@ -76,18 +77,36 @@ type Job struct {
 	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
+// CrawlStatus represents the crawl state of a URL in a job.
+type CrawlStatus string
+
+const (
+	CrawlStatusPending   CrawlStatus = "pending"   // Discovered but not yet crawled
+	CrawlStatusCrawling  CrawlStatus = "crawling"  // Currently being fetched/extracted
+	CrawlStatusCompleted CrawlStatus = "completed" // Successfully processed
+	CrawlStatusFailed    CrawlStatus = "failed"    // Failed to process
+	CrawlStatusSkipped   CrawlStatus = "skipped"   // Skipped (e.g., max depth/pages reached)
+)
+
 // JobResult represents a single result from a crawl job.
+// For crawl jobs, this also serves as the crawl map, tracking the
+// relationship between pages (parent_url) and their discovery depth.
 type JobResult struct {
-	ID                string    `json:"id"`
-	JobID             string    `json:"job_id"`
-	URL               string    `json:"url"`
-	DataJSON          string    `json:"data_json,omitempty"`
-	ErrorMessage      string    `json:"error_message,omitempty"`
-	TokenUsageInput   int       `json:"token_usage_input"`
-	TokenUsageOutput  int       `json:"token_usage_output"`
-	FetchDurationMs   int       `json:"fetch_duration_ms"`
-	ExtractDurationMs int       `json:"extract_duration_ms"`
-	CreatedAt         time.Time `json:"created_at"`
+	ID                string       `json:"id"`
+	JobID             string       `json:"job_id"`
+	URL               string       `json:"url"`
+	ParentURL         *string      `json:"parent_url,omitempty"`   // URL that discovered this one (nil for seed)
+	Depth             int          `json:"depth"`                  // 0 for seed URL, increments for each level
+	CrawlStatus       CrawlStatus  `json:"crawl_status"`           // pending, crawling, completed, failed, skipped
+	DataJSON          string       `json:"data_json,omitempty"`
+	ErrorMessage      string       `json:"error_message,omitempty"`
+	TokenUsageInput   int          `json:"token_usage_input"`
+	TokenUsageOutput  int          `json:"token_usage_output"`
+	FetchDurationMs   int          `json:"fetch_duration_ms"`
+	ExtractDurationMs int          `json:"extract_duration_ms"`
+	DiscoveredAt      *time.Time   `json:"discovered_at,omitempty"` // When URL was discovered
+	CompletedAt       *time.Time   `json:"completed_at,omitempty"`  // When processing finished
+	CreatedAt         time.Time    `json:"created_at"`
 }
 
 // UsageRecord represents a lean usage tracking record for billing.
@@ -149,6 +168,33 @@ type FallbackChainEntry struct {
 	Position  int       `json:"position"`       // Order in the chain (1, 2, 3...)
 	Provider  string    `json:"provider"`       // openrouter, anthropic, openai, ollama
 	Model     string    `json:"model"`          // Model identifier (e.g., "xiaomi/mimo-v2-flash:free")
+	IsEnabled bool      `json:"is_enabled"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// UserServiceKey represents a user-configured LLM provider API key.
+// Similar to ServiceKey but per-user. Models are specified in UserFallbackChainEntry.
+type UserServiceKey struct {
+	ID              string    `json:"id"`
+	UserID          string    `json:"user_id"` // Clerk user ID
+	Provider        string    `json:"provider"` // anthropic, openai, openrouter, ollama
+	APIKeyEncrypted string    `json:"-"`        // Encrypted API key
+	BaseURL         string    `json:"base_url,omitempty"` // For ollama or custom endpoints
+	IsEnabled       bool      `json:"is_enabled"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// UserFallbackChainEntry represents an entry in a user's personal fallback chain.
+// The extraction service tries each entry in order, using the user's configured
+// provider keys from UserServiceKey.
+type UserFallbackChainEntry struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"` // Clerk user ID
+	Position  int       `json:"position"` // Order in the chain (1, 2, 3...)
+	Provider  string    `json:"provider"` // anthropic, openai, openrouter, ollama
+	Model     string    `json:"model"`    // Model identifier
 	IsEnabled bool      `json:"is_enabled"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

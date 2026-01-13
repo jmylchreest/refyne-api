@@ -1,0 +1,1711 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Refyne API",
+    "version": "1.0.0",
+    "description": "LLM-powered web extraction API that transforms unstructured websites into clean, typed JSON."
+  },
+  "servers": [
+    {
+      "url": "https://api.refyne.uk",
+      "description": "Production API"
+    },
+    {
+      "url": "http://localhost:8080",
+      "description": "Local Development"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Extraction",
+      "description": "Single-page data extraction endpoints"
+    },
+    {
+      "name": "Analysis",
+      "description": "Website structure analysis and schema suggestions"
+    },
+    {
+      "name": "Crawling",
+      "description": "Multi-page crawling and job management"
+    },
+    {
+      "name": "Jobs",
+      "description": "Job status and results retrieval"
+    },
+    {
+      "name": "Schemas",
+      "description": "Schema catalog management"
+    },
+    {
+      "name": "Sites",
+      "description": "Saved site configuration"
+    },
+    {
+      "name": "Usage",
+      "description": "Usage statistics and billing"
+    },
+    {
+      "name": "API Keys",
+      "description": "API key management"
+    },
+    {
+      "name": "LLM Configuration",
+      "description": "LLM provider and model configuration"
+    }
+  ],
+  "paths": {
+    "/api/v1/extract": {
+      "post": {
+        "operationId": "extract",
+        "tags": ["Extraction"],
+        "summary": "Extract data from URL",
+        "description": "Extract structured data from a single webpage using an LLM. Define a schema specifying the data structure you want, and the API returns JSON matching that schema.",
+        "security": [{"Authorization": []}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExtractRequest"
+              },
+              "examples": {
+                "basic": {
+                  "summary": "Basic extraction",
+                  "value": {
+                    "url": "https://example.com/product/123",
+                    "schema": {
+                      "name": "string",
+                      "price": "number",
+                      "description": "string"
+                    }
+                  }
+                },
+                "with_llm_config": {
+                  "summary": "With custom LLM provider",
+                  "value": {
+                    "url": "https://example.com/product/123",
+                    "schema": {
+                      "name": "string",
+                      "price": "number"
+                    },
+                    "llm_config": {
+                      "provider": "anthropic",
+                      "model": "claude-3-5-sonnet-20241022"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful extraction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtractResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/crawl": {
+      "post": {
+        "operationId": "createCrawlJob",
+        "tags": ["Crawling"],
+        "summary": "Start crawl job",
+        "description": "Start an asynchronous crawl job that extracts data from multiple pages. The crawler follows links matching your selectors or patterns and extracts data from each page.",
+        "security": [{"Authorization": []}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CrawlRequest"
+              },
+              "examples": {
+                "with_selector": {
+                  "summary": "Follow links by CSS selector",
+                  "value": {
+                    "url": "https://example.com/products",
+                    "schema": {
+                      "name": "string",
+                      "price": "number"
+                    },
+                    "options": {
+                      "follow_selector": "a.product-link",
+                      "max_pages": 20
+                    }
+                  }
+                },
+                "with_pattern": {
+                  "summary": "Follow links by URL pattern",
+                  "value": {
+                    "url": "https://example.com/products",
+                    "schema": {
+                      "name": "string",
+                      "price": "number"
+                    },
+                    "options": {
+                      "follow_pattern": "/products/[0-9]+",
+                      "max_pages": 20
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Job created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrawlJobCreated"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs": {
+      "get": {
+        "operationId": "listJobs",
+        "tags": ["Jobs"],
+        "summary": "List jobs",
+        "description": "List all crawl jobs for the authenticated user, ordered by creation date descending.",
+        "security": [{"Authorization": []}],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "maximum": 100
+            },
+            "description": "Number of jobs to return"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 0
+            },
+            "description": "Offset for pagination"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of jobs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{id}": {
+      "get": {
+        "operationId": "getJob",
+        "tags": ["Jobs"],
+        "summary": "Get job status",
+        "description": "Get the current status and details of a crawl job.",
+        "security": [{"Authorization": []}],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Job ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{id}/results": {
+      "get": {
+        "operationId": "getJobResults",
+        "tags": ["Jobs"],
+        "summary": "Get job results",
+        "description": "Get the extraction results from a completed crawl job. Use `merge=true` to get all results merged into a single object.",
+        "security": [{"Authorization": []}],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Job ID"
+          },
+          {
+            "name": "merge",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            },
+            "description": "Merge all results into a single object with deduplicated arrays"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobResults"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{id}/download": {
+      "get": {
+        "operationId": "downloadJobResults",
+        "tags": ["Jobs"],
+        "summary": "Download job results",
+        "description": "Download crawl job results as a file.",
+        "security": [{"Authorization": []}],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Job ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Results file",
+            "content": {
+              "application/json": {}
+            }
+          },
+          "404": {
+            "description": "Job not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/analyze": {
+      "post": {
+        "operationId": "analyze",
+        "tags": ["Analysis"],
+        "summary": "Analyze website",
+        "description": "Analyze a website to detect its structure, suggest schemas, and identify patterns for crawling.",
+        "security": [{"Authorization": []}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalyzeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Analysis results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalyzeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/schemas": {
+      "get": {
+        "operationId": "listSchemas",
+        "tags": ["Schemas"],
+        "summary": "List schemas",
+        "description": "List all saved schemas for the authenticated user plus platform schemas.",
+        "security": [{"Authorization": []}],
+        "responses": {
+          "200": {
+            "description": "List of schemas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchemaList"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createSchema",
+        "tags": ["Schemas"],
+        "summary": "Create schema",
+        "description": "Create a new saved schema for reuse across extractions.",
+        "security": [{"Authorization": []}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSchemaRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Schema created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Schema"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/schemas/{id}": {
+      "get": {
+        "operationId": "getSchema",
+        "tags": ["Schemas"],
+        "summary": "Get schema",
+        "description": "Get a specific schema by ID.",
+        "security": [{"Authorization": []}],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Schema details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Schema"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "updateSchema",
+        "tags": ["Schemas"],
+        "summary": "Update schema",
+        "description": "Update an existing schema.",
+        "security": [{"Authorization": []}],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSchemaRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Schema updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Schema"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteSchema",
+        "tags": ["Schemas"],
+        "summary": "Delete schema",
+        "description": "Delete a saved schema.",
+        "security": [{"Authorization": []}],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Schema deleted"
+          }
+        }
+      }
+    },
+    "/api/v1/sites": {
+      "get": {
+        "operationId": "listSites",
+        "tags": ["Sites"],
+        "summary": "List saved sites",
+        "description": "List all saved site configurations.",
+        "security": [{"Authorization": []}],
+        "responses": {
+          "200": {
+            "description": "List of saved sites",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiteList"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createSite",
+        "tags": ["Sites"],
+        "summary": "Save site",
+        "description": "Save a site configuration with schema and crawl settings.",
+        "security": [{"Authorization": []}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSiteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Site saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Site"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sites/{id}": {
+      "get": {
+        "operationId": "getSite",
+        "tags": ["Sites"],
+        "summary": "Get site",
+        "description": "Get a saved site by ID.",
+        "security": [{"Authorization": []}],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Site details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Site"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "updateSite",
+        "tags": ["Sites"],
+        "summary": "Update site",
+        "description": "Update a saved site configuration.",
+        "security": [{"Authorization": []}],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSiteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Site updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Site"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteSite",
+        "tags": ["Sites"],
+        "summary": "Delete site",
+        "description": "Delete a saved site.",
+        "security": [{"Authorization": []}],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Site deleted"
+          }
+        }
+      }
+    },
+    "/api/v1/keys": {
+      "get": {
+        "operationId": "listApiKeys",
+        "tags": ["API Keys"],
+        "summary": "List API keys",
+        "description": "List all API keys for the authenticated user.",
+        "security": [{"Authorization": []}],
+        "responses": {
+          "200": {
+            "description": "List of API keys",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyList"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createApiKey",
+        "tags": ["API Keys"],
+        "summary": "Create API key",
+        "description": "Create a new API key. The full key is only shown once in the response.",
+        "security": [{"Authorization": []}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateApiKeyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "API key created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyCreated"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/keys/{id}": {
+      "delete": {
+        "operationId": "revokeApiKey",
+        "tags": ["API Keys"],
+        "summary": "Revoke API key",
+        "description": "Revoke an API key.",
+        "security": [{"Authorization": []}],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "API key revoked"
+          }
+        }
+      }
+    },
+    "/api/v1/usage": {
+      "get": {
+        "operationId": "getUsage",
+        "tags": ["Usage"],
+        "summary": "Get usage",
+        "description": "Get usage statistics for the current billing period.",
+        "security": [{"Authorization": []}],
+        "responses": {
+          "200": {
+            "description": "Usage statistics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/llm/keys": {
+      "get": {
+        "operationId": "listLlmKeys",
+        "tags": ["LLM Configuration"],
+        "summary": "List LLM provider keys",
+        "description": "List configured LLM provider API keys (BYOK).",
+        "security": [{"Authorization": []}],
+        "responses": {
+          "200": {
+            "description": "List of provider keys",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmKeyList"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "upsertLlmKey",
+        "tags": ["LLM Configuration"],
+        "summary": "Add or update LLM provider key",
+        "description": "Add or update an LLM provider API key configuration.",
+        "security": [{"Authorization": []}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertLlmKeyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Key saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmKey"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/llm/keys/{id}": {
+      "delete": {
+        "operationId": "deleteLlmKey",
+        "tags": ["LLM Configuration"],
+        "summary": "Delete LLM provider key",
+        "description": "Delete an LLM provider API key.",
+        "security": [{"Authorization": []}],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Key deleted"
+          }
+        }
+      }
+    },
+    "/api/v1/llm/chain": {
+      "get": {
+        "operationId": "getLlmChain",
+        "tags": ["LLM Configuration"],
+        "summary": "Get fallback chain",
+        "description": "Get the configured LLM provider fallback chain.",
+        "security": [{"Authorization": []}],
+        "responses": {
+          "200": {
+            "description": "Fallback chain",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmChain"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "setLlmChain",
+        "tags": ["LLM Configuration"],
+        "summary": "Set fallback chain",
+        "description": "Configure the LLM provider fallback order.",
+        "security": [{"Authorization": []}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetLlmChainRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Chain updated"
+          }
+        }
+      }
+    },
+    "/api/v1/llm/models/{provider}": {
+      "get": {
+        "operationId": "listLlmModels",
+        "tags": ["LLM Configuration"],
+        "summary": "List available models",
+        "description": "List available models for a specific LLM provider.",
+        "security": [{"Authorization": []}],
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": ["anthropic", "openai", "openrouter", "ollama"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of models",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelList"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "operationId": "healthCheck",
+        "tags": ["System"],
+        "summary": "Health check",
+        "description": "Check API health status.",
+        "responses": {
+          "200": {
+            "description": "API is healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "ok"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "Authorization": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Include your token in the Authorization header."
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer"
+          }
+        }
+      },
+      "ExtractRequest": {
+        "type": "object",
+        "required": ["url", "schema"],
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "URL to extract data from"
+          },
+          "schema": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Schema defining the data structure to extract (JSON or YAML)"
+          },
+          "fetch_mode": {
+            "type": "string",
+            "enum": ["auto", "static", "dynamic"],
+            "default": "auto",
+            "description": "Fetch mode: auto (detect), static (fast), or dynamic (JavaScript rendering)"
+          },
+          "llm_config": {
+            "$ref": "#/components/schemas/LlmConfig"
+          }
+        }
+      },
+      "ExtractResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Extracted data matching the schema"
+          },
+          "url": {
+            "type": "string",
+            "description": "URL that was extracted"
+          },
+          "fetched_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp when the page was fetched"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/TokenUsage"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/ExtractionMetadata"
+          }
+        }
+      },
+      "TokenUsage": {
+        "type": "object",
+        "properties": {
+          "input_tokens": {
+            "type": "integer",
+            "description": "Number of input tokens used"
+          },
+          "output_tokens": {
+            "type": "integer",
+            "description": "Number of output tokens used"
+          },
+          "cost_usd": {
+            "type": "number",
+            "description": "Total USD cost charged"
+          },
+          "llm_cost_usd": {
+            "type": "number",
+            "description": "Actual LLM cost from provider"
+          },
+          "is_byok": {
+            "type": "boolean",
+            "description": "True if user's own API key was used"
+          }
+        }
+      },
+      "ExtractionMetadata": {
+        "type": "object",
+        "properties": {
+          "fetch_duration_ms": {
+            "type": "integer",
+            "description": "Time to fetch the page in milliseconds"
+          },
+          "extract_duration_ms": {
+            "type": "integer",
+            "description": "Time to extract data in milliseconds"
+          },
+          "model": {
+            "type": "string",
+            "description": "Model used for extraction"
+          },
+          "provider": {
+            "type": "string",
+            "description": "LLM provider used"
+          }
+        }
+      },
+      "LlmConfig": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string",
+            "enum": ["anthropic", "openai", "openrouter", "ollama", "credits"],
+            "description": "LLM provider"
+          },
+          "api_key": {
+            "type": "string",
+            "description": "API key for the provider (BYOK)"
+          },
+          "base_url": {
+            "type": "string",
+            "description": "Custom base URL (for Ollama or self-hosted)"
+          },
+          "model": {
+            "type": "string",
+            "description": "Model to use"
+          }
+        }
+      },
+      "CrawlRequest": {
+        "type": "object",
+        "required": ["url", "schema"],
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Seed URL to start crawling from"
+          },
+          "schema": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Schema defining the data structure to extract"
+          },
+          "options": {
+            "$ref": "#/components/schemas/CrawlOptions"
+          },
+          "webhook_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "URL to receive webhook on completion"
+          },
+          "llm_config": {
+            "$ref": "#/components/schemas/LlmConfig"
+          }
+        }
+      },
+      "CrawlOptions": {
+        "type": "object",
+        "properties": {
+          "follow_selector": {
+            "type": "string",
+            "description": "CSS selector for links to follow"
+          },
+          "follow_pattern": {
+            "type": "string",
+            "description": "Regex pattern for URLs to follow"
+          },
+          "max_depth": {
+            "type": "integer",
+            "default": 1,
+            "maximum": 5,
+            "description": "Maximum crawl depth"
+          },
+          "next_selector": {
+            "type": "string",
+            "description": "CSS selector for pagination next link"
+          },
+          "max_pages": {
+            "type": "integer",
+            "default": 10,
+            "maximum": 100,
+            "description": "Maximum pages to crawl"
+          },
+          "max_urls": {
+            "type": "integer",
+            "default": 50,
+            "maximum": 500,
+            "description": "Maximum total URLs to process"
+          },
+          "delay": {
+            "type": "string",
+            "default": "500ms",
+            "description": "Delay between requests"
+          },
+          "concurrency": {
+            "type": "integer",
+            "default": 3,
+            "maximum": 10,
+            "description": "Concurrent requests"
+          },
+          "same_domain_only": {
+            "type": "boolean",
+            "default": true,
+            "description": "Only follow same-domain links"
+          },
+          "extract_from_seeds": {
+            "type": "boolean",
+            "description": "Extract data from seed URLs"
+          }
+        }
+      },
+      "CrawlJobCreated": {
+        "type": "object",
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "description": "Unique job identifier"
+          },
+          "status": {
+            "type": "string",
+            "description": "Initial job status"
+          },
+          "status_url": {
+            "type": "string",
+            "description": "URL to check job status"
+          }
+        }
+      },
+      "Job": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "running", "completed", "failed"]
+          },
+          "url": {
+            "type": "string"
+          },
+          "page_count": {
+            "type": "integer"
+          },
+          "token_usage_input": {
+            "type": "integer"
+          },
+          "token_usage_output": {
+            "type": "integer"
+          },
+          "cost_credits": {
+            "type": "integer"
+          },
+          "error_message": {
+            "type": "string"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "JobList": {
+        "type": "object",
+        "properties": {
+          "jobs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Job"
+            }
+          }
+        }
+      },
+      "JobResults": {
+        "type": "object",
+        "properties": {
+          "job_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            },
+            "description": "Array of extraction results (when merge=false)"
+          },
+          "merged": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Merged results object (when merge=true)"
+          },
+          "page_count": {
+            "type": "integer"
+          }
+        }
+      },
+      "AnalyzeRequest": {
+        "type": "object",
+        "required": ["url"],
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "URL to analyze"
+          },
+          "depth": {
+            "type": "integer",
+            "default": 1,
+            "description": "Analysis depth"
+          }
+        }
+      },
+      "AnalyzeResponse": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "suggested_schema": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "follow_patterns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "Schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "schema_yaml": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SchemaList": {
+        "type": "object",
+        "properties": {
+          "schemas": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Schema"
+            }
+          }
+        }
+      },
+      "CreateSchemaRequest": {
+        "type": "object",
+        "required": ["name", "schema_yaml"],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "schema_yaml": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          }
+        }
+      },
+      "UpdateSchemaRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "schema_yaml": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          }
+        }
+      },
+      "Site": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "schema_id": {
+            "type": "string"
+          },
+          "crawl_options": {
+            "$ref": "#/components/schemas/CrawlOptions"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SiteList": {
+        "type": "object",
+        "properties": {
+          "sites": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Site"
+            }
+          }
+        }
+      },
+      "CreateSiteRequest": {
+        "type": "object",
+        "required": ["name", "url"],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "schema_id": {
+            "type": "string"
+          },
+          "crawl_options": {
+            "$ref": "#/components/schemas/CrawlOptions"
+          }
+        }
+      },
+      "UpdateSiteRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "schema_id": {
+            "type": "string"
+          },
+          "crawl_options": {
+            "$ref": "#/components/schemas/CrawlOptions"
+          }
+        }
+      },
+      "ApiKey": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string",
+            "description": "First characters of the key for identification"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_used_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ApiKeyList": {
+        "type": "object",
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApiKey"
+            }
+          }
+        }
+      },
+      "CreateApiKeyRequest": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "ApiKeyCreated": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string",
+            "description": "Full API key - only shown once"
+          }
+        }
+      },
+      "UsageResponse": {
+        "type": "object",
+        "properties": {
+          "tier": {
+            "type": "string"
+          },
+          "credits_used": {
+            "type": "integer"
+          },
+          "credits_limit": {
+            "type": "integer"
+          },
+          "credits_remaining": {
+            "type": "integer"
+          },
+          "period_start": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "period_end": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "LlmKey": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "default_model": {
+            "type": "string"
+          },
+          "base_url": {
+            "type": "string"
+          },
+          "is_enabled": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "LlmKeyList": {
+        "type": "object",
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LlmKey"
+            }
+          }
+        }
+      },
+      "UpsertLlmKeyRequest": {
+        "type": "object",
+        "required": ["provider", "api_key", "default_model"],
+        "properties": {
+          "provider": {
+            "type": "string",
+            "enum": ["anthropic", "openai", "openrouter", "ollama"]
+          },
+          "api_key": {
+            "type": "string"
+          },
+          "default_model": {
+            "type": "string"
+          },
+          "base_url": {
+            "type": "string"
+          },
+          "is_enabled": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "LlmChain": {
+        "type": "object",
+        "properties": {
+          "chain": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LlmChainEntry"
+            }
+          }
+        }
+      },
+      "LlmChainEntry": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "position": {
+            "type": "integer"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "is_enabled": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SetLlmChainRequest": {
+        "type": "object",
+        "required": ["chain"],
+        "properties": {
+          "chain": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["provider", "model"],
+              "properties": {
+                "provider": {
+                  "type": "string"
+                },
+                "model": {
+                  "type": "string"
+                },
+                "is_enabled": {
+                  "type": "boolean",
+                  "default": true
+                }
+              }
+            }
+          }
+        }
+      },
+      "ModelList": {
+        "type": "object",
+        "properties": {
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

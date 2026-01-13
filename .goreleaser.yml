@@ -1,0 +1,113 @@
+# GoReleaser configuration for refyne-api
+# Docs: https://goreleaser.com
+version: 2
+
+project_name: refyne-api
+
+before:
+  hooks:
+    - go mod tidy -C api
+
+builds:
+  - id: refyne-api
+    main: ./cmd/refyne-api
+    dir: api
+    binary: refyne-api
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/jmylchreest/refyne-api/internal/version.Version={{.Version}}
+      - -X github.com/jmylchreest/refyne-api/internal/version.Commit={{.ShortCommit}}
+      - -X github.com/jmylchreest/refyne-api/internal/version.Date={{.Date}}
+      - -X github.com/jmylchreest/refyne-api/internal/version.Dirty=false
+
+archives:
+  - id: refyne-api
+    builds:
+      - refyne-api
+    format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE*
+      - README*
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^ci:'
+      - '^chore:'
+      - Merge pull request
+      - Merge branch
+
+release:
+  github:
+    owner: jmylchreest
+    name: refyne-api
+  draft: false
+  prerelease: auto
+  mode: replace
+  name_template: "v{{.Version}}"
+
+# Docker images
+dockers:
+  - id: refyne-api-amd64
+    ids:
+      - refyne-api
+    goos: linux
+    goarch: amd64
+    image_templates:
+      - "ghcr.io/jmylchreest/refyne-api:{{ .Version }}-amd64"
+      - "ghcr.io/jmylchreest/refyne-api:latest-amd64"
+    dockerfile: api/Dockerfile.goreleaser
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+
+  - id: refyne-api-arm64
+    ids:
+      - refyne-api
+    goos: linux
+    goarch: arm64
+    image_templates:
+      - "ghcr.io/jmylchreest/refyne-api:{{ .Version }}-arm64"
+      - "ghcr.io/jmylchreest/refyne-api:latest-arm64"
+    dockerfile: api/Dockerfile.goreleaser
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+
+docker_manifests:
+  - name_template: "ghcr.io/jmylchreest/refyne-api:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/jmylchreest/refyne-api:{{ .Version }}-amd64"
+      - "ghcr.io/jmylchreest/refyne-api:{{ .Version }}-arm64"
+
+  - name_template: "ghcr.io/jmylchreest/refyne-api:latest"
+    image_templates:
+      - "ghcr.io/jmylchreest/refyne-api:latest-amd64"
+      - "ghcr.io/jmylchreest/refyne-api:latest-arm64"

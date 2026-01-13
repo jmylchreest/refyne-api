@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/jmylchreest/refyne-api/internal/constants"
 	"github.com/jmylchreest/refyne-api/internal/models"
 )
 
@@ -190,47 +192,51 @@ func (r *SQLiteJobRepository) ClaimJob(ctx context.Context, id string) (*models.
 }
 
 func (r *SQLiteJobRepository) ClaimPending(ctx context.Context) (*models.Job, error) {
+	// Begin transaction (SQLite/libsql doesn't support custom isolation levels)
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback()
 
-	var jobID string
-	err = tx.QueryRowContext(ctx,
-		"SELECT id FROM jobs WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1",
-	).Scan(&jobID)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to get pending job: %w", err)
-	}
+	// Ensure transaction is always cleaned up
+	committed := false
+	defer func() {
+		if !committed {
+			tx.Rollback()
+		}
+	}()
 
+	// Use UPDATE ... RETURNING to atomically claim and fetch in one statement
+	// This reduces lock contention compared to SELECT then UPDATE
 	now := time.Now().Format(time.RFC3339)
-	_, err = tx.ExecContext(ctx,
-		"UPDATE jobs SET status = 'running', started_at = ?, updated_at = ? WHERE id = ?",
-		now, now, jobID,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to claim job: %w", err)
-	}
-
 	query := `
-		SELECT id, user_id, type, status, url, schema_json, crawl_options_json,
+		UPDATE jobs
+		SET status = 'running', started_at = ?, updated_at = ?
+		WHERE id = (
+			SELECT id FROM jobs
+			WHERE status = 'pending'
+			ORDER BY created_at ASC
+			LIMIT 1
+		)
+		RETURNING id, user_id, type, status, url, schema_json, crawl_options_json,
 			result_json, error_message, page_count, token_usage_input, token_usage_output,
 			cost_credits, webhook_url, webhook_status, webhook_attempts, started_at, completed_at,
 			created_at, updated_at
-		FROM jobs WHERE id = ?
 	`
-	job, err := r.scanJob(tx.QueryRowContext(ctx, query, jobID))
+
+	job, err := r.scanJob(tx.QueryRowContext(ctx, query, now, now))
+	if err == sql.ErrNoRows || job == nil {
+		// No pending jobs - this is normal, not an error
+		return nil, nil
+	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to claim job: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
+	committed = true
 
 	return job, nil
 }
@@ -310,12 +316,104 @@ func (r *SQLiteJobRepository) scanJobFromRows(rows *sql.Rows) (*models.Job, erro
 	return &job, nil
 }
 
+// DeleteOlderThan deletes jobs older than the specified time and returns the deleted job IDs.
+func (r *SQLiteJobRepository) DeleteOlderThan(ctx context.Context, before time.Time) ([]string, error) {
+	// First, get the IDs of jobs to be deleted
+	query := `SELECT id FROM jobs WHERE created_at < ? AND status IN ('completed', 'failed')`
+	rows, err := r.db.QueryContext(ctx, query, before.Format(time.RFC3339))
+	if err != nil {
+		return nil, fmt.Errorf("failed to query old jobs: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("failed to scan job id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating job ids: %w", err)
+	}
+
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	// Delete the jobs
+	deleteQuery := `DELETE FROM jobs WHERE created_at < ? AND status IN ('completed', 'failed')`
+	_, err = r.db.ExecContext(ctx, deleteQuery, before.Format(time.RFC3339))
+	if err != nil {
+		return nil, fmt.Errorf("failed to delete old jobs: %w", err)
+	}
+
+	return ids, nil
+}
+
+// MarkStaleRunningJobsFailed marks jobs that have been running longer than maxAge as failed.
+// This is used to clean up jobs that were left in "running" state due to server restart.
+func (r *SQLiteJobRepository) MarkStaleRunningJobsFailed(ctx context.Context, maxAge time.Duration) (int64, error) {
+	cutoff := time.Now().Add(-maxAge).Format(time.RFC3339)
+	now := time.Now().Format(time.RFC3339)
+
+	query := `
+		UPDATE jobs
+		SET status = ?, error_message = ?, completed_at = ?, updated_at = ?
+		WHERE status = ? AND started_at < ?
+	`
+	result, err := r.db.ExecContext(ctx, query,
+		models.JobStatusFailed,
+		"Job terminated: server restart or timeout",
+		now,
+		now,
+		models.JobStatusRunning,
+		cutoff,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("failed to mark stale jobs as failed: %w", err)
+	}
+
+	count, _ := result.RowsAffected()
+	return count, nil
+}
+
+// CountActiveByUserID counts jobs that are pending or actively running for a user.
+// Running jobs older than StaleJobAge are excluded to avoid blocking users when
+// jobs get stuck (e.g., due to backend restarts during development).
+func (r *SQLiteJobRepository) CountActiveByUserID(ctx context.Context, userID string) (int, error) {
+	// Calculate the stale cutoff time
+	staleCutoff := time.Now().Add(-constants.StaleJobAge).Format(time.RFC3339)
+
+	query := `
+		SELECT COUNT(*) FROM jobs
+		WHERE user_id = ? AND (
+			status = ?
+			OR (status = ? AND started_at > ?)
+		)
+	`
+	var count int
+	err := r.db.QueryRowContext(ctx, query, userID, models.JobStatusPending, models.JobStatusRunning, staleCutoff).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count active jobs: %w", err)
+	}
+	return count, nil
+}
+
 // Helper functions
 func nullString(s string) sql.NullString {
 	if s == "" {
 		return sql.NullString{}
 	}
 	return sql.NullString{String: s, Valid: true}
+}
+
+func nullStringPtr(s *string) sql.NullString {
+	if s == nil {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: *s, Valid: true}
 }
 
 func nullTime(t *time.Time) sql.NullString {
@@ -336,14 +434,18 @@ func NewSQLiteJobResultRepository(db *sql.DB) *SQLiteJobResultRepository {
 
 func (r *SQLiteJobResultRepository) Create(ctx context.Context, result *models.JobResult) error {
 	query := `
-		INSERT INTO job_results (id, job_id, url, data_json, error_message,
-			token_usage_input, token_usage_output, fetch_duration_ms, extract_duration_ms, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO job_results (id, job_id, url, parent_url, depth, crawl_status,
+			data_json, error_message, token_usage_input, token_usage_output,
+			fetch_duration_ms, extract_duration_ms, discovered_at, completed_at, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	_, err := r.db.ExecContext(ctx, query,
-		result.ID, result.JobID, result.URL, nullString(result.DataJSON),
+		result.ID, result.JobID, result.URL, nullStringPtr(result.ParentURL),
+		result.Depth, result.CrawlStatus, nullString(result.DataJSON),
 		nullString(result.ErrorMessage), result.TokenUsageInput, result.TokenUsageOutput,
-		result.FetchDurationMs, result.ExtractDurationMs, result.CreatedAt.Format(time.RFC3339),
+		result.FetchDurationMs, result.ExtractDurationMs,
+		nullTime(result.DiscoveredAt), nullTime(result.CompletedAt),
+		result.CreatedAt.Format(time.RFC3339),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create job result: %w", err)
@@ -353,8 +455,9 @@ func (r *SQLiteJobResultRepository) Create(ctx context.Context, result *models.J
 
 func (r *SQLiteJobResultRepository) GetByJobID(ctx context.Context, jobID string) ([]*models.JobResult, error) {
 	query := `
-		SELECT id, job_id, url, data_json, error_message, token_usage_input, token_usage_output,
-			fetch_duration_ms, extract_duration_ms, created_at
+		SELECT id, job_id, url, parent_url, depth, crawl_status, data_json, error_message,
+			token_usage_input, token_usage_output, fetch_duration_ms, extract_duration_ms,
+			discovered_at, completed_at, created_at
 		FROM job_results WHERE job_id = ? ORDER BY created_at ASC
 	`
 	rows, err := r.db.QueryContext(ctx, query, jobID)
@@ -363,24 +466,65 @@ func (r *SQLiteJobResultRepository) GetByJobID(ctx context.Context, jobID string
 	}
 	defer rows.Close()
 
+	return r.scanJobResults(rows)
+}
+
+// GetCrawlMap returns all results for a job ordered by depth then creation time.
+// This is useful for visualizing the crawl structure.
+func (r *SQLiteJobResultRepository) GetCrawlMap(ctx context.Context, jobID string) ([]*models.JobResult, error) {
+	query := `
+		SELECT id, job_id, url, parent_url, depth, crawl_status, data_json, error_message,
+			token_usage_input, token_usage_output, fetch_duration_ms, extract_duration_ms,
+			discovered_at, completed_at, created_at
+		FROM job_results WHERE job_id = ? ORDER BY depth ASC, created_at ASC
+	`
+	rows, err := r.db.QueryContext(ctx, query, jobID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query crawl map: %w", err)
+	}
+	defer rows.Close()
+
+	return r.scanJobResults(rows)
+}
+
+// scanJobResults is a helper to scan multiple job result rows.
+func (r *SQLiteJobResultRepository) scanJobResults(rows *sql.Rows) ([]*models.JobResult, error) {
 	var results []*models.JobResult
 	for rows.Next() {
 		var result models.JobResult
-		var dataJSON, errorMessage sql.NullString
+		var parentURL, dataJSON, errorMessage, crawlStatus sql.NullString
+		var discoveredAt, completedAt sql.NullString
 		var createdAt string
 
 		err := rows.Scan(
-			&result.ID, &result.JobID, &result.URL, &dataJSON, &errorMessage,
-			&result.TokenUsageInput, &result.TokenUsageOutput,
-			&result.FetchDurationMs, &result.ExtractDurationMs, &createdAt,
+			&result.ID, &result.JobID, &result.URL, &parentURL, &result.Depth, &crawlStatus,
+			&dataJSON, &errorMessage, &result.TokenUsageInput, &result.TokenUsageOutput,
+			&result.FetchDurationMs, &result.ExtractDurationMs,
+			&discoveredAt, &completedAt, &createdAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan job result: %w", err)
 		}
 
+		if parentURL.Valid {
+			result.ParentURL = &parentURL.String
+		}
+		if crawlStatus.Valid {
+			result.CrawlStatus = models.CrawlStatus(crawlStatus.String)
+		} else {
+			result.CrawlStatus = models.CrawlStatusCompleted
+		}
 		result.DataJSON = dataJSON.String
 		result.ErrorMessage = errorMessage.String
 		result.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		if discoveredAt.Valid {
+			t, _ := time.Parse(time.RFC3339, discoveredAt.String)
+			result.DiscoveredAt = &t
+		}
+		if completedAt.Valid {
+			t, _ := time.Parse(time.RFC3339, completedAt.String)
+			result.CompletedAt = &t
+		}
 		results = append(results, &result)
 	}
 	return results, nil
@@ -388,8 +532,9 @@ func (r *SQLiteJobResultRepository) GetByJobID(ctx context.Context, jobID string
 
 func (r *SQLiteJobResultRepository) GetAfter(ctx context.Context, jobID, afterID string) ([]*models.JobResult, error) {
 	query := `
-		SELECT id, job_id, url, data_json, error_message, token_usage_input, token_usage_output,
-			fetch_duration_ms, extract_duration_ms, created_at
+		SELECT id, job_id, url, parent_url, depth, crawl_status, data_json, error_message,
+			token_usage_input, token_usage_output, fetch_duration_ms, extract_duration_ms,
+			discovered_at, completed_at, created_at
 		FROM job_results WHERE job_id = ? AND id > ? ORDER BY created_at ASC
 	`
 	rows, err := r.db.QueryContext(ctx, query, jobID, afterID)
@@ -398,27 +543,30 @@ func (r *SQLiteJobResultRepository) GetAfter(ctx context.Context, jobID, afterID
 	}
 	defer rows.Close()
 
-	var results []*models.JobResult
-	for rows.Next() {
-		var result models.JobResult
-		var dataJSON, errorMessage sql.NullString
-		var createdAt string
+	return r.scanJobResults(rows)
+}
 
-		err := rows.Scan(
-			&result.ID, &result.JobID, &result.URL, &dataJSON, &errorMessage,
-			&result.TokenUsageInput, &result.TokenUsageOutput,
-			&result.FetchDurationMs, &result.ExtractDurationMs, &createdAt,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan job result: %w", err)
-		}
-
-		result.DataJSON = dataJSON.String
-		result.ErrorMessage = errorMessage.String
-		result.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
-		results = append(results, &result)
+// DeleteByJobIDs deletes all results for the specified job IDs.
+func (r *SQLiteJobResultRepository) DeleteByJobIDs(ctx context.Context, jobIDs []string) error {
+	if len(jobIDs) == 0 {
+		return nil
 	}
-	return results, nil
+
+	// Build placeholders for IN clause
+	placeholders := make([]string, len(jobIDs))
+	args := make([]interface{}, len(jobIDs))
+	for i, id := range jobIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	query := fmt.Sprintf("DELETE FROM job_results WHERE job_id IN (%s)",
+		strings.Join(placeholders, ","))
+	_, err := r.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to delete job results: %w", err)
+	}
+	return nil
 }
 
 // SQLiteAPIKeyRepository implements APIKeyRepository for SQLite.
@@ -631,7 +779,7 @@ func (r *SQLiteUsageRepository) GetSummary(ctx context.Context, userID string, p
 		endDate = "2100-01-01"
 	}
 
-	query := `SELECT COUNT(*), COALESCE(SUM(total_charged_usd), 0), SUM(CASE WHEN is_byok = 1 THEN 1 ELSE 0 END)
+	query := `SELECT COUNT(*), COALESCE(SUM(total_charged_usd), 0), COALESCE(SUM(CASE WHEN is_byok = 1 THEN 1 ELSE 0 END), 0)
 		FROM usage_records WHERE user_id = ? AND date >= ? AND date < ?`
 	var summary UsageSummary
 	err := r.db.QueryRowContext(ctx, query, userID, startDate, endDate).Scan(&summary.TotalJobs, &summary.TotalChargedUSD, &summary.BYOKJobs)

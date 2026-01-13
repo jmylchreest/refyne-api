@@ -1,0 +1,92 @@
+---
+title: Extraction
+description: Extract structured data from any webpage
+---
+
+The extraction endpoint is the core of Refyne. It takes a URL and a schema, and returns structured data.
+
+## Basic Extraction
+
+```bash
+curl -X POST https://api.refyne.uk/api/v1/extract \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com/product/123",
+    "schema": {
+      "name": "string",
+      "price": "number",
+      "in_stock": "boolean"
+    }
+  }'
+```
+
+## Schema Types
+
+Schemas support the following types:
+
+| Type | Description | Example |
+|------|-------------|---------|
+| `string` | Text content | `"name": "string"` |
+| `number` | Numeric values | `"price": "number"` |
+| `boolean` | True/false | `"in_stock": "boolean"` |
+| `array` | List of items | `"tags": ["string"]` |
+| `object` | Nested structure | `"author": { "name": "string" }` |
+
+## Nested Schemas
+
+Extract complex nested data:
+
+```json
+{
+  "url": "https://example.com/article",
+  "schema": {
+    "title": "string",
+    "author": {
+      "name": "string",
+      "bio": "string"
+    },
+    "comments": [{
+      "author": "string",
+      "text": "string",
+      "likes": "number"
+    }]
+  }
+}
+```
+
+## LLM Configuration
+
+Specify which LLM provider and model to use:
+
+```json
+{
+  "url": "https://example.com",
+  "schema": { ... },
+  "llm_config": {
+    "provider": "openrouter",
+    "model": "anthropic/claude-3.5-sonnet"
+  }
+}
+```
+
+## Response Format
+
+```json
+{
+  "data": { ... },
+  "url": "https://example.com/product/123",
+  "fetched_at": "2024-01-15T10:30:00Z",
+  "usage": {
+    "input_tokens": 1523,
+    "output_tokens": 234,
+    "cost_usd": 0.0045
+  },
+  "metadata": {
+    "fetch_duration_ms": 342,
+    "extract_duration_ms": 1205,
+    "model": "claude-3.5-sonnet",
+    "provider": "anthropic"
+  }
+}
+```

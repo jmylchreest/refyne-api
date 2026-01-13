@@ -1,0 +1,135 @@
+---
+title: Python SDK
+description: Official Python client for Refyne
+---
+
+The official Python SDK for Refyne with async support.
+
+## Installation
+
+```bash
+pip install refyne
+# or
+poetry add refyne
+```
+
+## Quick Start
+
+```python
+from refyne import Refyne
+import os
+
+client = Refyne(api_key=os.environ["REFYNE_API_KEY"])
+
+result = client.extract(
+    url="https://example.com/product",
+    schema={
+        "name": "string",
+        "price": "number",
+        "description": "string",
+    }
+)
+
+print(result.data)
+# {"name": "Product Name", "price": 29.99, "description": "..."}
+```
+
+## Async Support
+
+```python
+import asyncio
+from refyne import AsyncRefyne
+
+async def main():
+    client = AsyncRefyne(api_key=os.environ["REFYNE_API_KEY"])
+
+    result = await client.extract(
+        url="https://example.com/product",
+        schema={"name": "string", "price": "number"}
+    )
+
+    print(result.data)
+
+asyncio.run(main())
+```
+
+## Type Hints
+
+Use Pydantic models for type-safe results:
+
+```python
+from pydantic import BaseModel
+from refyne import Refyne
+
+class Product(BaseModel):
+    name: str
+    price: float
+    description: str
+    tags: list[str]
+
+client = Refyne(api_key=os.environ["REFYNE_API_KEY"])
+
+result = client.extract_typed(
+    Product,
+    url="https://example.com/product",
+    schema={
+        "name": "string",
+        "price": "number",
+        "description": "string",
+        "tags": ["string"],
+    }
+)
+
+# result.data is a Product instance
+print(result.data.name)
+```
+
+## Crawling
+
+```python
+# Start a crawl job
+job = client.crawl(
+    url="https://example.com/products",
+    schema={"name": "string", "price": "number"},
+    options={
+        "follow_selector": "a.product-link",
+        "max_pages": 20,
+    }
+)
+
+# Check job status
+status = client.jobs.get(job.job_id)
+
+# Get results
+results = client.jobs.get_results(job.job_id)
+
+# Get merged results
+merged = client.jobs.get_results(job.job_id, merge=True)
+```
+
+## Error Handling
+
+```python
+from refyne import RefyneError, RateLimitError
+
+try:
+    result = client.extract(...)
+except RateLimitError as e:
+    print(f"Rate limited. Retry after {e.retry_after} seconds")
+except RefyneError as e:
+    print(f"API error: {e.message} (status {e.status})")
+```
+
+## Configuration
+
+```python
+client = Refyne(
+    api_key=os.environ["REFYNE_API_KEY"],
+    base_url="https://api.refyne.uk",  # Optional
+    timeout=30.0,  # Optional, in seconds
+)
+```
+
+## API Reference
+
+For detailed documentation, see [refyne.readthedocs.io](https://refyne.readthedocs.io).

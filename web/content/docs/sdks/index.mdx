@@ -1,0 +1,53 @@
+---
+title: SDKs
+description: Official client libraries for Refyne
+---
+
+Refyne provides official SDKs for popular languages. Each SDK is a thin wrapper around the REST API, providing type safety and convenience methods.
+
+## Available SDKs
+
+<Cards>
+  <Card title="TypeScript / JavaScript" href="/docs/sdks/typescript">
+    Full TypeScript support with type definitions
+  </Card>
+  <Card title="Go" href="/docs/sdks/go">
+    Idiomatic Go client with context support
+  </Card>
+  <Card title="Python" href="/docs/sdks/python">
+    Pythonic API with async support
+  </Card>
+  <Card title="cURL / HTTP" href="/docs/sdks/curl">
+    Direct REST API usage examples
+  </Card>
+</Cards>
+
+## Feature Comparison
+
+| Feature | TypeScript | Go | Python |
+|---------|------------|-----|--------|
+| Type Safety | Full | Full | Type hints |
+| Async Support | Native | Context | asyncio |
+| Streaming | Yes | Yes | Yes |
+| Auto-retry | Yes | Yes | Yes |
+
+## Core Concepts
+
+All SDKs follow the same patterns:
+
+1. **Initialize client** with API key
+2. **Call methods** that map to API endpoints
+3. **Handle responses** with typed data
+
+## REST API
+
+Don't see your language? The REST API is simple to use directly:
+
+```bash
+curl -X POST https://api.refyne.uk/api/v1/extract \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "...", "schema": {...}}'
+```
+
+See the [API Reference](/docs/api-reference) for full endpoint documentation.

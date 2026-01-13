@@ -1,0 +1,64 @@
+---
+title: Quick Start
+description: Get started with Refyne in under 5 minutes
+---
+
+This guide will help you make your first API call to Refyne.
+
+## 1. Get Your API Key
+
+Sign up at [refyne.uk](https://refyne.uk) and create an API key from your dashboard.
+
+## 2. Make Your First Request
+
+Extract data from any webpage by defining a schema:
+
+```bash
+curl -X POST https://api.refyne.uk/api/v1/extract \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://news.ycombinator.com",
+    "schema": {
+      "top_stories": [{
+        "title": "string",
+        "points": "number",
+        "author": "string"
+      }]
+    }
+  }'
+```
+
+## 3. Get Structured Data
+
+Refyne returns clean JSON matching your schema:
+
+```json
+{
+  "data": {
+    "top_stories": [
+      {
+        "title": "Show HN: I built an LLM-powered web scraper",
+        "points": 342,
+        "author": "developer123"
+      },
+      {
+        "title": "The future of structured data extraction",
+        "points": 256,
+        "author": "airesearcher"
+      }
+    ]
+  },
+  "url": "https://news.ycombinator.com",
+  "usage": {
+    "input_tokens": 1523,
+    "output_tokens": 234
+  }
+}
+```
+
+## Next Steps
+
+- [Authentication](/docs/authentication) - Learn about API keys and auth
+- [Extraction Guide](/docs/guides/extraction) - Deep dive into extraction
+- [Crawling Guide](/docs/guides/crawling) - Extract from multiple pages

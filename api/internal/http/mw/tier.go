@@ -4,66 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 
+	"github.com/jmylchreest/refyne-api/internal/constants"
 	"github.com/jmylchreest/refyne-api/internal/service"
 )
 
-// TierLimits defines the limits for each subscription tier.
-// These limits come from Clerk's subscription tiers.
-type TierLimits struct {
-	MonthlyExtractions int  // Max extractions per month (0 = unlimited)
-	MaxPagesPerCrawl   int  // Max pages per crawl job
-	MaxConcurrentCrawls int // Max concurrent crawl jobs
-	WebhooksEnabled    bool // Whether webhooks are available
-	BYOKEnabled        bool // Whether BYOK (bring your own key) is available
-	AntiBotEnabled     bool // Whether anti-bot features are available
-}
-
-// TierConfig maps tier names to their limits.
-var TierConfig = map[string]TierLimits{
-	"free": {
-		MonthlyExtractions:  100,
-		MaxPagesPerCrawl:    10,
-		MaxConcurrentCrawls: 1,
-		WebhooksEnabled:     false,
-		BYOKEnabled:         false,
-		AntiBotEnabled:      false,
-	},
-	"starter": {
-		MonthlyExtractions:  1000,
-		MaxPagesPerCrawl:    50,
-		MaxConcurrentCrawls: 3,
-		WebhooksEnabled:     true,
-		BYOKEnabled:         true,
-		AntiBotEnabled:      false,
-	},
-	"pro": {
-		MonthlyExtractions:  0, // Unlimited
-		MaxPagesPerCrawl:    500,
-		MaxConcurrentCrawls: 10,
-		WebhooksEnabled:     true,
-		BYOKEnabled:         true,
-		AntiBotEnabled:      true,
-	},
-	// Self-hosted mode has no limits
-	"selfhosted": {
-		MonthlyExtractions:  0,
-		MaxPagesPerCrawl:    0,
-		MaxConcurrentCrawls: 0,
-		WebhooksEnabled:     true,
-		BYOKEnabled:         true,
-		AntiBotEnabled:      true,
-	},
-}
+// TierLimits is an alias to the centralized constants.TierLimits.
+// Use constants.GetTierLimits() to retrieve tier limits.
+type TierLimits = constants.TierLimits
 
 // GetTierLimits returns the limits for a given tier.
+// This delegates to the centralized constants package.
 func GetTierLimits(tier string) TierLimits {
-	if limits, ok := TierConfig[tier]; ok {
-		return limits
-	}
-	// Default to free tier limits
-	return TierConfig["free"]
+	return constants.GetTierLimits(tier)
 }
 
 // TierContextKey is the context key for tier limits.
@@ -118,6 +73,10 @@ func RequireUsageQuota(usageSvc *service.UsageService) func(http.Handler) http.H
 			// Check current monthly usage
 			usage, err := usageSvc.GetMonthlyUsage(r.Context(), claims.UserID)
 			if err != nil {
+				slog.Error("failed to check usage quota",
+					"user_id", claims.UserID,
+					"error", err,
+				)
 				http.Error(w, `{"error":"failed to check usage quota"}`, http.StatusInternalServerError)
 				return
 			}
@@ -150,7 +109,8 @@ func RequireUsageQuota(usageSvc *service.UsageService) func(http.Handler) http.H
 	}
 }
 
-// RequireFeature returns middleware that checks if a feature is enabled for the user's tier.
+// RequireFeature returns middleware that checks if a feature is enabled via Clerk Commerce.
+// Features are checked against the user's Clerk billing features (from the "fea" JWT claim).
 func RequireFeature(feature string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -160,26 +120,24 @@ func RequireFeature(feature string) func(http.Handler) http.Handler {
 				return
 			}
 
-			limits := GetTierLimits(claims.Tier)
+			// Check if user has the required feature from Clerk Commerce
+			hasFeature := claims.HasFeature(feature)
 
-			var enabled bool
-			switch feature {
-			case "webhooks":
-				enabled = limits.WebhooksEnabled
-			case "byok":
-				enabled = limits.BYOKEnabled
-			case "antibot":
-				enabled = limits.AntiBotEnabled
-			default:
-				enabled = true // Unknown features default to enabled
-			}
+			// Debug log feature check
+			slog.Debug("feature check",
+				"user_id", claims.UserID,
+				"tier", claims.Tier,
+				"required_feature", feature,
+				"has_feature", hasFeature,
+				"user_features", claims.Features,
+			)
 
-			if !enabled {
+			if !hasFeature {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusForbidden)
 				response := map[string]any{
-					"error":   "feature not available",
-					"message": getFeatureNotAvailableMessage(feature, claims.Tier),
+					"error":   "feature_not_available",
+					"message": getFeatureNotAvailableMessage(feature),
 					"feature": feature,
 					"tier":    claims.Tier,
 				}
@@ -196,38 +154,81 @@ func RequireFeature(feature string) func(http.Handler) http.Handler {
 func GetTierLimitsFromContext(ctx context.Context) *TierLimits {
 	limits, ok := ctx.Value(TierLimitsKey).(TierLimits)
 	if !ok {
-		defaultLimits := TierConfig["free"]
+		defaultLimits := constants.Tiers[constants.TierFree]
 		return &defaultLimits
 	}
 	return &limits
 }
 
 // getQuotaExceededMessage returns a user-friendly message for quota exceeded errors.
-func getQuotaExceededMessage(tier string, limit int) string {
-	switch tier {
-	case "free":
-		return "You've reached your free tier limit of 100 extractions this month. Upgrade to Starter for 1,000 monthly extractions."
-	case "starter":
-		return "You've reached your Starter plan limit of 1,000 extractions this month. Upgrade to Pro for unlimited extractions."
-	default:
-		return "You've reached your monthly extraction limit. Please contact support or upgrade your plan."
-	}
+func getQuotaExceededMessage(tier string, _ int) string {
+	return constants.QuotaExceededMessage(tier)
 }
 
 // getFeatureNotAvailableMessage returns a user-friendly message for feature not available errors.
-func getFeatureNotAvailableMessage(feature, tier string) string {
-	switch feature {
-	case "webhooks":
-		return "Webhooks are not available on the free tier. Upgrade to Starter or Pro to use webhooks."
-	case "byok":
-		return "Bring Your Own Key (BYOK) is not available on the free tier. Upgrade to Starter or Pro to use your own API keys."
-	case "antibot":
-		return "Anti-bot features are only available on the Pro plan. Upgrade to Pro for advanced anti-bot capabilities."
-	default:
-		return "This feature is not available on your current plan. Please upgrade to access this feature."
-	}
+func getFeatureNotAvailableMessage(feature string) string {
+	return constants.FeatureNotAvailableMessage(feature)
 }
 
 func intToString(n int) string {
 	return fmt.Sprintf("%d", n)
+}
+
+// JobService interface for concurrent job checking.
+type JobService interface {
+	CountActiveJobsByUser(ctx context.Context, userID string) (int, error)
+}
+
+// RequireConcurrentJobLimit returns middleware that checks if the user has capacity for more jobs.
+// This should be applied to job creation endpoints (extract, crawl).
+func RequireConcurrentJobLimit(jobSvc JobService) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims := GetUserClaims(r.Context())
+			if claims == nil {
+				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+				return
+			}
+
+			// Get tier limits
+			limits := GetTierLimits(claims.Tier)
+
+			// If unlimited (0), allow through
+			if limits.MaxConcurrentJobs == 0 {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Check current active jobs
+			activeJobs, err := jobSvc.CountActiveJobsByUser(r.Context(), claims.UserID)
+			if err != nil {
+				slog.Error("failed to count active jobs",
+					"user_id", claims.UserID,
+					"error", err,
+				)
+				http.Error(w, `{"error":"failed to check job limit"}`, http.StatusInternalServerError)
+				return
+			}
+
+			// Check if at limit
+			if activeJobs >= limits.MaxConcurrentJobs {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("X-Concurrent-Limit", intToString(limits.MaxConcurrentJobs))
+				w.Header().Set("X-Concurrent-Active", intToString(activeJobs))
+				w.WriteHeader(http.StatusTooManyRequests)
+
+				response := map[string]any{
+					"error":   "concurrent_job_limit_exceeded",
+					"message": constants.ConcurrentJobLimitMessage(claims.Tier),
+					"limit":   limits.MaxConcurrentJobs,
+					"active":  activeJobs,
+					"tier":    claims.Tier,
+				}
+				json.NewEncoder(w).Encode(response)
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
 }

@@ -144,3 +144,25 @@ func (s *JobService) GetJobResultsAfter(ctx context.Context, userID, jobID, afte
 
 	return s.repos.JobResult.GetAfter(ctx, jobID, afterID)
 }
+
+// GetCrawlMap retrieves the crawl map for a job (results ordered by depth).
+// This shows the relationship between pages discovered during the crawl.
+func (s *JobService) GetCrawlMap(ctx context.Context, userID, jobID string) ([]*models.JobResult, error) {
+	// Verify job belongs to user
+	job, err := s.GetJob(ctx, userID, jobID)
+	if err != nil || job == nil {
+		return nil, err
+	}
+
+	// Only crawl jobs have meaningful crawl maps
+	if job.Type != models.JobTypeCrawl {
+		return nil, fmt.Errorf("crawl map only available for crawl jobs")
+	}
+
+	return s.repos.JobResult.GetCrawlMap(ctx, jobID)
+}
+
+// CountActiveJobsByUser counts jobs that are pending or running for a user.
+func (s *JobService) CountActiveJobsByUser(ctx context.Context, userID string) (int, error) {
+	return s.repos.Job.CountActiveByUserID(ctx, userID)
+}

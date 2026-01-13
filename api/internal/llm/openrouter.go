@@ -13,8 +13,11 @@ const (
 	// OpenRouterAPIBase is the base URL for OpenRouter API.
 	OpenRouterAPIBase = "https://openrouter.ai/api/v1"
 
-	// DefaultTimeout for HTTP requests.
+	// DefaultTimeout for HTTP requests (cost tracking API).
 	DefaultTimeout = 30 * time.Second
+
+	// LLMTimeout for LLM completion requests (longer for free models under load).
+	LLMTimeout = 120 * time.Second
 )
 
 // OpenRouterClient provides access to OpenRouter API for cost tracking.

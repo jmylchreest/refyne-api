@@ -195,3 +195,27 @@ func GetPendingMigrations(db *sql.DB) ([]Migration, error) {
 
 	return pending, nil
 }
+
+// GetLatestVersion returns the latest applied migration version.
+// Returns empty string if no migrations have been applied.
+func GetLatestVersion(db *sql.DB) (string, error) {
+	var version sql.NullString
+	err := db.QueryRow("SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1").Scan(&version)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return version.String, nil
+}
+
+// GetMigrationCount returns the total number of applied migrations.
+func GetMigrationCount(db *sql.DB) (int, error) {
+	var count int
+	err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}

@@ -1,0 +1,101 @@
+---
+title: Crawling
+description: Extract data from multiple pages at scale
+---
+
+The crawl endpoint lets you extract data from multiple pages by following links.
+
+## Basic Crawl
+
+```bash
+curl -X POST https://api.refyne.uk/api/v1/crawl \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com/products",
+    "schema": {
+      "name": "string",
+      "price": "number"
+    },
+    "options": {
+      "follow_selector": "a.product-link",
+      "max_pages": 10
+    }
+  }'
+```
+
+## Crawl Options
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `follow_selector` | string | CSS selector for links to follow |
+| `follow_pattern` | string | Regex pattern for URLs to follow |
+| `max_pages` | number | Maximum pages to extract (default: 50) |
+| `max_depth` | number | Maximum link depth to follow (default: 2) |
+| `same_domain_only` | boolean | Only follow links on same domain (default: true) |
+| `delay` | string | Delay between requests (e.g., "1s") |
+| `concurrency` | number | Parallel requests (default: 3) |
+
+## Following Links
+
+### By CSS Selector
+
+Follow specific links on the page:
+
+```json
+{
+  "options": {
+    "follow_selector": "a.product-card",
+    "max_pages": 20
+  }
+}
+```
+
+### By URL Pattern
+
+Follow links matching a pattern:
+
+```json
+{
+  "options": {
+    "follow_pattern": "/products/[0-9]+",
+    "max_pages": 20
+  }
+}
+```
+
+## Pagination
+
+Handle paginated content:
+
+```json
+{
+  "options": {
+    "next_selector": "a.next-page",
+    "max_pages": 100
+  }
+}
+```
+
+## Job Status
+
+Crawl jobs run asynchronously. Check status:
+
+```bash
+curl https://api.refyne.uk/api/v1/jobs/JOB_ID \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+## Getting Results
+
+Retrieve crawl results:
+
+```bash
+# Individual results
+curl https://api.refyne.uk/api/v1/jobs/JOB_ID/results \
+  -H "Authorization: Bearer YOUR_API_KEY"
+
+# Merged results
+curl "https://api.refyne.uk/api/v1/jobs/JOB_ID/results?merge=true" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```

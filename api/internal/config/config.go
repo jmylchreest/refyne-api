@@ -67,6 +67,19 @@ type Config struct {
 	// Telemetry
 	TelemetryDisabled bool
 	TelemetryEndpoint string
+
+	// Object Storage (Tigris/S3-compatible)
+	StorageEnabled   bool
+	StorageEndpoint  string // AWS_ENDPOINT_URL_S3 for Tigris
+	StorageAccessKey string // AWS_ACCESS_KEY_ID
+	StorageSecretKey string // AWS_SECRET_ACCESS_KEY
+	StorageBucket    string // Bucket name (one per environment)
+	StorageRegion    string // Region (auto for Tigris)
+
+	// Cleanup
+	CleanupEnabled     bool          // Enable automatic cleanup
+	CleanupMaxAge      time.Duration // Max age of job data to keep (default 30 days)
+	CleanupInterval    time.Duration // How often to run cleanup (default 24 hours)
 }
 
 // Load reads configuration from environment variables.
@@ -106,7 +119,23 @@ func Load() (*Config, error) {
 		APIKeyHash:        getEnv("REFYNE_API_KEY_HASH", ""),
 		TelemetryDisabled: getEnvBool("REFYNE_TELEMETRY_DISABLED", false),
 		TelemetryEndpoint: getEnv("REFYNE_TELEMETRY_ENDPOINT", "https://api.refyne.uk/api/v1/telemetry/ingest"),
+
+		// Object Storage (Tigris/S3-compatible) - uses Fly's standard env vars
+		// BUCKET_NAME is set automatically by `fly storage create`
+		StorageEndpoint:  getEnv("AWS_ENDPOINT_URL_S3", ""),
+		StorageAccessKey: getEnv("AWS_ACCESS_KEY_ID", ""),
+		StorageSecretKey: getEnv("AWS_SECRET_ACCESS_KEY", ""),
+		StorageBucket:    getEnvWithFallback("BUCKET_NAME", "STORAGE_BUCKET", ""),
+		StorageRegion:    getEnv("AWS_REGION", "auto"),
 	}
+
+	// Enable storage if bucket is configured
+	cfg.StorageEnabled = cfg.StorageBucket != "" && cfg.StorageEndpoint != ""
+
+	// Cleanup configuration
+	cfg.CleanupEnabled = getEnvBool("CLEANUP_ENABLED", true)
+	cfg.CleanupMaxAge = getEnvDuration("CLEANUP_MAX_AGE", 30*24*time.Hour) // 30 days default
+	cfg.CleanupInterval = getEnvDuration("CLEANUP_INTERVAL", 24*time.Hour) // Daily default
 
 	// Validate required fields for hosted mode
 	if cfg.DeploymentMode == "hosted" {
@@ -187,6 +216,16 @@ func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
 func getEnvSlice(key string, defaultValue []string) []string {
 	if value := os.Getenv(key); value != "" {
 		return strings.Split(value, ",")
+	}
+	return defaultValue
+}
+
+func getEnvWithFallback(primary, fallback, defaultValue string) string {
+	if value := os.Getenv(primary); value != "" {
+		return value
+	}
+	if value := os.Getenv(fallback); value != "" {
+		return value
 	}
 	return defaultValue
 }

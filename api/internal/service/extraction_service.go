@@ -9,6 +9,7 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
+	"github.com/refyne/refyne/pkg/cleaner"
 	"github.com/refyne/refyne/pkg/refyne"
 	"github.com/refyne/refyne/pkg/schema"
 
@@ -120,7 +121,8 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 	}
 
 	// Parse schema first (same for all attempts)
-	sch, err := schema.FromJSON(input.Schema)
+	// Try JSON first, then YAML if JSON fails
+	sch, err := parseSchema(input.Schema)
 	if err != nil {
 		return nil, fmt.Errorf("invalid schema: %w", err)
 	}
@@ -201,12 +203,55 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 		)
 	}
 
-	// All attempts failed
+	// All attempts failed - record the failure
 	if lastErr != nil {
+		s.recordFailedExtraction(ctx, userID, input, ectx, lastCfg, isBYOK, lastErr, startTime)
 		return nil, s.handleLLMError(lastErr, lastCfg)
 	}
 
 	return nil, fmt.Errorf("extraction failed: no LLM providers configured")
+}
+
+// recordFailedExtraction records usage for a failed extraction attempt.
+func (s *ExtractionService) recordFailedExtraction(
+	ctx context.Context,
+	userID string,
+	input ExtractInput,
+	ectx *ExtractContext,
+	llmCfg *LLMConfigInput,
+	isBYOK bool,
+	err error,
+	startTime time.Time,
+) {
+	if s.billing == nil {
+		return
+	}
+
+	var byokProvider string
+	if isBYOK {
+		byokProvider = llmCfg.Provider
+	}
+
+	usageRecord := &UsageRecord{
+		UserID:          userID,
+		JobType:         models.JobTypeExtract,
+		Status:          "failed",
+		TotalChargedUSD: 0, // No charge for failed attempts
+		IsBYOK:          isBYOK,
+		TargetURL:       input.URL,
+		SchemaID:        ectx.SchemaID,
+		ErrorMessage:    err.Error(),
+		LLMProvider:     llmCfg.Provider,
+		LLMModel:        llmCfg.Model,
+		BYOKProvider:    byokProvider,
+		PagesAttempted:  1,
+		PagesSuccessful: 0,
+		TotalDurationMs: int(time.Since(startTime).Milliseconds()),
+	}
+
+	if recordErr := s.billing.RecordUsage(ctx, usageRecord); recordErr != nil {
+		s.logger.Warn("failed to record failed extraction usage", "error", recordErr)
+	}
 }
 
 // handleSuccessfulExtraction processes a successful extraction result.
@@ -287,7 +332,26 @@ func (s *ExtractionService) resolveLLMConfigsWithFallback(ctx context.Context, u
 		return []*LLMConfigInput{override}, true
 	}
 
-	// Check user's saved config
+	// Check if user has a custom fallback chain configured
+	configs := s.buildUserFallbackChain(ctx, userID)
+	if len(configs) > 0 {
+		// Log which providers/models are in the user's chain
+		providerModels := make([]string, len(configs))
+		for i, c := range configs {
+			providerModels[i] = c.Provider + ":" + c.Model
+		}
+		s.logger.Info("using user fallback chain (BYOK)",
+			"user_id", userID,
+			"entries", len(configs),
+			"chain", providerModels,
+		)
+		return configs, true
+	}
+	s.logger.Debug("no user fallback chain found, checking legacy config",
+		"user_id", userID,
+	)
+
+	// Check user's legacy saved config (single provider)
 	savedCfg, err := s.repos.LLMConfig.GetByUserID(ctx, userID)
 	if err != nil {
 		s.logger.Warn("failed to get user LLM config", "user_id", userID, "error", err)
@@ -315,7 +379,102 @@ func (s *ExtractionService) resolveLLMConfigsWithFallback(ctx context.Context, u
 	}
 
 	// No user config - use the tier-specific fallback chain
+	s.logger.Info("using system fallback chain",
+		"user_id", userID,
+		"tier", tier,
+	)
 	return s.getDefaultLLMConfigsForTier(tier), false
+}
+
+// buildUserFallbackChain builds the LLM config list from user's fallback chain and service keys.
+// Returns empty slice if user has no chain configured or no valid keys.
+func (s *ExtractionService) buildUserFallbackChain(ctx context.Context, userID string) []*LLMConfigInput {
+	if s.repos.UserFallbackChain == nil || s.repos.UserServiceKey == nil {
+		s.logger.Debug("user fallback chain repos not initialized", "user_id", userID)
+		return nil
+	}
+
+	// Get user's enabled fallback chain entries
+	chain, err := s.repos.UserFallbackChain.GetEnabledByUserID(ctx, userID)
+	if err != nil {
+		s.logger.Warn("failed to get user fallback chain", "user_id", userID, "error", err)
+		return nil
+	}
+	if len(chain) == 0 {
+		s.logger.Debug("user has no enabled fallback chain entries", "user_id", userID)
+		return nil
+	}
+	s.logger.Debug("found user fallback chain entries",
+		"user_id", userID,
+		"count", len(chain),
+	)
+
+	// Get user's service keys
+	keys, err := s.repos.UserServiceKey.GetEnabledByUserID(ctx, userID)
+	if err != nil {
+		s.logger.Warn("failed to get user service keys", "user_id", userID, "error", err)
+		return nil
+	}
+	s.logger.Debug("found user service keys",
+		"user_id", userID,
+		"count", len(keys),
+	)
+
+	// Build a map of provider -> decrypted key
+	keyMap := make(map[string]*models.UserServiceKey)
+	for _, k := range keys {
+		keyMap[k.Provider] = k
+	}
+
+	// Build configs from chain, only including entries where we have a valid key
+	var configs []*LLMConfigInput
+	for _, entry := range chain {
+		key, ok := keyMap[entry.Provider]
+		if !ok {
+			// No key for this provider, skip
+			s.logger.Debug("skipping chain entry - no key configured",
+				"user_id", userID,
+				"provider", entry.Provider,
+			)
+			continue
+		}
+
+		// Ollama doesn't require an API key
+		var apiKey string
+		if entry.Provider != "ollama" {
+			if key.APIKeyEncrypted == "" {
+				s.logger.Debug("skipping chain entry - no API key",
+					"user_id", userID,
+					"provider", entry.Provider,
+				)
+				continue
+			}
+			// Decrypt the API key
+			if s.encryptor != nil {
+				decrypted, err := s.encryptor.Decrypt(key.APIKeyEncrypted)
+				if err != nil {
+					s.logger.Warn("failed to decrypt user API key",
+						"user_id", userID,
+						"provider", entry.Provider,
+						"error", err,
+					)
+					continue
+				}
+				apiKey = decrypted
+			} else {
+				apiKey = key.APIKeyEncrypted
+			}
+		}
+
+		configs = append(configs, &LLMConfigInput{
+			Provider: entry.Provider,
+			APIKey:   apiKey,
+			BaseURL:  key.BaseURL,
+			Model:    entry.Model,
+		})
+	}
+
+	return configs
 }
 
 // boolToInt converts a bool to 1 or 0.
@@ -335,13 +494,27 @@ type CrawlInput struct {
 
 // Note: CrawlOptions is defined in job_service.go to avoid duplication
 
+// PageResult represents an individual page result from a crawl.
+type PageResult struct {
+	URL               string  `json:"url"`
+	ParentURL         *string `json:"parent_url,omitempty"` // URL that linked to this page (nil for seed)
+	Depth             int     `json:"depth"`                // Distance from seed URL (0 for seed)
+	Data              any     `json:"data,omitempty"`
+	Error             string  `json:"error,omitempty"`
+	TokenUsageInput   int     `json:"token_usage_input"`
+	TokenUsageOutput  int     `json:"token_usage_output"`
+	FetchDurationMs   int     `json:"fetch_duration_ms,omitempty"`
+	ExtractDurationMs int     `json:"extract_duration_ms,omitempty"`
+}
+
 // CrawlResult represents the result of a crawl operation.
 type CrawlResult struct {
-	Results           []any `json:"results"`
-	PageCount         int   `json:"page_count"`
-	TotalTokensInput  int   `json:"total_tokens_input"`
-	TotalTokensOutput int   `json:"total_tokens_output"`
-	TotalCredits      int   `json:"total_credits"`
+	Results           []any        `json:"results"`      // Aggregated data (backward compat)
+	PageResults       []PageResult `json:"page_results"` // Individual page results for SSE streaming
+	PageCount         int          `json:"page_count"`
+	TotalTokensInput  int          `json:"total_tokens_input"`
+	TotalTokensOutput int          `json:"total_tokens_output"`
+	TotalCredits      int          `json:"total_credits"`
 }
 
 // Crawl performs a multi-page crawl extraction.
@@ -359,8 +532,8 @@ func (s *ExtractionService) Crawl(ctx context.Context, userID string, input Craw
 		"model", llmCfg.Model,
 	)
 
-	// Parse schema
-	sch, err := schema.FromJSON(input.Schema)
+	// Parse schema (supports both JSON and YAML)
+	sch, err := parseSchema(input.Schema)
 	if err != nil {
 		return nil, fmt.Errorf("invalid schema: %w", err)
 	}
@@ -379,8 +552,14 @@ func (s *ExtractionService) Crawl(ctx context.Context, userID string, input Craw
 	results := r.Crawl(ctx, input.URL, sch, crawlOpts...)
 
 	// Aggregate results
+	// Track URLs we've seen to determine depth (seed URL = depth 0, others = depth 1+)
+	seedURL := input.URL
+	seenURLs := make(map[string]int) // URL -> depth
+	seenURLs[seedURL] = 0
+
 	var (
 		data              []any
+		pageResults       []PageResult
 		totalTokensInput  int
 		totalTokensOutput int
 		pageCount         int
@@ -388,13 +567,47 @@ func (s *ExtractionService) Crawl(ctx context.Context, userID string, input Craw
 	)
 
 	for result := range results {
+		// Determine depth and parent URL based on whether this is the seed
+		var parentURL *string
+		depth := 0
+		if result.URL != seedURL {
+			// Non-seed URL - set parent to seed and depth based on discovery order
+			parentURL = &seedURL
+			// If we haven't seen this URL yet, assign next depth level
+			if existingDepth, seen := seenURLs[result.URL]; seen {
+				depth = existingDepth
+			} else {
+				// URLs discovered during crawl get depth = 1 (directly linked from seed)
+				// Note: refyne doesn't expose actual depth, so we approximate
+				depth = 1
+				seenURLs[result.URL] = depth
+			}
+		}
+
 		if result.Error != nil {
 			s.logger.Warn("crawl page error", "url", result.URL, "error", result.Error)
 			lastError = result.Error
+			// Still track failed pages for SSE streaming and crawl map
+			pageResults = append(pageResults, PageResult{
+				URL:       result.URL,
+				ParentURL: parentURL,
+				Depth:     depth,
+				Error:     result.Error.Error(),
+			})
 			continue
 		}
 
 		data = append(data, result.Data)
+		pageResults = append(pageResults, PageResult{
+			URL:               result.URL,
+			ParentURL:         parentURL,
+			Depth:             depth,
+			Data:              result.Data,
+			TokenUsageInput:   result.TokenUsage.InputTokens,
+			TokenUsageOutput:  result.TokenUsage.OutputTokens,
+			FetchDurationMs:   int(result.FetchDuration.Milliseconds()),
+			ExtractDurationMs: int(result.ExtractDuration.Milliseconds()),
+		})
 		totalTokensInput += result.TokenUsage.InputTokens
 		totalTokensOutput += result.TokenUsage.OutputTokens
 		pageCount++
@@ -424,6 +637,144 @@ func (s *ExtractionService) Crawl(ctx context.Context, userID string, input Craw
 
 	return &CrawlResult{
 		Results:           data,
+		PageResults:       pageResults,
+		PageCount:         pageCount,
+		TotalTokensInput:  totalTokensInput,
+		TotalTokensOutput: totalTokensOutput,
+		TotalCredits:      totalCredits,
+	}, nil
+}
+
+// CrawlResultCallback is called for each page result during a crawl.
+// Return an error to stop the crawl early.
+type CrawlResultCallback func(result PageResult) error
+
+// CrawlWithCallback performs a multi-page crawl extraction with a callback for each result.
+// This allows incremental processing of results (e.g., saving to database as they come in).
+func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string, input CrawlInput, callback CrawlResultCallback) (*CrawlResult, error) {
+	// Resolve LLM configuration
+	llmCfg, err := s.resolveLLMConfig(ctx, userID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve LLM config: %w", err)
+	}
+
+	s.logger.Info("crawl starting",
+		"user_id", userID,
+		"url", input.URL,
+		"provider", llmCfg.Provider,
+		"model", llmCfg.Model,
+	)
+
+	// Parse schema (supports both JSON and YAML)
+	sch, err := parseSchema(input.Schema)
+	if err != nil {
+		return nil, fmt.Errorf("invalid schema: %w", err)
+	}
+
+	// Create refyne instance
+	r, err := s.createRefyneInstance(llmCfg)
+	if err != nil {
+		return nil, s.handleLLMError(err, llmCfg)
+	}
+	defer r.Close()
+
+	// Build crawl options
+	crawlOpts := s.buildCrawlOptions(input.Options)
+
+	// Perform crawl - Crawl returns a channel of results
+	results := r.Crawl(ctx, input.URL, sch, crawlOpts...)
+
+	// Aggregate results while calling callback for each
+	seedURL := input.URL
+	seenURLs := make(map[string]int)
+	seenURLs[seedURL] = 0
+
+	var (
+		data              []any
+		pageResults       []PageResult
+		totalTokensInput  int
+		totalTokensOutput int
+		pageCount         int
+		lastError         error
+	)
+
+	for result := range results {
+		// Determine depth and parent URL based on whether this is the seed
+		var parentURL *string
+		depth := 0
+		if result.URL != seedURL {
+			parentURL = &seedURL
+			if existingDepth, seen := seenURLs[result.URL]; seen {
+				depth = existingDepth
+			} else {
+				depth = 1
+				seenURLs[result.URL] = depth
+			}
+		}
+
+		var pageResult PageResult
+		if result.Error != nil {
+			s.logger.Warn("crawl page error", "url", result.URL, "error", result.Error)
+			lastError = result.Error
+			pageResult = PageResult{
+				URL:       result.URL,
+				ParentURL: parentURL,
+				Depth:     depth,
+				Error:     result.Error.Error(),
+			}
+		} else {
+			data = append(data, result.Data)
+			pageResult = PageResult{
+				URL:               result.URL,
+				ParentURL:         parentURL,
+				Depth:             depth,
+				Data:              result.Data,
+				TokenUsageInput:   result.TokenUsage.InputTokens,
+				TokenUsageOutput:  result.TokenUsage.OutputTokens,
+				FetchDurationMs:   int(result.FetchDuration.Milliseconds()),
+				ExtractDurationMs: int(result.ExtractDuration.Milliseconds()),
+			}
+			totalTokensInput += result.TokenUsage.InputTokens
+			totalTokensOutput += result.TokenUsage.OutputTokens
+			pageCount++
+		}
+
+		pageResults = append(pageResults, pageResult)
+
+		// Call the callback for this result
+		if callback != nil {
+			if err := callback(pageResult); err != nil {
+				s.logger.Error("callback error, stopping crawl", "error", err)
+				break
+			}
+		}
+	}
+
+	// If no results and we have an error, return the error
+	if pageCount == 0 && lastError != nil {
+		return nil, s.handleLLMError(lastError, llmCfg)
+	}
+
+	// Calculate cost
+	totalTokens := totalTokensInput + totalTokensOutput
+	totalCredits := (totalTokens + 999) / 1000
+
+	// Record usage
+	s.recordUsageLegacy(ctx, userID, "", models.JobTypeCrawl, pageCount,
+		totalTokensInput, totalTokensOutput, totalCredits,
+		llmCfg.Provider, llmCfg.Model)
+
+	s.logger.Info("crawl completed",
+		"user_id", userID,
+		"url", input.URL,
+		"page_count", pageCount,
+		"total_input_tokens", totalTokensInput,
+		"total_output_tokens", totalTokensOutput,
+	)
+
+	return &CrawlResult{
+		Results:           data,
+		PageResults:       pageResults,
 		PageCount:         pageCount,
 		TotalTokensInput:  totalTokensInput,
 		TotalTokensOutput: totalTokensOutput,
@@ -432,9 +783,20 @@ func (s *ExtractionService) Crawl(ctx context.Context, userID string, input Craw
 }
 
 // createRefyneInstance creates a new refyne instance with the given LLM config.
+// Uses Trafilatura (text output) -> Markdown cleaner chain and a 120s timeout.
 func (s *ExtractionService) createRefyneInstance(llmCfg *LLMConfigInput) (*refyne.Refyne, error) {
+	// Create cleaner chain: Trafilatura (text output) -> Markdown
+	// This extracts main content and converts to clean markdown for the LLM
+	trafilaturaCleaner := cleaner.NewTrafilatura(&cleaner.TrafilaturaConfig{
+		Output: cleaner.OutputText, // Text output for cleaner result
+	})
+	markdownCleaner := cleaner.NewMarkdown()
+	cleanerChain := cleaner.NewChain(trafilaturaCleaner, markdownCleaner)
+
 	opts := []refyne.Option{
 		refyne.WithProvider(llmCfg.Provider),
+		refyne.WithCleaner(cleanerChain),
+		refyne.WithTimeout(llm.LLMTimeout), // 120s timeout for LLM requests
 	}
 
 	if llmCfg.APIKey != "" {
@@ -508,13 +870,25 @@ func (s *ExtractionService) handleLLMError(err error, llmCfg *LLMConfigInput) er
 }
 
 // resolveLLMConfig determines which LLM configuration to use.
+// This is a simpler version that returns a single config (for Crawl operations).
 func (s *ExtractionService) resolveLLMConfig(ctx context.Context, userID string, override *LLMConfigInput) (*LLMConfigInput, error) {
 	// If override provided with provider, use it
 	if override != nil && override.Provider != "" {
 		return override, nil
 	}
 
-	// Check user's saved config
+	// 1. Check user's fallback chain first (new system)
+	configs := s.buildUserFallbackChain(ctx, userID)
+	if len(configs) > 0 {
+		s.logger.Info("using user fallback chain for crawl (BYOK)",
+			"user_id", userID,
+			"provider", configs[0].Provider,
+			"model", configs[0].Model,
+		)
+		return configs[0], nil
+	}
+
+	// 2. Check user's legacy saved config
 	savedCfg, err := s.repos.LLMConfig.GetByUserID(ctx, userID)
 	if err != nil {
 		s.logger.Warn("failed to get user LLM config", "user_id", userID, "error", err)
@@ -534,6 +908,10 @@ func (s *ExtractionService) resolveLLMConfig(ctx context.Context, userID string,
 			}
 		}
 
+		s.logger.Info("using legacy user config for crawl (BYOK)",
+			"user_id", userID,
+			"provider", savedCfg.Provider,
+		)
 		return &LLMConfigInput{
 			Provider: savedCfg.Provider,
 			APIKey:   apiKey,
@@ -542,7 +920,10 @@ func (s *ExtractionService) resolveLLMConfig(ctx context.Context, userID string,
 		}, nil
 	}
 
-	// Default to service keys or free tier
+	// 3. Default to service keys or free tier
+	s.logger.Info("using system config for crawl",
+		"user_id", userID,
+	)
 	return s.getDefaultLLMConfig(), nil
 }
 
@@ -835,6 +1216,25 @@ func (s *ExtractionService) recordUsageLegacy(ctx context.Context, userID, jobID
 // ========================================
 // Helper Methods
 // ========================================
+
+// parseSchema attempts to parse schema data as JSON first, then YAML if JSON fails.
+// This allows the API to accept schemas in either format.
+func parseSchema(data []byte) (schema.Schema, error) {
+	// Try JSON first (most common)
+	sch, err := schema.FromJSON(data)
+	if err == nil {
+		return sch, nil
+	}
+
+	// If JSON fails, try YAML
+	sch, yamlErr := schema.FromYAML(data)
+	if yamlErr == nil {
+		return sch, nil
+	}
+
+	// Both failed - return the JSON error as it's the primary format
+	return schema.Schema{}, fmt.Errorf("invalid schema format (tried JSON and YAML): %w", err)
+}
 
 // detectBYOK determines if the user provided their own API key (Bring Your Own Key).
 // BYOK users are not charged for API usage.

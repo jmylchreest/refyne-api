@@ -1,0 +1,59 @@
+# fly.toml - Fly.io configuration for refyne-api
+# Deploy: fly launch (first time) or fly deploy (updates)
+# Docs: https://fly.io/docs/reference/configuration/
+
+app = "refyne-api"
+primary_region = "sjc"  # San Jose - change to your preferred region
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  # DATABASE_URL, TURSO_URL, TURSO_AUTH_TOKEN set via: fly secrets set KEY=value
+  # CLERK_ISSUER_URL, CLERK_SECRET_KEY set via: fly secrets set KEY=value
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 250
+    soft_limit = 200
+
+[[http_service.checks]]
+  grace_period = "10s"
+  interval = "30s"
+  method = "GET"
+  timeout = "5s"
+  path = "/health"
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1
+
+# Persistent volume for SQLite (if not using Turso)
+# Uncomment if you need local SQLite persistence:
+# [[mounts]]
+#   source = "refyne_data"
+#   destination = "/data"
+
+# Tigris Object Storage (for job result persistence)
+# Create bucket: fly storage create
+# This automatically sets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
+#                          AWS_ENDPOINT_URL_S3, BUCKET_NAME
+#
+# For multiple environments, create separate buckets:
+#   fly storage create --app refyne-api-staging
+#   fly storage create --app refyne-api
+#
+# Optional cleanup settings (via fly secrets set):
+#   CLEANUP_ENABLED=true          # Enable auto-cleanup (default: true)
+#   CLEANUP_MAX_AGE=720h          # Keep job data for 30 days (default)
+#   CLEANUP_INTERVAL=24h          # Run cleanup daily (default)

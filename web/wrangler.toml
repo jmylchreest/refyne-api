@@ -1,0 +1,17 @@
+# wrangler.toml - Cloudflare Pages configuration
+# Deploy: wrangler pages deploy .next --project-name=refyne-web
+# Or connect GitHub repo in Cloudflare Dashboard for auto-deploy
+# Docs: https://developers.cloudflare.com/pages/
+
+name = "refyne-web"
+compatibility_date = "2024-01-01"
+pages_build_output_dir = ".next"
+
+# Environment variables (set in Cloudflare Dashboard or via wrangler CLI)
+# wrangler pages secret put NEXT_PUBLIC_API_URL
+# wrangler pages secret put NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+# wrangler pages secret put CLERK_SECRET_KEY
+
+[vars]
+# Public vars can go here, secrets via dashboard/CLI
+# NEXT_PUBLIC_API_URL = "https://refyne-api.fly.dev"

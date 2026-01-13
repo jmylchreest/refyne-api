@@ -17,12 +17,16 @@ import (
 
 // JobHandler handles job endpoints.
 type JobHandler struct {
-	jobSvc *service.JobService
+	jobSvc     *service.JobService
+	storageSvc *service.StorageService
 }
 
 // NewJobHandler creates a new job handler.
-func NewJobHandler(jobSvc *service.JobService) *JobHandler {
-	return &JobHandler{jobSvc: jobSvc}
+func NewJobHandler(jobSvc *service.JobService, storageSvc *service.StorageService) *JobHandler {
+	return &JobHandler{
+		jobSvc:     jobSvc,
+		storageSvc: storageSvc,
+	}
 }
 
 // CreateCrawlJobInput represents crawl job creation request.
@@ -262,6 +266,14 @@ func (h *JobHandler) StreamResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Disable write timeout for SSE - jobs can run for a long time
+	// Use ResponseController (Go 1.20+) to extend the write deadline
+	rc := http.NewResponseController(w)
+	if err := rc.SetWriteDeadline(time.Time{}); err != nil {
+		// If we can't disable the deadline, log but continue - some proxies may not support this
+		// The connection will just close after the server's WriteTimeout
+	}
+
 	// Send initial status
 	sendSSEEvent(w, flusher, "status", map[string]any{
 		"job_id": job.ID,
@@ -289,17 +301,24 @@ func (h *JobHandler) StreamResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Poll for results
+	// Poll for results with heartbeat to prevent proxy timeouts
 	var lastResultID string
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
+	pollTicker := time.NewTicker(1 * time.Second)
+	defer pollTicker.Stop()
+
+	// Heartbeat every 15 seconds to keep connection alive through proxies
+	heartbeatTicker := time.NewTicker(15 * time.Second)
+	defer heartbeatTicker.Stop()
 
 	ctx := r.Context()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-heartbeatTicker.C:
+			// Send heartbeat to keep connection alive
+			sendSSEHeartbeat(w, flusher)
+		case <-pollTicker.C:
 			// Check for new results
 			results, err := h.jobSvc.GetJobResultsAfter(ctx, userID, jobID, lastResultID)
 			if err != nil {
@@ -356,4 +375,329 @@ func sendSSEEvent(w http.ResponseWriter, flusher http.Flusher, event string, dat
 	fmt.Fprintf(w, "event: %s\n", event)
 	fmt.Fprintf(w, "data: %s\n\n", jsonData)
 	flusher.Flush()
+}
+
+// sendSSEHeartbeat sends an SSE comment as a keepalive/heartbeat.
+// SSE comments start with a colon and are ignored by the client EventSource API.
+func sendSSEHeartbeat(w http.ResponseWriter, flusher http.Flusher) {
+	fmt.Fprintf(w, ": heartbeat\n\n")
+	flusher.Flush()
+}
+
+// GetCrawlMapInput represents crawl map request.
+type GetCrawlMapInput struct {
+	ID string `path:"id" doc:"Job ID"`
+}
+
+// CrawlMapEntry represents a single entry in the crawl map.
+type CrawlMapEntry struct {
+	ID                string  `json:"id" doc:"Result ID"`
+	URL               string  `json:"url" doc:"Page URL"`
+	ParentURL         *string `json:"parent_url,omitempty" doc:"URL that discovered this page (null for seed)"`
+	Depth             int     `json:"depth" doc:"Crawl depth (0 for seed URL)"`
+	Status            string  `json:"status" doc:"Crawl status: pending, crawling, completed, failed, skipped"`
+	ErrorMessage      string  `json:"error_message,omitempty" doc:"Error message if failed"`
+	TokenUsageInput   int     `json:"token_usage_input" doc:"Input tokens used"`
+	TokenUsageOutput  int     `json:"token_usage_output" doc:"Output tokens used"`
+	FetchDurationMs   int     `json:"fetch_duration_ms" doc:"Time to fetch page in ms"`
+	ExtractDurationMs int     `json:"extract_duration_ms" doc:"Time to extract data in ms"`
+	DiscoveredAt      string  `json:"discovered_at,omitempty" doc:"When URL was discovered"`
+	CompletedAt       string  `json:"completed_at,omitempty" doc:"When processing completed"`
+}
+
+// GetCrawlMapOutput represents crawl map response.
+type GetCrawlMapOutput struct {
+	Body struct {
+		JobID    string          `json:"job_id" doc:"Job ID"`
+		SeedURL  string          `json:"seed_url" doc:"Initial seed URL"`
+		Total    int             `json:"total" doc:"Total pages in crawl map"`
+		MaxDepth int             `json:"max_depth" doc:"Maximum depth reached"`
+		Entries  []CrawlMapEntry `json:"entries" doc:"Crawl map entries ordered by depth"`
+	}
+}
+
+// GetCrawlMap handles getting the crawl map for a job.
+func (h *JobHandler) GetCrawlMap(ctx context.Context, input *GetCrawlMapInput) (*GetCrawlMapOutput, error) {
+	userID := getUserID(ctx)
+	if userID == "" {
+		return nil, huma.Error401Unauthorized("unauthorized")
+	}
+
+	results, err := h.jobSvc.GetCrawlMap(ctx, userID, input.ID)
+	if err != nil {
+		if err.Error() == "crawl map only available for crawl jobs" {
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+		return nil, huma.Error500InternalServerError("failed to get crawl map: " + err.Error())
+	}
+	if results == nil {
+		return nil, huma.Error404NotFound("job not found")
+	}
+
+	// Build response
+	var entries []CrawlMapEntry
+	var seedURL string
+	var maxDepth int
+
+	for _, r := range results {
+		// Track seed URL and max depth
+		if r.Depth == 0 {
+			seedURL = r.URL
+		}
+		if r.Depth > maxDepth {
+			maxDepth = r.Depth
+		}
+
+		entry := CrawlMapEntry{
+			ID:                r.ID,
+			URL:               r.URL,
+			ParentURL:         r.ParentURL,
+			Depth:             r.Depth,
+			Status:            string(r.CrawlStatus),
+			ErrorMessage:      r.ErrorMessage,
+			TokenUsageInput:   r.TokenUsageInput,
+			TokenUsageOutput:  r.TokenUsageOutput,
+			FetchDurationMs:   r.FetchDurationMs,
+			ExtractDurationMs: r.ExtractDurationMs,
+		}
+		if r.DiscoveredAt != nil {
+			entry.DiscoveredAt = r.DiscoveredAt.Format(time.RFC3339)
+		}
+		if r.CompletedAt != nil {
+			entry.CompletedAt = r.CompletedAt.Format(time.RFC3339)
+		}
+		entries = append(entries, entry)
+	}
+
+	return &GetCrawlMapOutput{
+		Body: struct {
+			JobID    string          `json:"job_id" doc:"Job ID"`
+			SeedURL  string          `json:"seed_url" doc:"Initial seed URL"`
+			Total    int             `json:"total" doc:"Total pages in crawl map"`
+			MaxDepth int             `json:"max_depth" doc:"Maximum depth reached"`
+			Entries  []CrawlMapEntry `json:"entries" doc:"Crawl map entries ordered by depth"`
+		}{
+			JobID:    input.ID,
+			SeedURL:  seedURL,
+			Total:    len(entries),
+			MaxDepth: maxDepth,
+			Entries:  entries,
+		},
+	}, nil
+}
+
+// GetJobResultsInput represents job results request.
+type GetJobResultsInput struct {
+	ID    string `path:"id" doc:"Job ID"`
+	Merge bool   `query:"merge" default:"false" doc:"Merge all results into a single object"`
+}
+
+// JobResultEntry represents a single result in the response.
+type JobResultEntry struct {
+	ID   string          `json:"id" doc:"Result ID"`
+	URL  string          `json:"url" doc:"Page URL"`
+	Data json.RawMessage `json:"data" doc:"Extracted data"`
+}
+
+// GetJobResultsOutput represents job results response.
+type GetJobResultsOutput struct {
+	Body struct {
+		JobID     string           `json:"job_id" doc:"Job ID"`
+		Status    string           `json:"status" doc:"Job status"`
+		PageCount int              `json:"page_count" doc:"Number of pages processed"`
+		Results   []JobResultEntry `json:"results,omitempty" doc:"Extraction results (when merge=false)"`
+		Merged    map[string]any   `json:"merged,omitempty" doc:"Merged extraction result (when merge=true)"`
+	}
+}
+
+// GetJobResults returns the extraction results for a job.
+func (h *JobHandler) GetJobResults(ctx context.Context, input *GetJobResultsInput) (*GetJobResultsOutput, error) {
+	userID := getUserID(ctx)
+	if userID == "" {
+		return nil, huma.Error401Unauthorized("unauthorized")
+	}
+
+	// Verify job exists and belongs to user
+	job, err := h.jobSvc.GetJob(ctx, userID, input.ID)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to get job: " + err.Error())
+	}
+	if job == nil {
+		return nil, huma.Error404NotFound("job not found")
+	}
+
+	// Get results
+	results, err := h.jobSvc.GetJobResults(ctx, userID, input.ID)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to get results: " + err.Error())
+	}
+
+	output := &GetJobResultsOutput{
+		Body: struct {
+			JobID     string           `json:"job_id" doc:"Job ID"`
+			Status    string           `json:"status" doc:"Job status"`
+			PageCount int              `json:"page_count" doc:"Number of pages processed"`
+			Results   []JobResultEntry `json:"results,omitempty" doc:"Extraction results (when merge=false)"`
+			Merged    map[string]any   `json:"merged,omitempty" doc:"Merged extraction result (when merge=true)"`
+		}{
+			JobID:     job.ID,
+			Status:    string(job.Status),
+			PageCount: len(results),
+		},
+	}
+
+	if input.Merge {
+		// Merge all results into a single object
+		merged := make(map[string]any)
+		for _, r := range results {
+			if r.DataJSON == "" {
+				continue
+			}
+			var data map[string]any
+			if err := json.Unmarshal([]byte(r.DataJSON), &data); err != nil {
+				continue // Skip malformed data
+			}
+			deepMergeResults(merged, data)
+		}
+		output.Body.Merged = merged
+	} else {
+		// Return individual results
+		var entries []JobResultEntry
+		for _, r := range results {
+			entries = append(entries, JobResultEntry{
+				ID:   r.ID,
+				URL:  r.URL,
+				Data: json.RawMessage(r.DataJSON),
+			})
+		}
+		output.Body.Results = entries
+	}
+
+	return output, nil
+}
+
+// deepMergeResults merges src into dst.
+// Arrays are concatenated and deduplicated, primitives use first non-nil value.
+func deepMergeResults(dst, src map[string]any) {
+	for key, srcVal := range src {
+		if srcVal == nil {
+			continue
+		}
+
+		dstVal, exists := dst[key]
+		if !exists || dstVal == nil {
+			dst[key] = srcVal
+			continue
+		}
+
+		// Both exist and non-nil
+		switch srcTyped := srcVal.(type) {
+		case []any:
+			if dstArr, ok := dstVal.([]any); ok {
+				// Concatenate arrays and deduplicate
+				dst[key] = dedupeArray(append(dstArr, srcTyped...))
+			}
+		case map[string]any:
+			if dstMap, ok := dstVal.(map[string]any); ok {
+				// Recursively merge nested objects
+				deepMergeResults(dstMap, srcTyped)
+			}
+		// Primitives: keep first value (already set)
+		}
+	}
+}
+
+// dedupeArray removes duplicate elements from an array.
+// Uses JSON serialization for comparison to handle complex objects.
+func dedupeArray(arr []any) []any {
+	if len(arr) == 0 {
+		return arr
+	}
+
+	seen := make(map[string]bool)
+	result := make([]any, 0, len(arr))
+
+	for _, item := range arr {
+		// Serialize to JSON for comparison
+		key, err := json.Marshal(item)
+		if err != nil {
+			// If serialization fails, include the item anyway
+			result = append(result, item)
+			continue
+		}
+
+		keyStr := string(key)
+		if !seen[keyStr] {
+			seen[keyStr] = true
+			result = append(result, item)
+		}
+	}
+
+	return result
+}
+
+// GetJobResultsDownloadInput represents job results download request.
+type GetJobResultsDownloadInput struct {
+	ID string `path:"id" doc:"Job ID"`
+}
+
+// GetJobResultsDownloadOutput represents job results download response.
+type GetJobResultsDownloadOutput struct {
+	Body struct {
+		JobID       string `json:"job_id" doc:"Job ID"`
+		DownloadURL string `json:"download_url" doc:"Presigned URL to download results (valid for 1 hour)"`
+		ExpiresAt   string `json:"expires_at" doc:"URL expiration time"`
+	}
+}
+
+// GetJobResultsDownload returns a presigned URL for downloading job results.
+func (h *JobHandler) GetJobResultsDownload(ctx context.Context, input *GetJobResultsDownloadInput) (*GetJobResultsDownloadOutput, error) {
+	userID := getUserID(ctx)
+	if userID == "" {
+		return nil, huma.Error401Unauthorized("unauthorized")
+	}
+
+	// Verify job exists and belongs to user
+	job, err := h.jobSvc.GetJob(ctx, userID, input.ID)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to get job: " + err.Error())
+	}
+	if job == nil {
+		return nil, huma.Error404NotFound("job not found")
+	}
+
+	// Check if job is completed
+	if job.Status != models.JobStatusCompleted {
+		return nil, huma.Error400BadRequest("job results not available - status: " + string(job.Status))
+	}
+
+	// Check if storage is enabled
+	if h.storageSvc == nil || !h.storageSvc.IsEnabled() {
+		return nil, huma.Error503ServiceUnavailable("result storage is not configured")
+	}
+
+	// Check if results exist in storage
+	exists, err := h.storageSvc.JobResultExists(ctx, input.ID)
+	if err != nil || !exists {
+		return nil, huma.Error404NotFound("results not found in storage - job may have been processed before storage was enabled")
+	}
+
+	// Generate presigned URL (valid for 1 hour)
+	expiry := 1 * time.Hour
+	downloadURL, err := h.storageSvc.GetJobResultsPresignedURL(ctx, input.ID, expiry)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to generate download URL: " + err.Error())
+	}
+
+	return &GetJobResultsDownloadOutput{
+		Body: struct {
+			JobID       string `json:"job_id" doc:"Job ID"`
+			DownloadURL string `json:"download_url" doc:"Presigned URL to download results (valid for 1 hour)"`
+			ExpiresAt   string `json:"expires_at" doc:"URL expiration time"`
+		}{
+			JobID:       input.ID,
+			DownloadURL: downloadURL,
+			ExpiresAt:   time.Now().Add(expiry).Format(time.RFC3339),
+		},
+	}, nil
 }

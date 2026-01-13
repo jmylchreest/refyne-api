@@ -36,6 +36,13 @@ type JobRepository interface {
 	ClaimJob(ctx context.Context, id string) (*models.Job, error)
 	// ClaimPending atomically claims the next pending job and returns it
 	ClaimPending(ctx context.Context) (*models.Job, error)
+	// DeleteOlderThan deletes jobs older than the specified time and returns the deleted job IDs
+	DeleteOlderThan(ctx context.Context, before time.Time) ([]string, error)
+	// MarkStaleRunningJobsFailed marks jobs that have been running longer than maxAge as failed
+	// Returns the number of jobs marked as failed
+	MarkStaleRunningJobsFailed(ctx context.Context, maxAge time.Duration) (int64, error)
+	// CountActiveByUserID counts jobs that are pending or running for a user
+	CountActiveByUserID(ctx context.Context, userID string) (int, error)
 }
 
 // JobResultRepository defines methods for job result data access.
@@ -43,6 +50,10 @@ type JobResultRepository interface {
 	Create(ctx context.Context, result *models.JobResult) error
 	GetByJobID(ctx context.Context, jobID string) ([]*models.JobResult, error)
 	GetAfter(ctx context.Context, jobID, afterID string) ([]*models.JobResult, error)
+	// GetCrawlMap returns results ordered by depth for crawl map visualization
+	GetCrawlMap(ctx context.Context, jobID string) ([]*models.JobResult, error)
+	// DeleteByJobIDs deletes all results for the specified job IDs
+	DeleteByJobIDs(ctx context.Context, jobIDs []string) error
 }
 
 // UsageRepository defines methods for usage data access (lean billing table).
@@ -153,6 +164,60 @@ type FallbackChainRepository interface {
 	Reorder(ctx context.Context, ids []string) error
 }
 
+// SchemaCatalogRepository defines methods for schema catalog data access.
+type SchemaCatalogRepository interface {
+	Create(ctx context.Context, schema *models.SchemaCatalog) error
+	GetByID(ctx context.Context, id string) (*models.SchemaCatalog, error)
+	Update(ctx context.Context, schema *models.SchemaCatalog) error
+	Delete(ctx context.Context, id string) error
+	// ListForUser returns schemas visible to a user (their own + platform + optionally public)
+	ListForUser(ctx context.Context, userID string, orgID *string, includePublic bool) ([]*models.SchemaCatalog, error)
+	// ListPlatform returns all platform schemas
+	ListPlatform(ctx context.Context) ([]*models.SchemaCatalog, error)
+	// ListByCategory returns schemas in a category
+	ListByCategory(ctx context.Context, category string) ([]*models.SchemaCatalog, error)
+	// ListAll returns all schemas (for admin)
+	ListAll(ctx context.Context) ([]*models.SchemaCatalog, error)
+	// IncrementUsage increments the usage count for a schema
+	IncrementUsage(ctx context.Context, id string) error
+}
+
+// SavedSitesRepository defines methods for saved sites data access.
+type SavedSitesRepository interface {
+	Create(ctx context.Context, site *models.SavedSite) error
+	GetByID(ctx context.Context, id string) (*models.SavedSite, error)
+	Update(ctx context.Context, site *models.SavedSite) error
+	Delete(ctx context.Context, id string) error
+	// ListByUserID returns saved sites for a user
+	ListByUserID(ctx context.Context, userID string) ([]*models.SavedSite, error)
+	// ListByOrganizationID returns saved sites for an organization
+	ListByOrganizationID(ctx context.Context, orgID string) ([]*models.SavedSite, error)
+	// ListByDomain returns saved sites for a domain
+	ListByDomain(ctx context.Context, userID, domain string) ([]*models.SavedSite, error)
+}
+
+// UserServiceKeyRepository defines methods for user-configured LLM provider keys.
+// These allow users to use their own API keys for LLM providers.
+type UserServiceKeyRepository interface {
+	Upsert(ctx context.Context, key *models.UserServiceKey) error
+	GetByID(ctx context.Context, id string) (*models.UserServiceKey, error)
+	GetByUserID(ctx context.Context, userID string) ([]*models.UserServiceKey, error)
+	GetByUserAndProvider(ctx context.Context, userID, provider string) (*models.UserServiceKey, error)
+	GetEnabledByUserID(ctx context.Context, userID string) ([]*models.UserServiceKey, error)
+	Delete(ctx context.Context, id string) error
+}
+
+// UserFallbackChainRepository defines methods for user-configured LLM fallback chains.
+// Allows users to define their own provider/model order for extractions.
+type UserFallbackChainRepository interface {
+	// GetByUserID returns all entries for a user
+	GetByUserID(ctx context.Context, userID string) ([]*models.UserFallbackChainEntry, error)
+	// GetEnabledByUserID returns enabled entries for a user in position order
+	GetEnabledByUserID(ctx context.Context, userID string) ([]*models.UserFallbackChainEntry, error)
+	// ReplaceAll replaces all entries for a user
+	ReplaceAll(ctx context.Context, userID string, entries []*models.UserFallbackChainEntry) error
+}
+
 // Repositories holds all repository instances.
 type Repositories struct {
 	APIKey            APIKeyRepository
@@ -168,6 +233,10 @@ type Repositories struct {
 	License           LicenseRepository
 	ServiceKey        ServiceKeyRepository
 	FallbackChain     FallbackChainRepository
+	SchemaCatalog     SchemaCatalogRepository
+	SavedSites        SavedSitesRepository
+	UserServiceKey    UserServiceKeyRepository
+	UserFallbackChain UserFallbackChainRepository
 }
 
 // NewRepositories creates all repository instances.
@@ -186,5 +255,9 @@ func NewRepositories(db *sql.DB) *Repositories {
 		License:           NewSQLiteLicenseRepository(db),
 		ServiceKey:        NewSQLiteServiceKeyRepository(db),
 		FallbackChain:     NewSQLiteFallbackChainRepository(db),
+		SchemaCatalog:     NewSQLiteSchemaCatalogRepository(db),
+		SavedSites:        NewSQLiteSavedSitesRepository(db),
+		UserServiceKey:    NewSQLiteUserServiceKeyRepository(db),
+		UserFallbackChain: NewSQLiteUserFallbackChainRepository(db),
 	}
 }

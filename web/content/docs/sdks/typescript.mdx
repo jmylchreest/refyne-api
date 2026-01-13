@@ -1,0 +1,130 @@
+---
+title: TypeScript SDK
+description: Official TypeScript/JavaScript client for Refyne
+---
+
+The official TypeScript SDK for Refyne with full type support.
+
+## Installation
+
+```bash
+npm install @refyne/sdk
+# or
+yarn add @refyne/sdk
+# or
+pnpm add @refyne/sdk
+```
+
+## Quick Start
+
+```typescript
+import { Refyne } from '@refyne/sdk';
+
+const refyne = new Refyne({
+  apiKey: process.env.REFYNE_API_KEY,
+});
+
+// Extract data from a page
+const result = await refyne.extract({
+  url: 'https://example.com/product',
+  schema: {
+    name: 'string',
+    price: 'number',
+    description: 'string',
+  },
+});
+
+console.log(result.data);
+// { name: "Product Name", price: 29.99, description: "..." }
+```
+
+## Type-Safe Schemas
+
+Define schemas with TypeScript types:
+
+```typescript
+interface ProductSchema {
+  name: string;
+  price: number;
+  inStock: boolean;
+  tags: string[];
+}
+
+const result = await refyne.extract<ProductSchema>({
+  url: 'https://example.com/product',
+  schema: {
+    name: 'string',
+    price: 'number',
+    inStock: 'boolean',
+    tags: ['string'],
+  },
+});
+
+// result.data is typed as ProductSchema
+```
+
+## Crawling
+
+```typescript
+// Start a crawl job
+const job = await refyne.crawl({
+  url: 'https://example.com/products',
+  schema: { name: 'string', price: 'number' },
+  options: {
+    followSelector: 'a.product-link',
+    maxPages: 20,
+  },
+});
+
+// Check job status
+const status = await refyne.jobs.get(job.jobId);
+
+// Get results
+const results = await refyne.jobs.getResults(job.jobId);
+
+// Get merged results
+const merged = await refyne.jobs.getResults(job.jobId, { merge: true });
+```
+
+## Site Analysis
+
+```typescript
+const analysis = await refyne.analyze({
+  url: 'https://example.com',
+  depth: 1,
+});
+
+console.log(analysis.suggestedSchema);
+console.log(analysis.followPatterns);
+```
+
+## Error Handling
+
+```typescript
+import { RefyneError, RateLimitError } from '@refyne/sdk';
+
+try {
+  const result = await refyne.extract({ ... });
+} catch (error) {
+  if (error instanceof RateLimitError) {
+    // Wait and retry
+    await sleep(error.retryAfter);
+  } else if (error instanceof RefyneError) {
+    console.error(error.message, error.status);
+  }
+}
+```
+
+## Configuration
+
+```typescript
+const refyne = new Refyne({
+  apiKey: process.env.REFYNE_API_KEY,
+  baseUrl: 'https://api.refyne.uk', // Optional
+  timeout: 30000, // Optional, in ms
+});
+```
+
+## API Reference
+
+For detailed method documentation, see the [TypeDoc reference](https://pkg.refyne.uk/typescript).

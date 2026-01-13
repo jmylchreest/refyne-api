@@ -1,0 +1,136 @@
+---
+title: Go SDK
+description: Official Go client for Refyne
+---
+
+The official Go SDK for Refyne with full context support.
+
+## Installation
+
+```bash
+go get github.com/refyne/refyne-go
+```
+
+## Quick Start
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+
+    "github.com/refyne/refyne-go"
+)
+
+func main() {
+    client := refyne.NewClient(refyne.Config{
+        APIKey: os.Getenv("REFYNE_API_KEY"),
+    })
+
+    result, err := client.Extract(context.Background(), refyne.ExtractInput{
+        URL: "https://example.com/product",
+        Schema: map[string]any{
+            "name":  "string",
+            "price": "number",
+        },
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    fmt.Printf("Data: %+v\n", result.Data)
+}
+```
+
+## Typed Results
+
+Use Go structs for type-safe results:
+
+```go
+type Product struct {
+    Name        string   `json:"name"`
+    Price       float64  `json:"price"`
+    Description string   `json:"description"`
+    Tags        []string `json:"tags"`
+}
+
+var product Product
+result, err := client.ExtractTyped(ctx, &product, refyne.ExtractInput{
+    URL: "https://example.com/product",
+    Schema: map[string]any{
+        "name":        "string",
+        "price":       "number",
+        "description": "string",
+        "tags":        []string{"string"},
+    },
+})
+```
+
+## Crawling
+
+```go
+// Start a crawl job
+job, err := client.Crawl(ctx, refyne.CrawlInput{
+    URL: "https://example.com/products",
+    Schema: map[string]any{
+        "name":  "string",
+        "price": "number",
+    },
+    Options: refyne.CrawlOptions{
+        FollowSelector: "a.product-link",
+        MaxPages:       20,
+    },
+})
+
+// Check job status
+status, err := client.Jobs.Get(ctx, job.JobID)
+
+// Get results
+results, err := client.Jobs.GetResults(ctx, job.JobID)
+
+// Get merged results
+merged, err := client.Jobs.GetResultsMerged(ctx, job.JobID)
+```
+
+## Context Support
+
+All methods accept a context for cancellation and timeouts:
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+defer cancel()
+
+result, err := client.Extract(ctx, input)
+```
+
+## Error Handling
+
+```go
+result, err := client.Extract(ctx, input)
+if err != nil {
+    var apiErr *refyne.APIError
+    if errors.As(err, &apiErr) {
+        fmt.Printf("API error: %s (status %d)\n", apiErr.Message, apiErr.Status)
+        if apiErr.Status == 429 {
+            // Rate limited, wait and retry
+        }
+    }
+    return err
+}
+```
+
+## Configuration
+
+```go
+client := refyne.NewClient(refyne.Config{
+    APIKey:  os.Getenv("REFYNE_API_KEY"),
+    BaseURL: "https://api.refyne.uk", // Optional
+    Timeout: 30 * time.Second,         // Optional
+})
+```
+
+## API Reference
+
+For detailed documentation, see [pkg.go.dev/github.com/refyne/refyne-go](https://pkg.go.dev/github.com/refyne/refyne-go).

@@ -1,0 +1,38 @@
+---
+title: Welcome to Refyne
+description: Welcome to the Refyne API documentation
+---
+
+Refyne is an LLM-powered API that transforms unstructured websites into clean, typed JSON. Define a schema, point at a URL, and get structured data back.
+
+## Quick Start
+
+```bash
+curl -X POST https://api.refyne.uk/api/v1/extract \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com/product",
+    "schema": {
+      "name": "string",
+      "price": "number",
+      "description": "string"
+    }
+  }'
+```
+
+## Features
+
+- **Single Page Extraction** - Extract structured data from any webpage
+- **Multi-Page Crawling** - Follow links and extract data at scale
+- **Schema-Driven** - Define exactly what you want, get consistent results
+- **Multiple LLM Providers** - OpenRouter, Anthropic, OpenAI, or bring your own
+- **Site Analysis** - Automatically detect page structure and suggest schemas
+
+## Next Steps
+
+<Cards>
+  <Card title="Quick Start" href="/docs/quickstart" />
+  <Card title="API Reference" href="/docs/api-reference" />
+  <Card title="SDKs" href="/docs/sdks" />
+</Cards>

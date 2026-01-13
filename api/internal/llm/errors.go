@@ -237,9 +237,14 @@ func classifyByErrorMessage(llmErr *LLMError, errStr string, isFreeTier bool) *L
 		llmErr.UserMessage = "The content is too long for the model. Try with a smaller page or simpler schema."
 		llmErr.Retryable = false
 
-	case strings.Contains(errStr, "timeout"):
+	case strings.Contains(errStr, "timeout") || strings.Contains(errStr, "deadline exceeded"):
 		llmErr.Err = ErrProviderError
-		llmErr.UserMessage = "Request timed out. Please try again."
+		if isFreeTier {
+			llmErr.UserMessage = "Request timed out waiting for the free model. Free models can be slow under load. Consider using your own API key for faster, more reliable extractions."
+			llmErr.SuggestUpgrade = true
+		} else {
+			llmErr.UserMessage = "Request timed out. The model took too long to respond. Please try again."
+		}
 		llmErr.Retryable = true
 
 	default:

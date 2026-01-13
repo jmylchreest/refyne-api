@@ -3,6 +3,7 @@ package mw
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -25,8 +26,19 @@ type UserClaims struct {
 	Name             string
 	Tier             string   // From Clerk public_metadata.subscription.tier
 	GlobalSuperadmin bool     // From Clerk public_metadata.global_superadmin
+	Features         []string // From Clerk Commerce "fea" claim
 	Scopes           []string // For API keys
 	IsAPIKey         bool     // True if authenticated via API key
+}
+
+// HasFeature checks if the user has a specific feature.
+func (c *UserClaims) HasFeature(feature string) bool {
+	for _, f := range c.Features {
+		if f == feature {
+			return true
+		}
+	}
+	return false
 }
 
 // Auth returns an authentication middleware that supports both Clerk JWTs and API keys.
@@ -97,12 +109,25 @@ func validateClerkToken(verifier *auth.ClerkVerifier, tokenString string) (*User
 		name = strings.TrimSpace(clerkClaims.FirstName + " " + clerkClaims.LastName)
 	}
 
+	features := clerkClaims.GetFeatures()
+	tier := clerkClaims.GetTier()
+
+	// Debug: log what features and tier we're receiving from Clerk
+	slog.Debug("clerk token validated",
+		"user_id", clerkClaims.UserID,
+		"tier", tier,
+		"features", features,
+		"raw_fea_claim", clerkClaims.Features,
+		"raw_pla_claim", clerkClaims.Plan,
+	)
+
 	return &UserClaims{
 		UserID:           clerkClaims.UserID,
 		Email:            clerkClaims.Email,
 		Name:             name,
-		Tier:             clerkClaims.GetTier(),
+		Tier:             tier,
 		GlobalSuperadmin: globalSuperadmin,
+		Features:         features,
 		Scopes:           []string{"*"}, // JWT tokens have all scopes
 		IsAPIKey:         false,
 	}, nil

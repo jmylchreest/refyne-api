@@ -45,14 +45,31 @@ type ClerkClaims struct {
 	Features string `json:"fea,omitempty"` // Features from Clerk Commerce
 }
 
-// GetTier returns the subscription tier.
-// First checks Clerk Commerce's pla claim (e.g., "u:tier_v1_free"),
+// GetUserTier returns the user's personal subscription tier (u: prefix).
+// Returns empty string if not on a user-level plan.
+func (c *ClerkClaims) GetUserTier() string {
+	if c.Plan != "" && strings.HasPrefix(c.Plan, "u:") {
+		return strings.TrimPrefix(c.Plan, "u:")
+	}
+	return ""
+}
+
+// GetOrgTier returns the organization's subscription tier (o: prefix).
+// Returns empty string if not on an org-level plan.
+func (c *ClerkClaims) GetOrgTier() string {
+	if c.Plan != "" && strings.HasPrefix(c.Plan, "o:") {
+		return strings.TrimPrefix(c.Plan, "o:")
+	}
+	return ""
+}
+
+// GetTier returns the active subscription tier (user or org).
+// First checks Clerk Commerce's pla claim (e.g., "u:tier_v1_free" or "o:tier_v1_pro"),
 // then falls back to public_metadata.subscription.tier.
 func (c *ClerkClaims) GetTier() string {
-	// Check Clerk Commerce plan claim first (format: "u:tier_slug")
+	// Check Clerk Commerce plan claim first
 	if c.Plan != "" {
-		// Strip "u:" prefix if present
-		tier := strings.TrimPrefix(c.Plan, "u:")
+		tier := stripClerkPrefix(c.Plan)
 		if tier != "" {
 			return tier
 		}
@@ -68,6 +85,111 @@ func (c *ClerkClaims) GetTier() string {
 	}
 
 	return "free"
+}
+
+// IsUserTier returns true if the active tier is from a user-level subscription.
+func (c *ClerkClaims) IsUserTier() bool {
+	return c.Plan != "" && strings.HasPrefix(c.Plan, "u:")
+}
+
+// IsOrgTier returns true if the active tier is from an organization-level subscription.
+func (c *ClerkClaims) IsOrgTier() bool {
+	return c.Plan != "" && strings.HasPrefix(c.Plan, "o:")
+}
+
+// HasUserFeature checks if the user has a specific user-level feature (u: prefix).
+// User-level features come from the user's personal subscription.
+func (c *ClerkClaims) HasUserFeature(feature string) bool {
+	return c.hasFeatureWithPrefix(feature, "u:")
+}
+
+// HasOrgFeature checks if the user has a specific organization-level feature (o: prefix).
+// Organization-level features come from the active organization's subscription.
+func (c *ClerkClaims) HasOrgFeature(feature string) bool {
+	return c.hasFeatureWithPrefix(feature, "o:")
+}
+
+// HasFeature checks if the user has a specific feature from either user or org subscription.
+// This is a convenience method that checks both u: and o: prefixed features.
+func (c *ClerkClaims) HasFeature(feature string) bool {
+	return c.HasUserFeature(feature) || c.HasOrgFeature(feature)
+}
+
+// hasFeatureWithPrefix checks for a feature with a specific prefix.
+func (c *ClerkClaims) hasFeatureWithPrefix(feature, prefix string) bool {
+	if c.Features == "" {
+		return false
+	}
+	target := prefix + feature
+	features := strings.Split(c.Features, ",")
+	for _, f := range features {
+		if strings.TrimSpace(f) == target {
+			return true
+		}
+	}
+	return false
+}
+
+// GetFeatures returns all features as a slice from Clerk Commerce (prefixes stripped).
+func (c *ClerkClaims) GetFeatures() []string {
+	if c.Features == "" {
+		return nil
+	}
+	rawFeatures := strings.Split(c.Features, ",")
+	features := make([]string, 0, len(rawFeatures))
+	for _, f := range rawFeatures {
+		f = strings.TrimSpace(f)
+		f = stripClerkPrefix(f)
+		if f != "" {
+			features = append(features, f)
+		}
+	}
+	return features
+}
+
+// GetUserFeatures returns only user-level features (u: prefix, stripped).
+func (c *ClerkClaims) GetUserFeatures() []string {
+	return c.getFeaturesWithPrefix("u:")
+}
+
+// GetOrgFeatures returns only organization-level features (o: prefix, stripped).
+func (c *ClerkClaims) GetOrgFeatures() []string {
+	return c.getFeaturesWithPrefix("o:")
+}
+
+// getFeaturesWithPrefix returns features matching a specific prefix (prefix stripped from result).
+func (c *ClerkClaims) getFeaturesWithPrefix(prefix string) []string {
+	if c.Features == "" {
+		return nil
+	}
+	rawFeatures := strings.Split(c.Features, ",")
+	features := make([]string, 0, len(rawFeatures))
+	for _, f := range rawFeatures {
+		f = strings.TrimSpace(f)
+		if strings.HasPrefix(f, prefix) {
+			features = append(features, strings.TrimPrefix(f, prefix))
+		}
+	}
+	return features
+}
+
+// IsOrganizationContext returns true if the current features are from an organization subscription.
+func (c *ClerkClaims) IsOrganizationContext() bool {
+	if c.Features == "" {
+		return false
+	}
+	features := strings.Split(c.Features, ",")
+	if len(features) > 0 {
+		return strings.HasPrefix(strings.TrimSpace(features[0]), "o:")
+	}
+	return false
+}
+
+// stripClerkPrefix removes the "u:" or "o:" prefix from Clerk Commerce values.
+func stripClerkPrefix(s string) string {
+	s = strings.TrimPrefix(s, "u:")
+	s = strings.TrimPrefix(s, "o:")
+	return s
 }
 
 // ClerkVerifier verifies Clerk JWTs using JWKS.

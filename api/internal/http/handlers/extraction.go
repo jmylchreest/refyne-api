@@ -27,7 +27,7 @@ func NewExtractionHandler(extractionSvc *service.ExtractionService) *ExtractionH
 type ExtractInput struct {
 	Body struct {
 		URL       string          `json:"url" minLength:"1" doc:"URL to extract data from"`
-		Schema    json.RawMessage `json:"schema" doc:"JSON Schema defining the data structure to extract"`
+		Schema    json.RawMessage `json:"schema" doc:"Schema defining the data structure to extract (JSON or YAML format)"`
 		FetchMode string          `json:"fetch_mode,omitempty" enum:"auto,static,dynamic" default:"auto" doc:"Fetch mode: auto, static, or dynamic"`
 		LLMConfig *LLMConfigInput `json:"llm_config,omitempty" doc:"Optional LLM configuration override"`
 	}
