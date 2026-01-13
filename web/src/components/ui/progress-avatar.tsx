@@ -344,17 +344,17 @@ function ThinkingPixelAnimation({ frame }: { frame: number }) {
 }
 
 function GeneratingPixelAnimation({ frame }: { frame: number }) {
-  // Code lines that build up progressively
+  // Code lines that build up progressively - random widths that fit in the box
   const codeLines = [
-    { width: 'w-3', delay: 0 },
-    { width: 'w-4', delay: 1 },
+    { width: 'w-2.5', delay: 0 },
+    { width: 'w-3.5', delay: 1 },
     { width: 'w-2', delay: 2 },
-    { width: 'w-5', delay: 3 },
+    { width: 'w-3', delay: 3 },
   ];
 
   return (
     <div className="relative">
-      {/* Robot with pencil/stylus */}
+      {/* Robot generating */}
       <div className="w-12 h-12 relative">
         {/* Head */}
         <div className="absolute inset-1 bg-emerald-400 rounded" />
@@ -369,33 +369,26 @@ function GeneratingPixelAnimation({ frame }: { frame: number }) {
         )} />
         {/* Concentrated mouth */}
         <div className="absolute bottom-2 left-1/2 -translate-x-1/2 w-2 h-1 bg-emerald-600 rounded" />
-        {/* Pencil/stylus held */}
-        <div
-          className="absolute -right-1 bottom-0 w-1 h-4 bg-amber-400 origin-bottom"
-          style={{ transform: `rotate(${frame % 2 === 0 ? -15 : -25}deg)` }}
-        >
-          <div className="absolute -bottom-0.5 left-0 w-1 h-1 bg-amber-600" style={{ clipPath: 'polygon(50% 100%, 0 0, 100% 0)' }} />
-        </div>
       </div>
       {/* Document being written */}
-      <div className="absolute -right-4 top-1 w-6 h-8 bg-white rounded-sm border border-zinc-300 overflow-hidden">
-        {/* Bracket symbol */}
-        <div className="absolute top-0.5 left-0.5 text-[6px] text-emerald-600 font-bold font-mono">{'{'}</div>
-        {/* Code lines building up */}
+      <div className="absolute -right-4 top-0 w-6 h-10 bg-white rounded-sm border border-zinc-300 overflow-hidden">
+        {/* Opening bracket - smaller */}
+        <div className="absolute top-1 left-1 text-[4px] text-emerald-600 font-bold font-mono leading-none">{'{'}</div>
+        {/* Code lines building up - positioned between braces */}
         {codeLines.map((line, i) => (
           <div
             key={i}
             className={cn(
-              'absolute left-1 h-0.5 bg-zinc-400 transition-all duration-150',
+              'absolute left-1.5 h-0.5 bg-zinc-400 transition-all duration-150',
               line.width,
               (frame + line.delay) % 4 >= i ? 'opacity-100' : 'opacity-0'
             )}
-            style={{ top: `${12 + i * 5}px` }}
+            style={{ top: `${10 + i * 5}px` }}
           />
         ))}
-        {/* Closing bracket */}
+        {/* Closing bracket - smaller */}
         <div className={cn(
-          'absolute bottom-0.5 left-0.5 text-[6px] text-emerald-600 font-bold font-mono transition-opacity duration-150',
+          'absolute bottom-1 left-1 text-[4px] text-emerald-600 font-bold font-mono leading-none transition-opacity duration-150',
           frame === 3 ? 'opacity-100' : 'opacity-30'
         )}>{'}'}</div>
       </div>
