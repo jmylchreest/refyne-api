@@ -296,7 +296,8 @@ func (s *AnalyzerService) recordAnalyzeUsage(
 		usageRecord.PagesSuccessful = 0
 	}
 
-	if err := s.billing.RecordUsage(ctx, usageRecord); err != nil {
+	// Use detached context - we want to record usage even if request timed out
+	if err := s.billing.RecordUsage(context.WithoutCancel(ctx), usageRecord); err != nil {
 		s.logger.Warn("failed to record analyze usage", "error", err)
 	}
 }

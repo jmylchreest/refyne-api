@@ -404,7 +404,8 @@ func (s *BillingService) ChargeForUsage(ctx context.Context, input *ChargeForUsa
 		usageRecord.BYOKProvider = input.Provider
 	}
 
-	if err := s.RecordUsage(ctx, usageRecord); err != nil {
+	// Use detached context - we want to record usage even if request timed out
+	if err := s.RecordUsage(context.WithoutCancel(ctx), usageRecord); err != nil {
 		s.logger.Warn("failed to record usage", "error", err)
 	}
 

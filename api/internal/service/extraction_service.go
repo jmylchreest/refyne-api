@@ -346,7 +346,8 @@ func (s *ExtractionService) recordFailedExtractionWithDetails(
 		TotalDurationMs: int(time.Since(startTime).Milliseconds()),
 	}
 
-	if recordErr := s.billing.RecordUsage(ctx, usageRecord); recordErr != nil {
+	// Use detached context - we want to record usage even if request timed out
+	if recordErr := s.billing.RecordUsage(context.WithoutCancel(ctx), usageRecord); recordErr != nil {
 		s.logger.Warn("failed to record failed extraction usage", "error", recordErr)
 	}
 }
