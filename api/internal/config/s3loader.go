@@ -189,7 +189,7 @@ func (l *S3Loader) Fetch(ctx context.Context) (*S3LoadResult, error) {
 	l.etag = newEtag
 	l.mu.Unlock()
 
-	l.logger.Info("S3 config loaded",
+	l.logger.Debug("S3 config fetched",
 		"bucket", l.bucket,
 		"key", l.key,
 		"etag", newEtag,

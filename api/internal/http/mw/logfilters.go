@@ -104,12 +104,6 @@ func (l *LogFiltersLoader) Start(ctx context.Context) {
 			}
 		}
 	}()
-
-	l.logger.Info("log filters loader started",
-		"bucket", l.bucket,
-		"key", l.key,
-		"cache_ttl", l.cacheTTL.String(),
-	)
 }
 
 // Stop stops the periodic refresh.

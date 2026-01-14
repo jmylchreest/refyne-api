@@ -127,7 +127,11 @@ func (m *ModelDefaultsLoader) refresh(ctx context.Context) {
 	m.modelOverrides = modelOverrides
 	m.mu.Unlock()
 
-	m.logger.Info("model defaults applied",
+	stats := m.loader.Stats()
+	m.logger.Info("model defaults loaded from S3",
+		"bucket", stats.Bucket,
+		"key", stats.Key,
+		"etag", result.Etag,
 		"provider_count", len(providerDefs),
 		"model_count", len(modelOverrides),
 	)

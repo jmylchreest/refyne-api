@@ -142,47 +142,42 @@ func main() {
 	router.Use(middleware.RequestID)
 	router.Use(middleware.RealIP)
 
-	// IP blocklist (early in chain to reject bad actors quickly)
-	// Only enabled if storage is configured - fails open otherwise
+	// S3-backed configuration loaders
+	// All use the same bucket with different keys under config/
+	var logFiltersLoader *mw.LogFiltersLoader
 	if services.Storage.IsEnabled() && cfg.BlocklistBucket != "" {
+		bucket := cfg.BlocklistBucket
+
+		// IP blocklist (early in chain to reject bad actors quickly)
 		blocklist := mw.NewIPBlocklist(mw.BlocklistConfig{
 			S3Client: services.Storage.Client(),
-			Bucket:   cfg.BlocklistBucket,
+			Bucket:   bucket,
 			Key:      "config/blocklist.json",
 			Logger:   logger,
 		})
 		router.Use(blocklist.Middleware())
-		logger.Info("IP blocklist middleware enabled",
-			"bucket", cfg.BlocklistBucket,
-			"key", "config/blocklist.json",
-		)
-	}
 
-	// Log filters loader (loads dynamic log filters from S3)
-	// Only enabled if storage is configured - uses default logging otherwise
-	var logFiltersLoader *mw.LogFiltersLoader
-	if services.Storage.IsEnabled() && cfg.BlocklistBucket != "" {
+		// Log filters (dynamic log filtering from S3)
 		logFiltersLoader = mw.NewLogFiltersLoader(mw.LogFiltersConfig{
 			S3Client: services.Storage.Client(),
-			Bucket:   cfg.BlocklistBucket,
+			Bucket:   bucket,
 			Key:      "config/logfilters.json",
 			Logger:   logger,
 		})
 		logFiltersLoader.Start(ctx)
-	}
 
-	// Model defaults loader (loads model settings from S3)
-	// Falls back to hardcoded defaults if file not found
-	if services.Storage.IsEnabled() && cfg.BlocklistBucket != "" {
+		// Model defaults (LLM model settings from S3)
 		llm.InitGlobalModelDefaults(llm.ModelDefaultsConfig{
 			S3Client: services.Storage.Client(),
-			Bucket:   cfg.BlocklistBucket,
+			Bucket:   bucket,
 			Key:      "config/model_defaults.json",
 			Logger:   logger,
 		})
-		logger.Info("model defaults loader enabled",
-			"bucket", cfg.BlocklistBucket,
-			"key", "config/model_defaults.json",
+
+		logger.Info("S3 config loaders enabled",
+			"bucket", bucket,
+			"cache_ttl", "5m",
+			"configs", []string{"blocklist.json", "logfilters.json", "model_defaults.json"},
 		)
 	}
 
