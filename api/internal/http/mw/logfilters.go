@@ -3,25 +3,17 @@ package mw
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"sync"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/jmylchreest/slog-logfilter"
+
+	"github.com/jmylchreest/refyne-api/internal/config"
 )
 
 // LogFiltersConfig holds configuration for the log filters loader.
-type LogFiltersConfig struct {
-	S3Client     *s3.Client
-	Bucket       string
-	Key          string // Default: "config/logfilters.json"
-	CacheTTL     time.Duration // How often to check for updates (default: 5 min)
-	ErrorBackoff time.Duration // How long to wait after an error (default: 1 min)
-	Logger       *slog.Logger
-}
+type LogFiltersConfig = config.S3LoaderConfig
 
 // LogFiltersLoader loads log filters from S3 and applies them to slog-logfilter.
 // Features:
@@ -30,20 +22,12 @@ type LogFiltersConfig struct {
 // - Error backoff: waits before retrying on S3 errors
 // - Fail safe: keeps existing filters if update fails
 type LogFiltersLoader struct {
-	s3Client *s3.Client
-	bucket   string
-	key      string
+	loader *config.S3Loader
 
-	mu           sync.RWMutex
-	etag         string
-	lastFetch    time.Time
-	lastCheck    time.Time
-	lastError    time.Time
-	initialized  bool
-	filterCount  int
-	cacheTTL     time.Duration
-	errorBackoff time.Duration
-	logger       *slog.Logger
+	mu          sync.RWMutex
+	filterCount int
+	logger      *slog.Logger
+	cacheTTL    time.Duration
 
 	stopCh chan struct{}
 	wg     sync.WaitGroup
@@ -51,34 +35,28 @@ type LogFiltersLoader struct {
 
 // NewLogFiltersLoader creates a new log filters loader.
 func NewLogFiltersLoader(cfg LogFiltersConfig) *LogFiltersLoader {
-	if cfg.Key == "" {
-		cfg.Key = "config/logfilters.json"
+	// S3Loader handles defaults for CacheTTL, ErrorBackoff, Logger
+	cacheTTL := cfg.CacheTTL
+	if cacheTTL == 0 {
+		cacheTTL = 5 * time.Minute
 	}
-	if cfg.CacheTTL == 0 {
-		cfg.CacheTTL = 5 * time.Minute
-	}
-	if cfg.ErrorBackoff == 0 {
-		cfg.ErrorBackoff = 1 * time.Minute
-	}
-	if cfg.Logger == nil {
-		cfg.Logger = slog.Default()
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
 	}
 
 	return &LogFiltersLoader{
-		s3Client:     cfg.S3Client,
-		bucket:       cfg.Bucket,
-		key:          cfg.Key,
-		cacheTTL:     cfg.CacheTTL,
-		errorBackoff: cfg.ErrorBackoff,
-		logger:       cfg.Logger,
-		stopCh:       make(chan struct{}),
+		loader:   config.NewS3Loader(cfg),
+		logger:   logger,
+		cacheTTL: cacheTTL,
+		stopCh:   make(chan struct{}),
 	}
 }
 
 // Start begins the periodic refresh of log filters.
 // It immediately fetches the filters and then periodically checks for updates.
 func (l *LogFiltersLoader) Start(ctx context.Context) {
-	if l.s3Client == nil {
+	if !l.loader.IsEnabled() {
 		l.logger.Info("log filters loader disabled (no S3 client)")
 		return
 	}
@@ -112,84 +90,21 @@ func (l *LogFiltersLoader) Stop() {
 	l.wg.Wait()
 }
 
-// refresh fetches the log filters from S3.
+// refresh fetches the log filters from S3 and applies them.
 func (l *LogFiltersLoader) refresh(ctx context.Context) {
-	l.mu.Lock()
-	// Check if in error backoff
-	if !l.lastError.IsZero() && time.Since(l.lastError) < l.errorBackoff {
-		l.mu.Unlock()
-		return
-	}
-	currentEtag := l.etag
-	l.mu.Unlock()
-
-	// Build request with conditional fetch
-	input := &s3.GetObjectInput{
-		Bucket: &l.bucket,
-		Key:    &l.key,
-	}
-	if currentEtag != "" {
-		quotedEtag := "\"" + currentEtag + "\""
-		input.IfNoneMatch = &quotedEtag
-	}
-
-	resp, err := l.s3Client.GetObject(ctx, input)
+	result, err := l.loader.Fetch(ctx)
 	if err != nil {
-		// Check for NoSuchKey (file doesn't exist)
-		var apiErr *types.NoSuchKey
-		if errors.As(err, &apiErr) {
-			l.mu.Lock()
-			wasInitialized := l.initialized
-			l.initialized = true
-			l.lastCheck = time.Now()
-			l.lastError = time.Now()
-			l.mu.Unlock()
-			// Only log on first check, not every poll
-			if !wasInitialized {
-				l.logger.Debug("log filters file not found in S3 (using default filters)",
-					"bucket", l.bucket,
-					"key", l.key,
-				)
-			}
-			return
-		}
-
-		// Check for 304 Not Modified
-		var notModified interface{ ErrorCode() string }
-		if errors.As(err, &notModified) && notModified.ErrorCode() == "NotModified" {
-			l.mu.Lock()
-			l.lastCheck = time.Now()
-			count := l.filterCount
-			etag := l.etag
-			l.mu.Unlock()
-			l.logger.Debug("log filters unchanged (etag match)",
-				"etag", etag,
-				"filter_count", count,
-			)
-			return
-		}
-
-		// Other error
-		l.mu.Lock()
-		l.lastError = time.Now()
-		l.initialized = true
-		l.mu.Unlock()
-		l.logger.Error("failed to fetch log filters from S3",
-			"error", err,
-			"bucket", l.bucket,
-			"key", l.key,
-		)
+		// S3Loader already logged the error
 		return
 	}
-	defer resp.Body.Close()
+	if result == nil || result.NotChanged {
+		// Not modified or S3 not configured
+		return
+	}
 
 	// Parse filters
 	var filters []logfilter.LogFilter
-	if err := json.NewDecoder(resp.Body).Decode(&filters); err != nil {
-		l.mu.Lock()
-		l.lastError = time.Now()
-		l.initialized = true
-		l.mu.Unlock()
+	if err := json.Unmarshal(result.Data, &filters); err != nil {
 		l.logger.Error("failed to parse log filters JSON", "error", err)
 		return
 	}
@@ -198,23 +113,7 @@ func (l *LogFiltersLoader) refresh(ctx context.Context) {
 	logfilter.SetFilters(filters)
 
 	// Update state
-	now := time.Now()
-	newEtag := ""
-	if resp.ETag != nil {
-		newEtag = *resp.ETag
-		// Strip quotes from ETag
-		if len(newEtag) >= 2 && newEtag[0] == '"' && newEtag[len(newEtag)-1] == '"' {
-			newEtag = newEtag[1 : len(newEtag)-1]
-		}
-	}
-
 	l.mu.Lock()
-	previousEtag := l.etag
-	l.initialized = true
-	l.lastFetch = now
-	l.lastCheck = now
-	l.lastError = time.Time{}
-	l.etag = newEtag
 	l.filterCount = len(filters)
 	l.mu.Unlock()
 
@@ -226,37 +125,58 @@ func (l *LogFiltersLoader) refresh(ctx context.Context) {
 		}
 	}
 
+	stats := l.loader.Stats()
 	l.logger.Info("log filters loaded from S3",
-		"bucket", l.bucket,
-		"key", l.key,
-		"etag", newEtag,
-		"previous_etag", previousEtag,
+		"bucket", stats.Bucket,
+		"key", stats.Key,
+		"etag", stats.Etag,
 		"total_filters", len(filters),
 		"active_filters", activeCount,
 	)
 }
 
+// Refresh forces an immediate refresh of the log filters.
+func (l *LogFiltersLoader) Refresh(ctx context.Context) {
+	l.refresh(ctx)
+}
+
 // LogFiltersStats contains statistics about the log filters loader.
 type LogFiltersStats struct {
-	Initialized bool      `json:"initialized"`
-	FilterCount int       `json:"filter_count"`
-	Etag        string    `json:"etag"`
-	LastFetch   time.Time `json:"last_fetch"`
-	LastCheck   time.Time `json:"last_check"`
-	CacheTTL    string    `json:"cache_ttl"`
+	Initialized bool   `json:"initialized"`
+	FilterCount int    `json:"filter_count"`
+	Etag        string `json:"etag"`
+	LastFetch   string `json:"last_fetch"`
+	LastCheck   string `json:"last_check"`
+	CacheTTL    string `json:"cache_ttl"`
+	Bucket      string `json:"bucket"`
+	Key         string `json:"key"`
 }
 
 // Stats returns current loader statistics.
 func (l *LogFiltersLoader) Stats() LogFiltersStats {
 	l.mu.RLock()
-	defer l.mu.RUnlock()
+	filterCount := l.filterCount
+	l.mu.RUnlock()
+
+	loaderStats := l.loader.Stats()
+
+	lastFetch := ""
+	if !loaderStats.LastFetch.IsZero() {
+		lastFetch = loaderStats.LastFetch.Format("2006-01-02T15:04:05Z")
+	}
+	lastCheck := ""
+	if !loaderStats.LastCheck.IsZero() {
+		lastCheck = loaderStats.LastCheck.Format("2006-01-02T15:04:05Z")
+	}
 
 	return LogFiltersStats{
-		Initialized: l.initialized,
-		FilterCount: l.filterCount,
-		Etag:        l.etag,
-		LastFetch:   l.lastFetch,
-		LastCheck:   l.lastCheck,
-		CacheTTL:    l.cacheTTL.String(),
+		Initialized: loaderStats.Initialized,
+		FilterCount: filterCount,
+		Etag:        loaderStats.Etag,
+		LastFetch:   lastFetch,
+		LastCheck:   lastCheck,
+		CacheTTL:    loaderStats.CacheTTL,
+		Bucket:      loaderStats.Bucket,
+		Key:         loaderStats.Key,
 	}
 }

@@ -44,6 +44,7 @@ type S3Loader struct {
 	lastCheck    time.Time
 	lastError    time.Time
 	initialized  bool
+	fetching     bool // true while a fetch is in progress
 	cacheTTL     time.Duration
 	errorBackoff time.Duration
 	logger       *slog.Logger
@@ -81,9 +82,10 @@ func (l *S3Loader) NeedsRefresh() bool {
 	l.mu.RLock()
 	needsRefresh := !l.initialized || time.Since(l.lastCheck) > l.cacheTTL
 	inErrorBackoff := !l.lastError.IsZero() && time.Since(l.lastError) < l.errorBackoff
+	alreadyFetching := l.fetching
 	l.mu.RUnlock()
 
-	return needsRefresh && !inErrorBackoff
+	return needsRefresh && !inErrorBackoff && !alreadyFetching
 }
 
 // Fetch retrieves the config from S3 with ETag caching.
@@ -94,13 +96,21 @@ func (l *S3Loader) Fetch(ctx context.Context) (*S3LoadResult, error) {
 	}
 
 	l.mu.Lock()
-	// Double-check after acquiring lock
-	if l.initialized && time.Since(l.lastCheck) < l.cacheTTL {
+	// Double-check after acquiring lock - also check if another goroutine is already fetching
+	if l.fetching || (l.initialized && time.Since(l.lastCheck) < l.cacheTTL) {
 		l.mu.Unlock()
 		return nil, nil
 	}
+	l.fetching = true
 	currentEtag := l.etag
 	l.mu.Unlock()
+
+	// Ensure we clear the fetching flag when done
+	defer func() {
+		l.mu.Lock()
+		l.fetching = false
+		l.mu.Unlock()
+	}()
 
 	// Build request with conditional fetch
 	input := &s3.GetObjectInput{

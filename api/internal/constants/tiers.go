@@ -76,11 +76,42 @@ var Tiers = map[string]TierLimits{
 }
 
 // GetTierLimits returns the limits for a tier, defaulting to free tier.
+// Normalizes tier names from Clerk Commerce format (e.g., "tier_v1_standard" -> "standard").
 func GetTierLimits(tier string) TierLimits {
+	// Direct match first
 	if limits, ok := Tiers[tier]; ok {
 		return limits
 	}
+
+	// Normalize Clerk Commerce tier names (tier_v1_standard -> standard)
+	normalized := normalizeTierName(tier)
+	if limits, ok := Tiers[normalized]; ok {
+		return limits
+	}
+
 	return Tiers[TierFree]
+}
+
+// normalizeTierName converts Clerk Commerce tier names to internal tier names.
+// Examples:
+//   - "tier_v1_standard" -> "standard"
+//   - "tier_v1_pro" -> "pro"
+//   - "tier_v1_free" -> "free"
+//   - "standard" -> "standard" (already normalized)
+func normalizeTierName(tier string) string {
+	// Map of Clerk Commerce tier names to internal tier names
+	tierMappings := map[string]string{
+		"tier_v1_free":       TierFree,
+		"tier_v1_standard":   TierStandard,
+		"tier_v1_pro":        TierPro,
+		"tier_v1_selfhosted": TierSelfHosted,
+	}
+
+	if mapped, ok := tierMappings[tier]; ok {
+		return mapped
+	}
+
+	return tier
 }
 
 // Global rate limiting defaults
@@ -107,8 +138,9 @@ const (
 
 // QuotaExceededMessage returns a user-friendly message for monthly quota exceeded.
 func QuotaExceededMessage(tier string) string {
-	limits := GetTierLimits(tier)
-	switch tier {
+	normalized := normalizeTierName(tier)
+	limits := GetTierLimits(normalized)
+	switch normalized {
 	case TierFree:
 		return fmt.Sprintf("You've reached your free tier limit of %d extractions this month. Upgrade to Standard for %d monthly extractions.",
 			limits.MonthlyExtractions, Tiers[TierStandard].MonthlyExtractions)
@@ -122,8 +154,9 @@ func QuotaExceededMessage(tier string) string {
 
 // ConcurrentJobLimitMessage returns a user-friendly message for concurrent job limit exceeded.
 func ConcurrentJobLimitMessage(tier string) string {
-	limits := GetTierLimits(tier)
-	switch tier {
+	normalized := normalizeTierName(tier)
+	limits := GetTierLimits(normalized)
+	switch normalized {
 	case TierFree:
 		return fmt.Sprintf("You can only run %d job at a time on the free tier. Wait for your current job to complete or upgrade to Standard for %d concurrent jobs.",
 			limits.MaxConcurrentJobs, Tiers[TierStandard].MaxConcurrentJobs)

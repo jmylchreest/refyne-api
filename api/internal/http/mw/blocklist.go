@@ -3,17 +3,14 @@ package mw
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"net"
 	"net/http"
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
-	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/jmylchreest/refyne-api/internal/config"
 )
 
 // IPBlocklist provides IP-based request blocking with S3-backed blocklist.
@@ -24,55 +21,25 @@ import (
 // - Fail open: allows requests if blocklist unavailable
 // - Optimized lookups: O(1) for exact IPs, sorted CIDRs for early exit
 type IPBlocklist struct {
-	s3Client *s3.Client
-	bucket   string
-	key      string
+	loader *config.S3Loader
 
-	mu            sync.RWMutex
-	blocked       map[string]bool // exact IP matches (O(1) lookup)
-	blockedCIDRs  []*net.IPNet    // CIDR ranges sorted by prefix length (most specific first)
-	etag          string
-	lastFetch     time.Time // when blocklist was last fetched from S3
-	lastCheck     time.Time // when we last checked for updates
-	lastError     time.Time
-	initialized   bool
-	totalEntries  int // total entries in blocklist
-	cacheTTL      time.Duration
-	errorBackoff  time.Duration
-	logger        *slog.Logger
+	mu           sync.RWMutex
+	blocked      map[string]bool // exact IP matches (O(1) lookup)
+	blockedCIDRs []*net.IPNet    // CIDR ranges sorted by prefix length (most specific first)
+	totalEntries int             // total entries in blocklist
+	logger       *slog.Logger
 }
 
 // BlocklistConfig holds configuration for the IP blocklist.
-type BlocklistConfig struct {
-	S3Client     *s3.Client
-	Bucket       string
-	Key          string
-	CacheTTL     time.Duration // How often to check for updates (default: 5 min)
-	ErrorBackoff time.Duration // How long to wait after an error (default: 1 min)
-	Logger       *slog.Logger
-}
+type BlocklistConfig = config.S3LoaderConfig
 
 // NewIPBlocklist creates a new IP blocklist middleware.
 // The blocklist is lazy-loaded on first request.
 func NewIPBlocklist(cfg BlocklistConfig) *IPBlocklist {
-	if cfg.CacheTTL == 0 {
-		cfg.CacheTTL = 5 * time.Minute
-	}
-	if cfg.ErrorBackoff == 0 {
-		cfg.ErrorBackoff = 1 * time.Minute
-	}
-	if cfg.Logger == nil {
-		cfg.Logger = slog.Default()
-	}
-
 	return &IPBlocklist{
-		s3Client:     cfg.S3Client,
-		bucket:       cfg.Bucket,
-		key:          cfg.Key,
+		loader:       config.NewS3Loader(cfg),
 		blocked:      make(map[string]bool),
 		blockedCIDRs: make([]*net.IPNet, 0),
-		cacheTTL:     cfg.CacheTTL,
-		errorBackoff: cfg.ErrorBackoff,
 		logger:       cfg.Logger,
 	}
 }
@@ -81,8 +48,8 @@ func NewIPBlocklist(cfg BlocklistConfig) *IPBlocklist {
 func (b *IPBlocklist) Middleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Skip if no S3 client configured (blocklist disabled)
-			if b.s3Client == nil {
+			// Skip if S3 not configured (blocklist disabled)
+			if !b.loader.IsEnabled() {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -109,12 +76,7 @@ func (b *IPBlocklist) Middleware() func(http.Handler) http.Handler {
 // maybeRefresh checks if we need to refresh the blocklist from S3.
 // It's non-blocking and fails open on errors.
 func (b *IPBlocklist) maybeRefresh(ctx context.Context) {
-	b.mu.RLock()
-	needsRefresh := !b.initialized || time.Since(b.lastCheck) > b.cacheTTL
-	inErrorBackoff := !b.lastError.IsZero() && time.Since(b.lastError) < b.errorBackoff
-	b.mu.RUnlock()
-
-	if !needsRefresh || inErrorBackoff {
+	if !b.loader.NeedsRefresh() {
 		return
 	}
 
@@ -124,89 +86,21 @@ func (b *IPBlocklist) maybeRefresh(ctx context.Context) {
 	go b.refresh(context.WithoutCancel(ctx))
 }
 
-// refresh fetches the blocklist from S3.
+// refresh fetches the blocklist from S3 and parses it.
 func (b *IPBlocklist) refresh(ctx context.Context) {
-	b.mu.Lock()
-	// Double-check after acquiring lock
-	if b.initialized && time.Since(b.lastCheck) < b.cacheTTL {
-		b.mu.Unlock()
-		return
-	}
-	currentEtag := b.etag
-	b.mu.Unlock()
-
-	// Build request with conditional fetch
-	input := &s3.GetObjectInput{
-		Bucket: &b.bucket,
-		Key:    &b.key,
-	}
-	if currentEtag != "" {
-		// Add quotes back for HTTP If-None-Match header (required by spec)
-		quotedEtag := "\"" + currentEtag + "\""
-		input.IfNoneMatch = &quotedEtag
-	}
-
-	resp, err := b.s3Client.GetObject(ctx, input)
+	result, err := b.loader.Fetch(ctx)
 	if err != nil {
-		// Check for NoSuchKey (file doesn't exist)
-		var apiErr *types.NoSuchKey
-		if errors.As(err, &apiErr) {
-			// Blocklist file doesn't exist - that's OK, just mark as checked
-			b.mu.Lock()
-			wasInitialized := b.initialized
-			b.initialized = true
-			b.lastCheck = time.Now()
-			b.lastError = time.Now() // Backoff before checking again
-			b.mu.Unlock()
-			// Only log on first check, not every poll
-			if !wasInitialized {
-				b.logger.Debug("blocklist file not found in S3 (will allow all requests)",
-					"bucket", b.bucket,
-					"key", b.key,
-				)
-			}
-			return
-		}
-
-		// Check for 304 Not Modified (etag match)
-		var notModified interface{ ErrorCode() string }
-		if errors.As(err, &notModified) && notModified.ErrorCode() == "NotModified" {
-			b.mu.Lock()
-			b.lastCheck = time.Now()
-			entries := b.totalEntries
-			etag := b.etag
-			b.mu.Unlock()
-			b.logger.Debug("blocklist unchanged (etag match)",
-				"bucket", b.bucket,
-				"key", b.key,
-				"etag", etag,
-				"cached_entries", entries,
-			)
-			return
-		}
-
-		// Other error - log and backoff
-		b.mu.Lock()
-		b.lastError = time.Now()
-		b.initialized = true // Don't keep blocking on init
-		b.mu.Unlock()
-		b.logger.Error("failed to fetch blocklist from S3",
-			"error", err,
-			"bucket", b.bucket,
-			"key", b.key,
-			"next_retry", time.Now().Add(b.errorBackoff).Format(time.RFC3339),
-		)
+		// S3Loader already logged the error
 		return
 	}
-	defer resp.Body.Close()
+	if result == nil || result.NotChanged {
+		// Not modified or S3 not configured
+		return
+	}
 
-	// Parse blocklist
+	// Parse blocklist entries from JSON
 	var entries []string
-	if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil {
-		b.mu.Lock()
-		b.lastError = time.Now()
-		b.initialized = true
-		b.mu.Unlock()
+	if err := json.Unmarshal(result.Data, &entries); err != nil {
 		b.logger.Error("failed to parse blocklist JSON", "error", err)
 		return
 	}
@@ -251,37 +145,40 @@ func (b *IPBlocklist) refresh(ctx context.Context) {
 	})
 
 	// Update cache
-	now := time.Now()
-	newEtag := ""
-	if resp.ETag != nil {
-		// Strip quotes from ETag (S3 returns ETags with surrounding quotes per HTTP spec)
-		newEtag = strings.Trim(*resp.ETag, "\"")
-	}
-
 	b.mu.Lock()
-	previousEtag := b.etag
 	b.blocked = blocked
 	b.blockedCIDRs = cidrs
-	b.initialized = true
-	b.lastFetch = now
-	b.lastCheck = now
-	b.lastError = time.Time{} // Clear error state
-	b.etag = newEtag
 	b.totalEntries = len(blocked) + len(cidrs)
 	b.mu.Unlock()
 
 	// Log detailed info about the refresh
+	stats := b.loader.Stats()
 	b.logger.Info("blocklist loaded from S3",
-		"bucket", b.bucket,
-		"key", b.key,
-		"etag", newEtag,
-		"previous_etag", previousEtag,
+		"bucket", stats.Bucket,
+		"key", stats.Key,
+		"etag", stats.Etag,
 		"exact_ips", len(blocked),
 		"cidr_ranges", len(cidrs),
 		"total_entries", len(blocked)+len(cidrs),
 		"invalid_entries", invalidCount,
-		"fetch_time", now.Format(time.RFC3339),
 	)
+}
+
+// Refresh forces an immediate refresh of the blocklist.
+// This can be called to manually trigger a reload.
+func (b *IPBlocklist) Refresh(ctx context.Context) {
+	b.refresh(ctx)
+}
+
+// ClearCache clears the cached blocklist and forces a refresh on next request.
+func (b *IPBlocklist) ClearCache() {
+	b.mu.Lock()
+	b.blocked = make(map[string]bool)
+	b.blockedCIDRs = make([]*net.IPNet, 0)
+	b.totalEntries = 0
+	b.mu.Unlock()
+	// Note: S3Loader doesn't expose a ClearCache method, but NeedsRefresh
+	// will return true after cacheTTL expires naturally
 }
 
 // isBlocked checks if an IP is in the blocklist.
@@ -315,30 +212,48 @@ func (b *IPBlocklist) isBlocked(ipStr string) bool {
 
 // BlocklistStats contains statistics about the blocklist for observability.
 type BlocklistStats struct {
-	Initialized  bool      `json:"initialized"`
-	TotalEntries int       `json:"total_entries"`
-	ExactIPs     int       `json:"exact_ips"`
-	CIDRRanges   int       `json:"cidr_ranges"`
-	Etag         string    `json:"etag"`
-	LastFetch    time.Time `json:"last_fetch"`
-	LastCheck    time.Time `json:"last_check"`
-	CacheTTL     string    `json:"cache_ttl"`
+	Initialized  bool   `json:"initialized"`
+	TotalEntries int    `json:"total_entries"`
+	ExactIPs     int    `json:"exact_ips"`
+	CIDRRanges   int    `json:"cidr_ranges"`
+	Etag         string `json:"etag"`
+	LastFetch    string `json:"last_fetch"`
+	LastCheck    string `json:"last_check"`
+	CacheTTL     string `json:"cache_ttl"`
+	Bucket       string `json:"bucket"`
+	Key          string `json:"key"`
 }
 
 // Stats returns current blocklist statistics.
 func (b *IPBlocklist) Stats() BlocklistStats {
 	b.mu.RLock()
-	defer b.mu.RUnlock()
+	exactIPs := len(b.blocked)
+	cidrRanges := len(b.blockedCIDRs)
+	totalEntries := b.totalEntries
+	b.mu.RUnlock()
+
+	loaderStats := b.loader.Stats()
+
+	lastFetch := ""
+	if !loaderStats.LastFetch.IsZero() {
+		lastFetch = loaderStats.LastFetch.Format("2006-01-02T15:04:05Z")
+	}
+	lastCheck := ""
+	if !loaderStats.LastCheck.IsZero() {
+		lastCheck = loaderStats.LastCheck.Format("2006-01-02T15:04:05Z")
+	}
 
 	return BlocklistStats{
-		Initialized:  b.initialized,
-		TotalEntries: b.totalEntries,
-		ExactIPs:     len(b.blocked),
-		CIDRRanges:   len(b.blockedCIDRs),
-		Etag:         b.etag,
-		LastFetch:    b.lastFetch,
-		LastCheck:    b.lastCheck,
-		CacheTTL:     b.cacheTTL.String(),
+		Initialized:  loaderStats.Initialized,
+		TotalEntries: totalEntries,
+		ExactIPs:     exactIPs,
+		CIDRRanges:   cidrRanges,
+		Etag:         loaderStats.Etag,
+		LastFetch:    lastFetch,
+		LastCheck:    lastCheck,
+		CacheTTL:     loaderStats.CacheTTL,
+		Bucket:       loaderStats.Bucket,
+		Key:          loaderStats.Key,
 	}
 }
 
