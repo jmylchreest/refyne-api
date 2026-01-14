@@ -157,10 +157,9 @@ func (b *IPBlocklist) refresh(ctx context.Context) {
 			b.lastCheck = time.Now()
 			b.lastError = time.Now() // Backoff before checking again
 			b.mu.Unlock()
-			b.logger.Info("blocklist file not found in S3 (will allow all requests)",
+			b.logger.Debug("blocklist file not found in S3 (will allow all requests)",
 				"bucket", b.bucket,
 				"key", b.key,
-				"next_check", time.Now().Add(b.errorBackoff).Format(time.RFC3339),
 			)
 			return
 		}

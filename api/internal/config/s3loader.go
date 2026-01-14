@@ -123,10 +123,9 @@ func (l *S3Loader) Fetch(ctx context.Context) (*S3LoadResult, error) {
 			l.lastCheck = time.Now()
 			l.lastError = time.Now()
 			l.mu.Unlock()
-			l.logger.Info("S3 config file not found (using defaults)",
+			l.logger.Debug("S3 config file not found (using defaults)",
 				"bucket", l.bucket,
 				"key", l.key,
-				"next_check", time.Now().Add(l.errorBackoff).Format(time.RFC3339),
 			)
 			return nil, nil
 		}

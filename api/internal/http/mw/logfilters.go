@@ -149,7 +149,7 @@ func (l *LogFiltersLoader) refresh(ctx context.Context) {
 			l.lastCheck = time.Now()
 			l.lastError = time.Now()
 			l.mu.Unlock()
-			l.logger.Info("log filters file not found in S3 (using default filters)",
+			l.logger.Debug("log filters file not found in S3 (using default filters)",
 				"bucket", l.bucket,
 				"key", l.key,
 			)
