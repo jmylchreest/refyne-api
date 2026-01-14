@@ -117,7 +117,7 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 
 	// Get LLM config for analysis early (needed for error recording)
 	s.logger.Debug("resolving LLM config", "request_id", requestID, "user_id", userID, "tier", tier)
-	llmConfig, isBYOK := s.resolveLLMConfig(ctx, userID, tier)
+	llmConfig, isBYOK := s.resolveLLMConfig(ctx, userID, tier, requestID)
 	s.logger.Debug("LLM config resolved",
 		"request_id", requestID,
 		"user_id", userID,
@@ -291,7 +291,7 @@ func (s *AnalyzerService) recordAnalyzeUsage(
 
 	usageRecord := &UsageRecord{
 		UserID:            userID,
-		JobID:             requestID, // Use request_id as job_id for analyze operations
+		JobID:             "", // Analyze operations don't have job records
 		JobType:           models.JobTypeAnalyze,
 		Status:            status,
 		TotalChargedUSD:   0, // Analyze operations are currently free
@@ -1207,11 +1207,12 @@ func (s *AnalyzerService) parsePageType(pt string) models.PageType {
 
 // resolveLLMConfig determines which LLM configuration to use for analysis.
 // Returns (config, isBYOK) where isBYOK is true if using user's own key.
-func (s *AnalyzerService) resolveLLMConfig(ctx context.Context, userID string, tier string) (*LLMConfigInput, bool) {
+func (s *AnalyzerService) resolveLLMConfig(ctx context.Context, userID, tier, requestID string) (*LLMConfigInput, bool) {
 	// 1. Check user's fallback chain first (new system)
 	config := s.buildUserFallbackChainConfig(ctx, userID)
 	if config != nil {
 		s.logger.Info("using user fallback chain for analysis (BYOK)",
+			"request_id", requestID,
 			"user_id", userID,
 			"provider", config.Provider,
 			"model", config.Model,
@@ -1222,7 +1223,7 @@ func (s *AnalyzerService) resolveLLMConfig(ctx context.Context, userID string, t
 	// 2. Check user's legacy saved config (single provider)
 	savedCfg, err := s.repos.LLMConfig.GetByUserID(ctx, userID)
 	if err != nil {
-		s.logger.Warn("failed to get user LLM config", "user_id", userID, "error", err)
+		s.logger.Warn("failed to get user LLM config", "request_id", requestID, "user_id", userID, "error", err)
 	}
 
 	if savedCfg != nil && savedCfg.Provider != "" {
@@ -1231,13 +1232,14 @@ func (s *AnalyzerService) resolveLLMConfig(ctx context.Context, userID string, t
 		if savedCfg.APIKeyEncrypted != "" && s.encryptor != nil {
 			decrypted, err := s.encryptor.Decrypt(savedCfg.APIKeyEncrypted)
 			if err != nil {
-				s.logger.Warn("failed to decrypt API key", "user_id", userID, "error", err)
+				s.logger.Warn("failed to decrypt API key", "request_id", requestID, "user_id", userID, "error", err)
 			} else {
 				apiKey = decrypted
 			}
 		}
 
 		s.logger.Info("using legacy user config for analysis (BYOK)",
+			"request_id", requestID,
 			"user_id", userID,
 			"provider", savedCfg.Provider,
 		)
@@ -1251,6 +1253,7 @@ func (s *AnalyzerService) resolveLLMConfig(ctx context.Context, userID string, t
 
 	// 3. Use system fallback chain
 	s.logger.Info("using system fallback chain for analysis",
+		"request_id", requestID,
 		"user_id", userID,
 		"tier", tier,
 	)
