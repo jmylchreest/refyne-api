@@ -29,6 +29,7 @@ type Services struct {
 	Analyzer   *AnalyzerService
 	Storage    *StorageService
 	UserLLM    *UserLLMService
+	Sitemap    *SitemapService
 }
 
 // NewServices creates all service instances.
@@ -76,6 +77,9 @@ func NewServices(cfg *config.Config, repos *repository.Repositories, logger *slo
 		return nil, fmt.Errorf("failed to create storage service: %w", err)
 	}
 
+	// Create sitemap service for URL discovery
+	sitemapSvc := NewSitemapService(logger)
+
 	return &Services{
 		Auth:       authSvc,
 		Extraction: extractionSvc,
@@ -91,5 +95,6 @@ func NewServices(cfg *config.Config, repos *repository.Repositories, logger *slo
 		Analyzer:   analyzerSvc,
 		Storage:    storageSvc,
 		UserLLM:    userLLMSvc,
+		Sitemap:    sitemapSvc,
 	}, nil
 }

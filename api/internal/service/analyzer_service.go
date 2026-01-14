@@ -24,12 +24,13 @@ import (
 
 // AnalyzerService handles URL analysis and schema generation.
 type AnalyzerService struct {
-	cfg       *config.Config
-	repos     *repository.Repositories
-	billing   *BillingService
-	logger    *slog.Logger
-	encryptor *crypto.Encryptor
-	cleaner   cleaner.Cleaner
+	cfg             *config.Config
+	repos           *repository.Repositories
+	billing         *BillingService
+	logger          *slog.Logger
+	encryptor       *crypto.Encryptor
+	cleaner         cleaner.Cleaner
+	fallbackCleaner cleaner.Cleaner // Used when content is too large for context window
 }
 
 // NewAnalyzerService creates a new analyzer service (legacy constructor).
@@ -44,13 +45,23 @@ func NewAnalyzerServiceWithBilling(cfg *config.Config, repos *repository.Reposit
 		logger.Error("failed to create encryptor for analyzer service", "error", err)
 	}
 
+	// Create fallback cleaner: Trafilatura with HTML output preserving tables and links
+	// Used when raw HTML exceeds context window limits
+	fallbackCleaner := cleaner.NewTrafilatura(&cleaner.TrafilaturaConfig{
+		Output: cleaner.OutputHTML, // HTML output preserves structure
+		Tables: cleaner.Include,    // Explicitly preserve tables
+		Links:  cleaner.Include,    // Explicitly preserve links
+		Images: cleaner.Exclude,    // Exclude images to save tokens
+	})
+
 	return &AnalyzerService{
-		cfg:       cfg,
-		repos:     repos,
-		billing:   billing,
-		logger:    logger,
-		encryptor: encryptor,
-		cleaner:   cleaner.NewNoop(), // Use noop cleaner - raw HTML for analysis
+		cfg:             cfg,
+		repos:           repos,
+		billing:         billing,
+		logger:          logger,
+		encryptor:       encryptor,
+		cleaner:         cleaner.NewNoop(), // Use noop cleaner - raw HTML for analysis
+		fallbackCleaner: fallbackCleaner,
 	}
 }
 
@@ -61,16 +72,23 @@ type AnalyzeInput struct {
 	FetchMode string `json:"fetch_mode"` // auto, static, dynamic
 }
 
+// AnalyzeTokenUsage represents token consumption for an analysis.
+type AnalyzeTokenUsage struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+}
+
 // AnalyzeOutput represents the output from analysis.
 type AnalyzeOutput struct {
-	SiteSummary          string                  `json:"site_summary"`
-	PageType             models.PageType         `json:"page_type"`
+	SiteSummary          string                   `json:"site_summary"`
+	PageType             models.PageType          `json:"page_type"`
 	DetectedElements     []models.DetectedElement `json:"detected_elements"`
-	SuggestedSchema      string                  `json:"suggested_schema"` // YAML
-	FollowPatterns       []models.FollowPattern  `json:"follow_patterns"`
-	SampleLinks          []string                `json:"sample_links"`
-	RecommendedFetchMode models.FetchMode        `json:"recommended_fetch_mode"`
-	SampleData           any                     `json:"sample_data,omitempty"` // Preview extraction result
+	SuggestedSchema      string                   `json:"suggested_schema"` // YAML
+	FollowPatterns       []models.FollowPattern   `json:"follow_patterns"`
+	SampleLinks          []string                 `json:"sample_links"`
+	RecommendedFetchMode models.FetchMode         `json:"recommended_fetch_mode"`
+	SampleData           any                      `json:"sample_data,omitempty"` // Preview extraction result
+	TokenUsage           AnalyzeTokenUsage        `json:"token_usage"`
 }
 
 // llmCallResult holds the result of an LLM API call including token usage.
@@ -141,12 +159,60 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 	fetchDuration := time.Since(fetchStart)
 
 	// Generate analysis prompt and call LLM
+	// First try with raw content (noop cleaner), retry with fallback cleaner on context length errors
 	llmStart := time.Now()
 	s.logger.Debug("calling LLM for analysis", "provider", llmConfig.Provider, "model", llmConfig.Model)
 	result, err := s.analyzeWithLLM(ctx, mainContent, detailContents, links, llmConfig)
 	llmDuration := time.Since(llmStart)
 
-	if err != nil {
+	// If context length error, retry with cleaned content
+	if err != nil && isContextLengthError(err) {
+		s.logger.Info("context length error detected, retrying with cleaned content",
+			"original_content_length", len(mainContent),
+			"error", err.Error(),
+		)
+
+		// Clean main content with fallback cleaner (Trafilatura HTML with tables/links)
+		cleanedMain, cleanErr := s.fallbackCleaner.Clean(mainContent)
+		if cleanErr != nil {
+			s.logger.Warn("fallback cleaner failed, using original content", "error", cleanErr)
+			cleanedMain = mainContent
+		} else {
+			s.logger.Debug("content cleaned for retry",
+				"original_length", len(mainContent),
+				"cleaned_length", len(cleanedMain),
+				"reduction_percent", 100-int(float64(len(cleanedMain))/float64(len(mainContent))*100),
+			)
+		}
+
+		// Clean detail contents as well
+		var cleanedDetails []string
+		for _, detail := range detailContents {
+			cleaned, err := s.fallbackCleaner.Clean(detail)
+			if err != nil {
+				cleaned = detail // Keep original on error
+			}
+			cleanedDetails = append(cleanedDetails, cleaned)
+		}
+
+		// Retry with cleaned content
+		llmRetryStart := time.Now()
+		result, err = s.analyzeWithLLM(ctx, cleanedMain, cleanedDetails, links, llmConfig)
+		llmDuration = time.Since(llmStart) + time.Since(llmRetryStart) // Total LLM time including retry
+
+		if err != nil {
+			s.logger.Error("LLM analysis failed after retry with cleaned content",
+				"provider", llmConfig.Provider,
+				"model", llmConfig.Model,
+				"error", err,
+			)
+			s.recordAnalyzeUsage(ctx, userID, tier, targetURL, llmConfig, isBYOK, 0, 0,
+				int(fetchDuration.Milliseconds()), int(llmDuration.Milliseconds()), int(time.Since(startTime).Milliseconds()),
+				"failed", "retry failed: "+err.Error())
+			return nil, fmt.Errorf("LLM analysis failed after retry: %w", err)
+		}
+		s.logger.Info("analysis succeeded after retry with cleaned content")
+	} else if err != nil {
 		s.logger.Error("LLM analysis failed",
 			"provider", llmConfig.Provider,
 			"model", llmConfig.Model,
@@ -167,6 +233,12 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 	result.Output.RecommendedFetchMode = fetchMode
 	if len(links) > 0 {
 		result.Output.SampleLinks = links[:min(10, len(links))] // Return up to 10 sample links
+	}
+
+	// Add token usage to output
+	result.Output.TokenUsage = AnalyzeTokenUsage{
+		InputTokens:  result.InputTokens,
+		OutputTokens: result.OutputTokens,
 	}
 
 	s.logger.Info("URL analysis completed",
@@ -405,6 +477,29 @@ Your goal is to:
 2. DETERMINE what structured data would be most valuable to extract
 3. GENERATE a schema that produces RICH, COMBINABLE data across multiple pages
 
+## CRITICAL: Writing Effective Field Descriptions
+
+The schema you generate will be used by OTHER AI models to extract data. Your field descriptions are INSTRUCTIONS to those models. Write them accordingly:
+
+BAD description (vague, won't extract consistently):
+  description: "The property price"
+
+GOOD description (specific, actionable):
+  description: "Property sale price as integer. Extract from prominent price display. If shown with currency symbol, omit symbol. If price is a range, use the lower value."
+
+For EVERY field description, include:
+1. **What to extract** - Be specific about the data type and format
+2. **Where to find it** - Hint at typical page locations if relevant
+3. **Edge cases** - What to do if missing, ambiguous, or in unexpected format
+4. **Output format** - Exact format expected (e.g., "ISO date YYYY-MM-DD", "integer in cents", "array of strings")
+
+Additional patterns that improve extraction reliability:
+- For multilingual sites: specify which language to prefer, format for including originals: "English Name (原文)"
+- For currency/units: specify whether to convert and to what
+- For dates: specify format and calendar system handling
+- For missing data: explicitly state "null if not found" vs required
+- For arrays: specify ordering preference if relevant (e.g., "in order of appearance")
+
 ## Main Page Content (HTML)
 `)
 	sb.WriteString("```html\n")
@@ -431,19 +526,33 @@ Your goal is to:
 
 When generating schemas, follow these principles:
 
-1. **Nested Objects for Complex Data**: Use objects within arrays when data has multiple related attributes
+1. **Schema-Level Description is Critical**: The top-level description field should contain:
+   - What type of page/site this schema is for
+   - CRITICAL OUTPUT REQUIREMENTS as a numbered list
+   - Any data transformation rules (currency conversion, date format conversion, language handling)
+   - Domain-specific knowledge the extractor needs
+
+2. **Nested Objects for Complex Data**: Use objects within arrays when data has multiple related attributes
    - Good: services: [{name: "...", description: "...", pricing: "..."}]
    - Bad: service_names: ["..."], service_descriptions: ["..."]
 
-2. **Consistent Keys Across Pages**: Schema should work across multiple pages of the same site
+3. **Consistent Keys Across Pages**: Schema should work across multiple pages of the same site
    - If crawling /about, /services, /team pages, each should extract into the same structure
    - Empty arrays/nulls are fine when data isn't present on a specific page
 
-3. **Rich Descriptions**: Each field should have clear descriptions guiding extraction
+4. **Field Descriptions Are Extraction Instructions**: Write descriptions as if you're instructing another AI model how to extract that specific field. Include:
+   - Expected format and data type
+   - Edge case handling
+   - What to return if not found
 
-4. **Appropriate Nesting Depth**: Don't over-flatten. If clients have industries and descriptions, nest them.
+5. **Appropriate Nesting Depth**: Don't over-flatten. If clients have industries and descriptions, nest them.
 
-5. **Common Business Data Patterns**:
+6. **Add Source/Metadata Fields When Useful**: For prices, dates, or derived data, consider adding fields to track:
+   - source: "page" vs "calculated/converted"
+   - confidence indicators
+   - original vs processed values
+
+7. **Common Business Data Patterns**:
    - Company info: name, tagline, description, founded, team_size
    - Services/Products: array of objects with name, description, optional pricing/features
    - Clients/Testimonials: array of objects with name, industry, quote/description
@@ -581,61 +690,113 @@ fields:
     description: Product detail page URL
 ` + "```" + `
 
-### Real Estate Listing
+### Real Estate Listing (Detailed Example)
 ` + "```yaml" + `
-name: Property
-description: Real estate property listing
+name: PropertyListing
+description: |
+  A real estate property listing page.
+
+  CRITICAL OUTPUT REQUIREMENTS:
+  1. All prices must be extracted as integers (no decimals, no currency symbols)
+  2. If prices shown in multiple currencies, extract all with source tracking
+  3. Areas should be in square meters (convert from sq ft if needed: divide by 10.764)
+  4. Dates in ISO format YYYY-MM-DD
+  5. For missing optional fields, return null (not empty string)
+
 fields:
   - name: title
     type: string
-    description: Property title or headline
-  - name: price
-    type: number
-    description: Listing price
-  - name: address
+    description: "Property listing headline. Extract the main title text, not taglines or subtitles."
+    required: true
+  - name: prices
+    type: array
+    description: "All prices shown for this property. Include each currency found on page."
+    required: true
+    items:
+      type: object
+      properties:
+        currency:
+          type: string
+          description: "ISO currency code: USD, EUR, GBP, etc."
+        value:
+          type: integer
+          description: "Price as integer. Remove decimals, commas, currency symbols."
+        period:
+          type: string
+          description: "For rentals: 'month', 'week', 'year'. Null for sales."
+        source:
+          type: string
+          description: "'page' if shown on page, 'converted' if you calculated it"
+  - name: location
     type: object
+    description: "Property location details"
+    required: true
     properties:
-      - name: street
+      full_address:
         type: string
-      - name: city
+        description: "Complete address as shown, or null if only partial info available"
+      city:
         type: string
-      - name: state
+        description: "City or town name"
+      state_province:
         type: string
-      - name: zip
+        description: "State, province, or region"
+      postal_code:
         type: string
+        description: "ZIP or postal code if shown"
+      country:
+        type: string
+        description: "Country name or code"
   - name: bedrooms
-    type: number
+    type: integer
+    description: "Number of bedrooms as integer. Studio = 0. Null if not specified."
   - name: bathrooms
     type: number
-  - name: square_feet
+    description: "Number of bathrooms. Can be decimal (e.g., 2.5 for 2 full + 1 half bath)."
+  - name: area_sqm
     type: number
-  - name: lot_size
-    type: string
-  - name: year_built
-    type: number
+    description: "Living area in square meters. If shown in sq ft, convert by dividing by 10.764."
   - name: property_type
     type: string
-    description: House, condo, apartment, etc.
+    description: "Standardize to: House, Condo, Apartment, Townhouse, Villa, Land, Commercial, or Other"
+  - name: listing_type
+    type: string
+    description: "'Sale' or 'Rent' - determine from context and price display"
   - name: features
     type: array
+    description: "Property features and amenities. Use lowercase standard terms: pool, garage, garden, balcony, etc."
     items:
       type: string
-    description: Property features and amenities
   - name: description
     type: string
+    description: "Main property description text. Limit to 2000 characters. Preserve key details."
   - name: images
     type: array
+    description: "Property image URLs. First 10 only, in order of appearance."
     items:
       type: string
   - name: agent
     type: object
+    description: "Listing agent or seller contact info"
     properties:
-      - name: name
+      name:
         type: string
-      - name: phone
+        description: "Agent or agency name"
+      phone:
         type: string
-      - name: email
+        description: "Phone number as shown (preserve formatting)"
+      email:
         type: string
+        description: "Email if displayed (may be hidden or require click)"
+      type:
+        type: string
+        description: "'Agent', 'Agency', 'Owner', or 'Developer'"
+  - name: listing_date
+    type: string
+    description: "Date listed in ISO format YYYY-MM-DD. Convert from relative ('3 days ago') if possible."
+  - name: url
+    type: string
+    description: "Full URL of the listing page"
 ` + "```" + `
 
 ### Job Listing
@@ -734,16 +895,28 @@ Analyze the HTML and:
    - description: What this represents
 
 5. **suggested_schema**: Generate a YAML schema that:
+   - Has a multi-line description with CRITICAL OUTPUT REQUIREMENTS
    - Is appropriate for the site type
    - Uses nested objects where it makes data cleaner
    - Will produce COMBINABLE results when crawling multiple pages
-   - Has clear descriptions for each field
+   - Has DETAILED field descriptions that serve as extraction instructions
    - Marks required fields appropriately
 
 6. **follow_patterns**: Provide CSS selectors and/or URL patterns to find related pages:
    - pattern: CSS selector like "a[href*='/services']" or URL pattern like "/product/.*"
    - description: What pages this targets
    - sample_urls: 1-3 example URLs
+
+## Quality Checklist (verify before outputting)
+
+Before finalizing your schema, verify:
+- [ ] Schema description includes numbered CRITICAL OUTPUT REQUIREMENTS
+- [ ] Every field description explains WHAT to extract, not just what the field is
+- [ ] Field descriptions specify output FORMAT (date format, number format, etc.)
+- [ ] Field descriptions handle edge cases (what if missing? what if ambiguous?)
+- [ ] Arrays specify item format clearly
+- [ ] Nested objects have complete property descriptions
+- [ ] Required fields are marked appropriately (only truly essential fields)
 
 ## Output Format
 
@@ -929,10 +1102,10 @@ func (s *AnalyzerService) parseAnalysisResponse(response string) (*AnalyzeOutput
 		SiteSummary      string `json:"site_summary"`
 		PageType         string `json:"page_type"`
 		DetectedElements []struct {
-			Name        string `json:"name"`
-			Type        string `json:"type"`
-			Count       int    `json:"count"`
-			Description string `json:"description"`
+			Name        string          `json:"name"`
+			Type        string          `json:"type"`
+			Count       models.FlexInt  `json:"count"`
+			Description string          `json:"description"`
 		} `json:"detected_elements"`
 		SuggestedSchema string `json:"suggested_schema"`
 		FollowPatterns  []struct {
@@ -1254,6 +1427,24 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// isContextLengthError checks if an error is related to exceeding LLM context window limits.
+func isContextLengthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "context_length") ||
+		strings.Contains(errStr, "context length") ||
+		strings.Contains(errStr, "max_tokens") ||
+		strings.Contains(errStr, "token limit") ||
+		strings.Contains(errStr, "too long") ||
+		strings.Contains(errStr, "maximum context") ||
+		strings.Contains(errStr, "exceeds") && strings.Contains(errStr, "limit") ||
+		strings.Contains(errStr, "input too large") ||
+		strings.Contains(errStr, "content_too_large") ||
+		strings.Contains(errStr, "request too large")
 }
 
 // CleanHTML removes scripts, styles, and excessive whitespace from HTML.

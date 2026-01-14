@@ -22,6 +22,10 @@ var (
 	// ErrModelUnavailable indicates a specific model is unavailable.
 	ErrModelUnavailable = errors.New("model unavailable")
 
+	// ErrModelFeatureUnsupported indicates the model doesn't support a required feature
+	// (e.g., response_format for structured output).
+	ErrModelFeatureUnsupported = errors.New("model feature unsupported")
+
 	// ErrInvalidAPIKey indicates the API key is invalid or expired.
 	ErrInvalidAPIKey = errors.New("invalid API key")
 
@@ -56,8 +60,17 @@ type LLMError struct {
 	// User-friendly message to display
 	UserMessage string
 
-	// Whether this is a retryable error
+	// Raw error message (for admin/BYOK visibility)
+	RawMessage string
+
+	// Error category for classification (rate_limit, model_unsupported, etc.)
+	Category string
+
+	// Whether this is a retryable error (with same provider/model)
 	Retryable bool
+
+	// Whether this error should trigger fallback to next provider
+	ShouldFallback bool
 
 	// Whether user should consider upgrading (BYOK or higher tier)
 	SuggestUpgrade bool
@@ -118,14 +131,28 @@ func ClassifyError(err error, provider, model string, statusCode int) *LLMError 
 		StatusCode: statusCode,
 		Provider:   provider,
 		Model:      model,
+		RawMessage: err.Error(),
 	}
 
 	// Check if using free model
 	isFreeTier := strings.Contains(model, ":free") || provider == "credits"
 
+	// First check error message for specific patterns that override status code classification
+	// This is important because 400 Bad Request can mean many different things
+	if containsFeatureUnsupported(errStr) {
+		llmErr.Err = ErrModelFeatureUnsupported
+		llmErr.Category = "model_unsupported"
+		llmErr.UserMessage = "This model doesn't support structured output. Trying next model."
+		llmErr.Retryable = false
+		llmErr.ShouldFallback = true // Try next provider
+		return llmErr
+	}
+
 	// Classify by HTTP status code
 	switch statusCode {
 	case http.StatusTooManyRequests: // 429
+		llmErr.Category = "rate_limit"
+		llmErr.ShouldFallback = true
 		if isFreeTier {
 			llmErr.Err = ErrFreeTierRateLimited
 			llmErr.UserMessage = "The free tier is experiencing high demand. Please try again in a few minutes, or configure your own API key for reliable access."
@@ -137,6 +164,8 @@ func ClassifyError(err error, provider, model string, statusCode int) *LLMError 
 		}
 
 	case http.StatusPaymentRequired: // 402
+		llmErr.Category = "quota_exceeded"
+		llmErr.ShouldFallback = true
 		if isFreeTier {
 			llmErr.Err = ErrFreeTierQuotaExhausted
 			llmErr.UserMessage = "Free tier quota has been exhausted. Configure your own API key to continue using the service."
@@ -148,6 +177,8 @@ func ClassifyError(err error, provider, model string, statusCode int) *LLMError 
 		}
 
 	case http.StatusServiceUnavailable: // 503
+		llmErr.Category = "provider_error"
+		llmErr.ShouldFallback = true
 		if isFreeTier {
 			llmErr.Err = ErrFreeTierUnavailable
 			llmErr.UserMessage = "The free model is temporarily unavailable. Please try again later, or configure your own API key for better reliability."
@@ -161,10 +192,14 @@ func ClassifyError(err error, provider, model string, statusCode int) *LLMError 
 
 	case http.StatusUnauthorized: // 401
 		llmErr.Err = ErrInvalidAPIKey
+		llmErr.Category = "invalid_key"
 		llmErr.UserMessage = "Invalid API key. Please check your LLM configuration."
 		llmErr.Retryable = false
+		llmErr.ShouldFallback = false // Don't try other models with same bad key
 
 	case http.StatusBadGateway, http.StatusGatewayTimeout: // 502, 504
+		llmErr.Category = "provider_error"
+		llmErr.ShouldFallback = true
 		if isFreeTier {
 			llmErr.Err = ErrFreeTierUnavailable
 			llmErr.UserMessage = "The free model backend is experiencing issues. Consider using your own API key for more reliable access."
@@ -176,6 +211,10 @@ func ClassifyError(err error, provider, model string, statusCode int) *LLMError 
 			llmErr.Retryable = true
 		}
 
+	case http.StatusBadRequest: // 400
+		// 400 errors need further classification by message
+		llmErr = classifyByErrorMessage(llmErr, errStr, isFreeTier)
+
 	default:
 		// Check error message content for OpenRouter-specific errors
 		llmErr = classifyByErrorMessage(llmErr, errStr, isFreeTier)
@@ -184,11 +223,32 @@ func ClassifyError(err error, provider, model string, statusCode int) *LLMError 
 	return llmErr
 }
 
+// containsFeatureUnsupported checks if the error indicates a model feature is unsupported.
+func containsFeatureUnsupported(errStr string) bool {
+	patterns := []string{
+		"response_format is not supported",
+		"response_format not supported",
+		"structured output not supported",
+		"json mode not supported",
+		"json_object not supported",
+		"does not support response_format",
+		"does not support structured",
+	}
+	for _, p := range patterns {
+		if strings.Contains(errStr, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // classifyByErrorMessage analyzes error message content for specific patterns.
 func classifyByErrorMessage(llmErr *LLMError, errStr string, isFreeTier bool) *LLMError {
 	// OpenRouter-specific error patterns
 	switch {
 	case strings.Contains(errStr, "rate limit") || strings.Contains(errStr, "ratelimit"):
+		llmErr.Category = "rate_limit"
+		llmErr.ShouldFallback = true
 		if isFreeTier {
 			llmErr.Err = ErrFreeTierRateLimited
 			llmErr.UserMessage = "The free tier is rate limited. Please wait a moment and try again, or use your own API key."
@@ -200,6 +260,8 @@ func classifyByErrorMessage(llmErr *LLMError, errStr string, isFreeTier bool) *L
 		}
 
 	case strings.Contains(errStr, "overloaded") || strings.Contains(errStr, "capacity"):
+		llmErr.Category = "provider_error"
+		llmErr.ShouldFallback = true
 		if isFreeTier {
 			llmErr.Err = ErrFreeTierUnavailable
 			llmErr.UserMessage = "Free tier is under heavy load. Try again later or configure your own API key."
@@ -213,15 +275,21 @@ func classifyByErrorMessage(llmErr *LLMError, errStr string, isFreeTier bool) *L
 
 	case strings.Contains(errStr, "model not found") || strings.Contains(errStr, "invalid model"):
 		llmErr.Err = ErrModelUnavailable
+		llmErr.Category = "model_unsupported"
 		llmErr.UserMessage = "The specified model is not available. Please check your LLM configuration."
 		llmErr.Retryable = false
+		llmErr.ShouldFallback = true
 
 	case strings.Contains(errStr, "invalid api key") || strings.Contains(errStr, "authentication"):
 		llmErr.Err = ErrInvalidAPIKey
+		llmErr.Category = "invalid_key"
 		llmErr.UserMessage = "Invalid API key. Please check your LLM configuration."
 		llmErr.Retryable = false
+		llmErr.ShouldFallback = false
 
 	case strings.Contains(errStr, "insufficient") && strings.Contains(errStr, "credit"):
+		llmErr.Category = "quota_exceeded"
+		llmErr.ShouldFallback = true
 		if isFreeTier {
 			llmErr.Err = ErrFreeTierQuotaExhausted
 			llmErr.UserMessage = "Free tier credits exhausted. Configure your own API key to continue."
@@ -234,11 +302,15 @@ func classifyByErrorMessage(llmErr *LLMError, errStr string, isFreeTier bool) *L
 
 	case strings.Contains(errStr, "context") && strings.Contains(errStr, "length"):
 		llmErr.Err = ErrProviderError
+		llmErr.Category = "content_too_long"
 		llmErr.UserMessage = "The content is too long for the model. Try with a smaller page or simpler schema."
 		llmErr.Retryable = false
+		llmErr.ShouldFallback = false // Content issue, not provider issue
 
 	case strings.Contains(errStr, "timeout") || strings.Contains(errStr, "deadline exceeded"):
 		llmErr.Err = ErrProviderError
+		llmErr.Category = "timeout"
+		llmErr.ShouldFallback = true
 		if isFreeTier {
 			llmErr.UserMessage = "Request timed out waiting for the free model. Free models can be slow under load. Consider using your own API key for faster, more reliable extractions."
 			llmErr.SuggestUpgrade = true
@@ -250,6 +322,8 @@ func classifyByErrorMessage(llmErr *LLMError, errStr string, isFreeTier bool) *L
 	default:
 		// Generic error
 		llmErr.Err = ErrProviderError
+		llmErr.Category = "unknown"
+		llmErr.ShouldFallback = true // Try next provider for unknown errors
 		if isFreeTier {
 			llmErr.UserMessage = "An error occurred with the free tier. Consider using your own API key for better reliability."
 			llmErr.SuggestUpgrade = true

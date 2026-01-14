@@ -13,7 +13,6 @@ import {
   ServiceKey,
   ServiceKeyInput,
   FallbackChainEntry,
-  FallbackChainEntryInput,
   ModelValidationResult,
   SubscriptionTier,
 } from '@/lib/api';
@@ -23,14 +22,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { ModelSelector } from '@/components/model-selector';
+import { FallbackChainEditor, ChainEntry, SavedChainEntry } from '@/components/fallback-chain-editor';
 import { toast } from 'sonner';
-
-const DEFAULT_MODELS: Record<string, string> = {
-  openrouter: 'xiaomi/mimo-v2-flash:free',
-  anthropic: 'claude-sonnet-4-5-20250514',
-  openai: 'gpt-4o-mini',
-  ollama: 'llama3.2',
-};
 
 const PROVIDER_LABELS: Record<string, string> = {
   openrouter: 'OpenRouter',
@@ -39,7 +32,12 @@ const PROVIDER_LABELS: Record<string, string> = {
   ollama: 'Ollama',
 };
 
-const PROVIDERS = ['openrouter', 'anthropic', 'openai', 'ollama'] as const;
+const DEFAULT_MODELS: Record<string, string> = {
+  openrouter: 'google/gemini-2.0-flash-001',
+  anthropic: 'claude-sonnet-4-5-20250514',
+  openai: 'gpt-4o-mini',
+  ollama: 'llama3.2',
+};
 
 type ModelStatusMap = Map<string, ModelValidationResult>;
 
@@ -50,9 +48,6 @@ export default function ExtractorsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [editingProvider, setEditingProvider] = useState<string | null>(null);
   const [formData, setFormData] = useState<Partial<ServiceKeyInput>>({});
-  const [chainDraft, setChainDraft] = useState<FallbackChainEntryInput[]>([]);
-  const [isEditingChain, setIsEditingChain] = useState(false);
-  const [savingChain, setSavingChain] = useState(false);
   const [modelStatuses, setModelStatuses] = useState<ModelStatusMap>(new Map());
   const [validatingModels, setValidatingModels] = useState(false);
   const [showApiKey, setShowApiKey] = useState<Record<string, boolean>>({});
@@ -186,85 +181,48 @@ export default function ExtractorsPage() {
     });
   };
 
-  const startEditingChain = () => {
-    setChainDraft(chain.map(e => ({
-      provider: e.provider as FallbackChainEntryInput['provider'],
-      model: e.model,
-      is_enabled: e.is_enabled,
-    })));
-    setIsEditingChain(true);
-  };
-
-  const cancelEditingChain = () => {
-    setChainDraft([]);
-    setIsEditingChain(false);
-  };
-
-  const saveChain = async () => {
+  const handleSaveChain = async (entries: ChainEntry[]) => {
     if (!selectedTier) {
       toast.error('Please select a tier first');
-      return;
+      throw new Error('No tier selected');
     }
 
-    setSavingChain(true);
-    try {
-      const validationResult = await validateModels(
-        chainDraft.map(e => ({ provider: e.provider, model: e.model }))
+    // Validate models before saving
+    const validationResult = await validateModels(
+      entries.map(e => ({ provider: e.provider, model: e.model }))
+    );
+
+    const notFoundModels = validationResult.results.filter(r => r.status === 'not_found');
+    if (notFoundModels.length > 0) {
+      const modelList = notFoundModels.map(m => `${m.provider}:${m.model}`).join(', ');
+      const proceed = confirm(
+        `The following models were not found in provider catalogs:\n\n${modelList}\n\nThey may still work if the model IDs are correct. Save anyway?`
       );
-
-      const notFoundModels = validationResult.results.filter(r => r.status === 'not_found');
-      if (notFoundModels.length > 0) {
-        const modelList = notFoundModels.map(m => `${m.provider}:${m.model}`).join(', ');
-        const proceed = confirm(
-          `The following models were not found in provider catalogs:\n\n${modelList}\n\nThey may still work if the model IDs are correct. Save anyway?`
-        );
-        if (!proceed) {
-          setSavingChain(false);
-          return;
-        }
+      if (!proceed) {
+        throw new Error('User cancelled');
       }
+    }
 
-      const result = await setFallbackChain(chainDraft, selectedTier);
+    try {
+      const result = await setFallbackChain(
+        entries.map(e => ({
+          provider: e.provider,
+          model: e.model,
+          temperature: e.temperature,
+          max_tokens: e.max_tokens,
+          is_enabled: e.is_enabled,
+        })),
+        selectedTier
+      );
       setChain(result.chain);
       setChainsByTier(prev => ({ ...prev, [selectedTier]: result.chain }));
-      setIsEditingChain(false);
-      setChainDraft([]);
       toast.success(`Extraction fallback chain saved for ${selectedTier}`);
-
       validateChainModels(result.chain);
     } catch (err) {
       const error = err as { error?: string };
       toast.error(error.error || 'Failed to save extraction fallback chain');
-    } finally {
-      setSavingChain(false);
+      throw err;
     }
-  };
-
-  const addChainEntry = () => {
-    setChainDraft([...chainDraft, {
-      provider: 'openrouter',
-      model: DEFAULT_MODELS.openrouter,
-      is_enabled: true,
-    }]);
-  };
-
-  const removeChainEntry = (index: number) => {
-    setChainDraft(chainDraft.filter((_, i) => i !== index));
-  };
-
-  const moveChainEntry = (index: number, direction: 'up' | 'down') => {
-    const newIndex = direction === 'up' ? index - 1 : index + 1;
-    if (newIndex < 0 || newIndex >= chainDraft.length) return;
-
-    const newDraft = [...chainDraft];
-    [newDraft[index], newDraft[newIndex]] = [newDraft[newIndex], newDraft[index]];
-    setChainDraft(newDraft);
-  };
-
-  const updateChainEntry = (index: number, updates: Partial<FallbackChainEntryInput>) => {
-    setChainDraft(chainDraft.map((entry, i) =>
-      i === index ? { ...entry, ...updates } : entry
-    ));
   };
 
   const getModelStatusBadge = (provider: string, model: string) => {
@@ -442,36 +400,23 @@ export default function ExtractorsPage() {
 
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>Extraction Fallback Chain</CardTitle>
-              <CardDescription>
-                Configure the order in which LLM providers are tried for extraction per subscription tier.
-                The extraction service will try each entry in order until one succeeds.
-              </CardDescription>
-            </div>
-            {!isEditingChain && selectedTier && (
-              <Button variant="outline" onClick={startEditingChain}>
-                Edit Chain
-              </Button>
-            )}
-          </div>
+          <CardTitle>Extraction Fallback Chain</CardTitle>
+          <CardDescription>
+            Configure the order in which LLM providers are tried for extraction per subscription tier.
+            The extraction service will try each entry in order until one succeeds.
+            Click the settings icon on each entry to configure temperature and max tokens.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {tiers.length > 0 && (
             <div className="space-y-4 mb-6">
-              <div className="flex gap-2 border-b pb-4">
+              <div className="flex gap-2 flex-wrap border-b pb-4">
                 {tiers.map((tier) => (
                   <Button
                     key={tier.id}
                     variant={selectedTier === tier.slug ? 'default' : 'outline'}
                     size="sm"
-                    onClick={() => {
-                      if (!isEditingChain) {
-                        setSelectedTier(tier.slug);
-                      }
-                    }}
-                    disabled={isEditingChain}
+                    onClick={() => setSelectedTier(tier.slug)}
                     title={`ID: ${tier.id}`}
                   >
                     {tier.name}
@@ -518,146 +463,20 @@ export default function ExtractorsPage() {
               No subscription tiers found. Configure tiers in Clerk Commerce and set CLERK_SECRET_KEY.
             </div>
           )}
-          {!isEditingChain ? (
-            chain.length > 0 ? (
-              <ol className="space-y-2">
-                {chain.map((entry, index) => (
-                  <li
-                    key={entry.id}
-                    className="flex items-center gap-3 p-3 border rounded-lg"
-                  >
-                    <span className="text-sm font-medium text-zinc-500 w-6">{index + 1}.</span>
-                    <span className="font-medium">{PROVIDER_LABELS[entry.provider] || entry.provider}</span>
-                    <code className="bg-zinc-100 dark:bg-zinc-800 px-2 py-1 rounded text-sm">
-                      {entry.model}
-                    </code>
-                    {getModelStatusBadge(entry.provider, entry.model)}
-                    <Badge variant={entry.is_enabled ? 'default' : 'secondary'}>
-                      {entry.is_enabled ? 'Enabled' : 'Disabled'}
-                    </Badge>
-                  </li>
-                ))}
-              </ol>
-            ) : (
-              <div className="text-sm text-zinc-500 space-y-2">
-                {selectedTier ? (
-                  <p>No extraction fallback chain configured for <strong>{selectedTier}</strong>. Click &quot;Edit Chain&quot; to add one.</p>
-                ) : (
-                  <p>Select a tier above to view or configure its extraction fallback chain.</p>
-                )}
-              </div>
-            )
+          {selectedTier ? (
+            <FallbackChainEditor
+              chain={chain as SavedChainEntry[]}
+              onSave={handleSaveChain}
+              getModelStatusBadge={getModelStatusBadge}
+            />
           ) : (
-            <div className="space-y-4">
-              <div className="text-sm text-zinc-600 dark:text-zinc-400 mb-2">
-                Editing chain for: <strong>{tiers.find(t => t.slug === selectedTier)?.name || selectedTier}</strong>
-              </div>
-              {chainDraft.map((entry, index) => (
-                <div key={index} className="flex items-center gap-3 p-3 border rounded-lg">
-                  <div className="flex flex-col gap-1">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 w-6 p-0"
-                      onClick={() => moveChainEntry(index, 'up')}
-                      disabled={index === 0}
-                    >
-                      <ChevronUpIcon className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 w-6 p-0"
-                      onClick={() => moveChainEntry(index, 'down')}
-                      disabled={index === chainDraft.length - 1}
-                    >
-                      <ChevronDownIcon className="h-4 w-4" />
-                    </Button>
-                  </div>
-                  <span className="text-sm font-medium text-zinc-500 w-6">{index + 1}.</span>
-                  <select
-                    value={entry.provider}
-                    onChange={(e) => {
-                      const provider = e.target.value as FallbackChainEntryInput['provider'];
-                      updateChainEntry(index, {
-                        provider,
-                        model: DEFAULT_MODELS[provider],
-                      });
-                    }}
-                    className="border rounded px-2 py-1 bg-white dark:bg-zinc-900"
-                  >
-                    {PROVIDERS.map(p => (
-                      <option key={p} value={p}>{PROVIDER_LABELS[p]}</option>
-                    ))}
-                  </select>
-                  <div className="flex-1">
-                    <ModelSelector
-                      provider={entry.provider}
-                      value={entry.model}
-                      onValueChange={(model) => updateChainEntry(index, { model })}
-                    />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={entry.is_enabled}
-                      onChange={(e) => updateChainEntry(index, { is_enabled: e.target.checked })}
-                      className="rounded"
-                    />
-                    <span className="text-sm">Enabled</span>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => removeChainEntry(index)}
-                    className="text-red-500 hover:text-red-700"
-                  >
-                    <TrashIcon className="h-4 w-4" />
-                  </Button>
-                </div>
-              ))}
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={addChainEntry}>
-                  Add Entry
-                </Button>
-              </div>
-              <div className="flex gap-2 pt-4 border-t">
-                <Button onClick={saveChain} disabled={savingChain}>
-                  {savingChain ? 'Saving...' : 'Save Chain'}
-                </Button>
-                <Button variant="outline" onClick={cancelEditingChain}>
-                  Cancel
-                </Button>
-              </div>
+            <div className="text-sm text-zinc-500 text-center py-4">
+              Select a tier above to view or configure its extraction fallback chain.
             </div>
           )}
         </CardContent>
       </Card>
     </div>
-  );
-}
-
-function ChevronUpIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-      <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 15.75 7.5-7.5 7.5 7.5" />
-    </svg>
-  );
-}
-
-function ChevronDownIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-      <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
-    </svg>
-  );
-}
-
-function TrashIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-      <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
-    </svg>
   );
 }
 

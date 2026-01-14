@@ -1,0 +1,146 @@
+{
+  "provider_defaults": {
+    "anthropic": {
+      "Temperature": 0.2,
+      "MaxTokens": 8192,
+      "StrictMode": false
+    },
+    "openai": {
+      "Temperature": 0.2,
+      "MaxTokens": 8192,
+      "StrictMode": true
+    },
+    "openrouter": {
+      "Temperature": 0.2,
+      "MaxTokens": 6144,
+      "StrictMode": false
+    },
+    "ollama": {
+      "Temperature": 0.1,
+      "MaxTokens": 4096,
+      "StrictMode": false
+    }
+  },
+  "model_overrides": {
+    "meta-llama/llama-3.1-70b-instruct": {
+      "Temperature": 0.1,
+      "MaxTokens": 4096,
+      "StrictMode": false
+    },
+    "meta-llama/llama-3.1-8b-instruct": {
+      "Temperature": 0.1,
+      "MaxTokens": 4096,
+      "StrictMode": false
+    },
+    "meta-llama/llama-3.2-90b-instruct": {
+      "Temperature": 0.1,
+      "MaxTokens": 4096,
+      "StrictMode": false
+    },
+    "mistralai/mistral-large": {
+      "Temperature": 0.1,
+      "MaxTokens": 4096,
+      "StrictMode": false
+    },
+    "mistralai/mistral-nemo": {
+      "Temperature": 0.1,
+      "MaxTokens": 4096,
+      "StrictMode": false
+    },
+    "deepseek/deepseek-chat": {
+      "Temperature": 0.1,
+      "MaxTokens": 6144,
+      "StrictMode": false
+    },
+    "qwen/qwen-2.5-72b-instruct": {
+      "Temperature": 0.15,
+      "MaxTokens": 6144,
+      "StrictMode": false
+    },
+    "qwen/qwen-2.5-coder-32b-instruct": {
+      "Temperature": 0.1,
+      "MaxTokens": 6144,
+      "StrictMode": false
+    },
+    "google/gemini-2.0-flash-001": {
+      "Temperature": 0.2,
+      "MaxTokens": 8192,
+      "StrictMode": false
+    },
+    "google/gemini-2.0-flash-exp:free": {
+      "Temperature": 0.2,
+      "MaxTokens": 8192,
+      "StrictMode": false
+    },
+    "google/gemini-pro-1.5": {
+      "Temperature": 0.2,
+      "MaxTokens": 8192,
+      "StrictMode": false
+    },
+    "google/gemma-3-27b-it:free": {
+      "Temperature": 0.2,
+      "MaxTokens": 8192,
+      "StrictMode": false
+    },
+    "anthropic/claude-3.5-sonnet": {
+      "Temperature": 0.2,
+      "MaxTokens": 8192,
+      "StrictMode": false
+    },
+    "anthropic/claude-3-haiku": {
+      "Temperature": 0.2,
+      "MaxTokens": 4096,
+      "StrictMode": false
+    },
+    "openai/gpt-4o": {
+      "Temperature": 0.2,
+      "MaxTokens": 8192,
+      "StrictMode": true
+    },
+    "openai/gpt-4o-mini": {
+      "Temperature": 0.2,
+      "MaxTokens": 4096,
+      "StrictMode": true
+    },
+    "llama3.2": {
+      "Temperature": 0.1,
+      "MaxTokens": 4096,
+      "StrictMode": false
+    },
+    "llama3.1:70b": {
+      "Temperature": 0.1,
+      "MaxTokens": 4096,
+      "StrictMode": false
+    },
+    "mistral": {
+      "Temperature": 0.1,
+      "MaxTokens": 4096,
+      "StrictMode": false
+    },
+    "mixtral": {
+      "Temperature": 0.1,
+      "MaxTokens": 4096,
+      "StrictMode": false
+    },
+    "qwen2.5:14b": {
+      "Temperature": 0.1,
+      "MaxTokens": 4096,
+      "StrictMode": false
+    },
+    "deepseek-coder-v2": {
+      "Temperature": 0.1,
+      "MaxTokens": 4096,
+      "StrictMode": false
+    },
+    "xiaomi/mimo-v2-flash:free": {
+      "Temperature": 0.2,
+      "MaxTokens": 4096,
+      "StrictMode": false
+    },
+    "openai/gpt-oss-120b:free": {
+      "Temperature": 0.2,
+      "MaxTokens": 4096,
+      "StrictMode": false
+    }
+  }
+}

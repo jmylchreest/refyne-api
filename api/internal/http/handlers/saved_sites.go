@@ -371,7 +371,7 @@ func analysisResultToOutput(r *models.AnalysisResult) *AnalysisResultOutput {
 		output.DetectedElements = append(output.DetectedElements, DetectedElementOutput{
 			Name:        elem.Name,
 			Type:        elem.Type,
-			Count:       elem.Count,
+			Count:       elem.Count.Int(),
 			Description: elem.Description,
 		})
 	}
@@ -400,7 +400,7 @@ func inputToAnalysisResult(input *AnalysisResultInput) *models.AnalysisResult {
 		result.DetectedElements = append(result.DetectedElements, models.DetectedElement{
 			Name:        elem.Name,
 			Type:        elem.Type,
-			Count:       elem.Count,
+			Count:       models.FlexInt(elem.Count),
 			Description: elem.Description,
 		})
 	}

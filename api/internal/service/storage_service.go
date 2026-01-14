@@ -81,6 +81,16 @@ func (s *StorageService) IsEnabled() bool {
 	return s.enabled
 }
 
+// Client returns the underlying S3 client (may be nil if storage is disabled).
+func (s *StorageService) Client() *s3.Client {
+	return s.client
+}
+
+// Bucket returns the configured bucket name.
+func (s *StorageService) Bucket() string {
+	return s.bucket
+}
+
 // JobResultData represents a single extraction result for storage.
 type JobResultData struct {
 	ID        string          `json:"id"`

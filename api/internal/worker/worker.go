@@ -21,6 +21,7 @@ type Worker struct {
 	extractionSvc *service.ExtractionService
 	webhookSvc    *service.WebhookService
 	storageSvc    *service.StorageService
+	sitemapSvc    *service.SitemapService
 	pollInterval  time.Duration
 	concurrency   int
 	stop          chan struct{}
@@ -41,6 +42,7 @@ func New(
 	extractionSvc *service.ExtractionService,
 	webhookSvc *service.WebhookService,
 	storageSvc *service.StorageService,
+	sitemapSvc *service.SitemapService,
 	cfg Config,
 	logger *slog.Logger,
 ) *Worker {
@@ -59,6 +61,7 @@ func New(
 		extractionSvc: extractionSvc,
 		webhookSvc:    webhookSvc,
 		storageSvc:    storageSvc,
+		sitemapSvc:    sitemapSvc,
 		pollInterval:  cfg.PollInterval,
 		concurrency:   cfg.Concurrency,
 		stop:          make(chan struct{}),
@@ -179,9 +182,28 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 		Concurrency      int    `json:"concurrency"`
 		SameDomainOnly   bool   `json:"same_domain_only"`
 		ExtractFromSeeds bool   `json:"extract_from_seeds"`
+		UseSitemap       bool   `json:"use_sitemap"`
 	}
 	if job.CrawlOptionsJSON != "" {
 		json.Unmarshal([]byte(job.CrawlOptionsJSON), &options)
+	}
+
+	// If using sitemap, discover URLs from sitemap.xml
+	var sitemapURLs []string
+	if options.UseSitemap && w.sitemapSvc != nil {
+		w.logger.Info("discovering URLs from sitemap", "job_id", job.ID, "url", job.URL)
+		urls, found := w.sitemapSvc.TrySitemapDiscovery(ctx, job.URL, options.FollowPattern)
+		if found && len(urls) > 0 {
+			sitemapURLs = urls
+			w.logger.Info("discovered URLs from sitemap",
+				"job_id", job.ID,
+				"url_count", len(urls),
+			)
+		} else {
+			w.logger.Warn("sitemap discovery returned no URLs, falling back to CSS selector discovery",
+				"job_id", job.ID,
+			)
+		}
 	}
 
 	// Set defaults
@@ -220,18 +242,18 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 		crawlStatus := models.CrawlStatusCompleted
 		if pageResult.Error != "" {
 			crawlStatus = models.CrawlStatusFailed
-		} else {
-			// Only count successful extractions
-			pageCountMu.Lock()
-			pageCount++
-			currentCount := pageCount
-			pageCountMu.Unlock()
+		}
 
-			// Update job's page count in database for SSE polling
-			job.PageCount = currentCount
-			if err := w.jobRepo.Update(ctx, job); err != nil {
-				w.logger.Error("failed to update job page count", "job_id", job.ID, "error", err)
-			}
+		// Count ALL processed pages (successful + failed) for total visibility
+		pageCountMu.Lock()
+		pageCount++
+		currentCount := pageCount
+		pageCountMu.Unlock()
+
+		// Update job's page count in database for SSE polling
+		job.PageCount = currentCount
+		if err := w.jobRepo.Update(ctx, job); err != nil {
+			w.logger.Error("failed to update job page count", "job_id", job.ID, "error", err)
 		}
 
 		jobResult := &models.JobResult{
@@ -243,6 +265,12 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 			CrawlStatus:       crawlStatus,
 			DataJSON:          dataJSON,
 			ErrorMessage:      pageResult.Error,
+			ErrorDetails:      pageResult.ErrorDetails,
+			ErrorCategory:     pageResult.ErrorCategory,
+			LLMProvider:       pageResult.LLMProvider,
+			LLMModel:          pageResult.LLMModel,
+			IsBYOK:            pageResult.IsBYOK,
+			RetryCount:        pageResult.RetryCount,
 			TokenUsageInput:   pageResult.TokenUsageInput,
 			TokenUsageOutput:  pageResult.TokenUsageOutput,
 			FetchDurationMs:   pageResult.FetchDurationMs,
@@ -260,8 +288,9 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 	}
 
 	result, err := w.extractionSvc.CrawlWithCallback(ctx, job.UserID, service.CrawlInput{
-		URL:    job.URL,
-		Schema: json.RawMessage(job.SchemaJSON),
+		URL:      job.URL,
+		SeedURLs: sitemapURLs, // URLs from sitemap discovery (empty if not using sitemap)
+		Schema:   json.RawMessage(job.SchemaJSON),
 		Options: service.CrawlOptions{
 			FollowSelector:   options.FollowSelector,
 			FollowPattern:    options.FollowPattern,
@@ -273,6 +302,7 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 			Concurrency:      options.Concurrency,
 			SameDomainOnly:   options.SameDomainOnly,
 			ExtractFromSeeds: options.ExtractFromSeeds,
+			UseSitemap:       options.UseSitemap,
 		},
 	}, resultCallback)
 	if err != nil {

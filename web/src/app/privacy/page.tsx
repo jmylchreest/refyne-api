@@ -1,6 +1,19 @@
 import Link from 'next/link';
+import type { Metadata } from 'next';
 import { SiteHeader } from '@/components/site-header';
 import { RefyneText } from '@/components/refyne-logo';
+
+export const metadata: Metadata = {
+  title: 'Privacy Policy',
+  description: 'Privacy Policy for Refyne web scraping API. Learn how we collect, use, and protect your data. UK GDPR compliant.',
+  alternates: {
+    canonical: 'https://refyne.uk/privacy',
+  },
+  robots: {
+    index: true,
+    follow: true,
+  },
+};
 
 export default function PrivacyPage() {
   return (

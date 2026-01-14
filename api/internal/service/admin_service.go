@@ -124,9 +124,11 @@ type FallbackChainInput struct {
 
 // FallbackChainEntryInput represents a single entry in the fallback chain input.
 type FallbackChainEntryInput struct {
-	Provider  string `json:"provider"`
-	Model     string `json:"model"`
-	IsEnabled bool   `json:"is_enabled"`
+	Provider    string   `json:"provider"`
+	Model       string   `json:"model"`
+	Temperature *float64 `json:"temperature,omitempty"`
+	MaxTokens   *int     `json:"max_tokens,omitempty"`
+	IsEnabled   bool     `json:"is_enabled"`
 }
 
 // TierChainSummary represents a summary of chains per tier.
@@ -169,11 +171,13 @@ func (s *AdminService) SetFallbackChain(ctx context.Context, input FallbackChain
 		}
 
 		entries = append(entries, &models.FallbackChainEntry{
-			Tier:      input.Tier,
-			Position:  i + 1,
-			Provider:  e.Provider,
-			Model:     e.Model,
-			IsEnabled: e.IsEnabled,
+			Tier:        input.Tier,
+			Position:    i + 1,
+			Provider:    e.Provider,
+			Model:       e.Model,
+			Temperature: e.Temperature,
+			MaxTokens:   e.MaxTokens,
+			IsEnabled:   e.IsEnabled,
 		})
 	}
 

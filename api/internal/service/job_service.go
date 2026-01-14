@@ -42,6 +42,7 @@ type CrawlOptions struct {
 	Concurrency      int    `json:"concurrency,omitempty"`
 	SameDomainOnly   bool   `json:"same_domain_only,omitempty"`
 	ExtractFromSeeds bool   `json:"extract_from_seeds,omitempty"`
+	UseSitemap       bool   `json:"use_sitemap,omitempty"`
 }
 
 // CreateCrawlJobInput represents input for creating a crawl job.

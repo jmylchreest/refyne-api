@@ -24,6 +24,9 @@ func NewSQLiteFallbackChainRepository(db *sql.DB) *SQLiteFallbackChainRepository
 func scanEntry(rows *sql.Rows) (*models.FallbackChainEntry, error) {
 	entry := &models.FallbackChainEntry{}
 	var tier sql.NullString
+	var temperature sql.NullFloat64
+	var maxTokens sql.NullInt64
+	var strictMode sql.NullInt64
 	var createdAt, updatedAt string
 	if err := rows.Scan(
 		&entry.ID,
@@ -31,6 +34,9 @@ func scanEntry(rows *sql.Rows) (*models.FallbackChainEntry, error) {
 		&entry.Position,
 		&entry.Provider,
 		&entry.Model,
+		&temperature,
+		&maxTokens,
+		&strictMode,
 		&entry.IsEnabled,
 		&createdAt,
 		&updatedAt,
@@ -40,6 +46,17 @@ func scanEntry(rows *sql.Rows) (*models.FallbackChainEntry, error) {
 	if tier.Valid {
 		entry.Tier = &tier.String
 	}
+	if temperature.Valid {
+		entry.Temperature = &temperature.Float64
+	}
+	if maxTokens.Valid {
+		v := int(maxTokens.Int64)
+		entry.MaxTokens = &v
+	}
+	if strictMode.Valid {
+		v := strictMode.Int64 == 1
+		entry.StrictMode = &v
+	}
 	entry.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 	entry.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
 	return entry, nil
@@ -48,7 +65,7 @@ func scanEntry(rows *sql.Rows) (*models.FallbackChainEntry, error) {
 // GetAll returns all fallback chain entries ordered by tier and position.
 func (r *SQLiteFallbackChainRepository) GetAll(ctx context.Context) ([]*models.FallbackChainEntry, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, tier, position, provider, model, is_enabled, created_at, updated_at
+		SELECT id, tier, position, provider, model, temperature, max_tokens, strict_mode, is_enabled, created_at, updated_at
 		FROM fallback_chain
 		ORDER BY COALESCE(tier, ''), position ASC
 	`)
@@ -77,14 +94,14 @@ func (r *SQLiteFallbackChainRepository) GetByTier(ctx context.Context, tier *str
 
 	if tier == nil {
 		rows, err = r.db.QueryContext(ctx, `
-			SELECT id, tier, position, provider, model, is_enabled, created_at, updated_at
+			SELECT id, tier, position, provider, model, temperature, max_tokens, strict_mode, is_enabled, created_at, updated_at
 			FROM fallback_chain
 			WHERE tier IS NULL
 			ORDER BY position ASC
 		`)
 	} else {
 		rows, err = r.db.QueryContext(ctx, `
-			SELECT id, tier, position, provider, model, is_enabled, created_at, updated_at
+			SELECT id, tier, position, provider, model, temperature, max_tokens, strict_mode, is_enabled, created_at, updated_at
 			FROM fallback_chain
 			WHERE tier = ?
 			ORDER BY position ASC
@@ -112,7 +129,7 @@ func (r *SQLiteFallbackChainRepository) GetByTier(ctx context.Context, tier *str
 func (r *SQLiteFallbackChainRepository) GetEnabledByTier(ctx context.Context, tier string) ([]*models.FallbackChainEntry, error) {
 	// First, try to get tier-specific chain
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, tier, position, provider, model, is_enabled, created_at, updated_at
+		SELECT id, tier, position, provider, model, temperature, max_tokens, strict_mode, is_enabled, created_at, updated_at
 		FROM fallback_chain
 		WHERE tier = ? AND is_enabled = 1
 		ORDER BY position ASC
@@ -146,7 +163,7 @@ func (r *SQLiteFallbackChainRepository) GetEnabledByTier(ctx context.Context, ti
 // GetEnabled returns all enabled fallback chain entries from the default chain.
 func (r *SQLiteFallbackChainRepository) GetEnabled(ctx context.Context) ([]*models.FallbackChainEntry, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, tier, position, provider, model, is_enabled, created_at, updated_at
+		SELECT id, tier, position, provider, model, temperature, max_tokens, strict_mode, is_enabled, created_at, updated_at
 		FROM fallback_chain
 		WHERE tier IS NULL AND is_enabled = 1
 		ORDER BY position ASC
@@ -197,10 +214,19 @@ func (r *SQLiteFallbackChainRepository) ReplaceAllByTier(ctx context.Context, ti
 		entry.Position = i + 1 // Ensure positions are sequential starting from 1
 		entry.Tier = tier
 
+		// Convert StrictMode bool to int for SQLite
+		var strictModeInt *int
+		if entry.StrictMode != nil {
+			v := 0
+			if *entry.StrictMode {
+				v = 1
+			}
+			strictModeInt = &v
+		}
 		_, err := tx.ExecContext(ctx, `
-			INSERT INTO fallback_chain (id, tier, position, provider, model, is_enabled, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		`, entry.ID, tier, entry.Position, entry.Provider, entry.Model, entry.IsEnabled, now, now)
+			INSERT INTO fallback_chain (id, tier, position, provider, model, temperature, max_tokens, strict_mode, is_enabled, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, entry.ID, tier, entry.Position, entry.Provider, entry.Model, entry.Temperature, entry.MaxTokens, strictModeInt, entry.IsEnabled, now, now)
 		if err != nil {
 			return err
 		}
@@ -263,10 +289,19 @@ func (r *SQLiteFallbackChainRepository) Create(ctx context.Context, entry *model
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
+	// Convert StrictMode bool to int for SQLite
+	var strictModeInt *int
+	if entry.StrictMode != nil {
+		v := 0
+		if *entry.StrictMode {
+			v = 1
+		}
+		strictModeInt = &v
+	}
 	_, err = r.db.ExecContext(ctx, `
-		INSERT INTO fallback_chain (id, tier, position, provider, model, is_enabled, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, entry.ID, entry.Tier, entry.Position, entry.Provider, entry.Model, entry.IsEnabled, now, now)
+		INSERT INTO fallback_chain (id, tier, position, provider, model, temperature, max_tokens, strict_mode, is_enabled, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, entry.ID, entry.Tier, entry.Position, entry.Provider, entry.Model, entry.Temperature, entry.MaxTokens, strictModeInt, entry.IsEnabled, now, now)
 
 	return err
 }
@@ -274,11 +309,20 @@ func (r *SQLiteFallbackChainRepository) Create(ctx context.Context, entry *model
 // Update updates an existing entry.
 func (r *SQLiteFallbackChainRepository) Update(ctx context.Context, entry *models.FallbackChainEntry) error {
 	now := time.Now().UTC().Format(time.RFC3339)
+	// Convert StrictMode bool to int for SQLite
+	var strictModeInt *int
+	if entry.StrictMode != nil {
+		v := 0
+		if *entry.StrictMode {
+			v = 1
+		}
+		strictModeInt = &v
+	}
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE fallback_chain
-		SET provider = ?, model = ?, is_enabled = ?, updated_at = ?
+		SET provider = ?, model = ?, temperature = ?, max_tokens = ?, strict_mode = ?, is_enabled = ?, updated_at = ?
 		WHERE id = ?
-	`, entry.Provider, entry.Model, entry.IsEnabled, now, entry.ID)
+	`, entry.Provider, entry.Model, entry.Temperature, entry.MaxTokens, strictModeInt, entry.IsEnabled, now, entry.ID)
 
 	return err
 }

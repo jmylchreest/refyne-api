@@ -435,14 +435,22 @@ func NewSQLiteJobResultRepository(db *sql.DB) *SQLiteJobResultRepository {
 func (r *SQLiteJobResultRepository) Create(ctx context.Context, result *models.JobResult) error {
 	query := `
 		INSERT INTO job_results (id, job_id, url, parent_url, depth, crawl_status,
-			data_json, error_message, token_usage_input, token_usage_output,
+			data_json, error_message, error_details, error_category,
+			llm_provider, llm_model, is_byok, retry_count,
+			token_usage_input, token_usage_output,
 			fetch_duration_ms, extract_duration_ms, discovered_at, completed_at, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
+	isBYOK := 0
+	if result.IsBYOK {
+		isBYOK = 1
+	}
 	_, err := r.db.ExecContext(ctx, query,
 		result.ID, result.JobID, result.URL, nullStringPtr(result.ParentURL),
 		result.Depth, result.CrawlStatus, nullString(result.DataJSON),
-		nullString(result.ErrorMessage), result.TokenUsageInput, result.TokenUsageOutput,
+		nullString(result.ErrorMessage), nullString(result.ErrorDetails), nullString(result.ErrorCategory),
+		nullString(result.LLMProvider), nullString(result.LLMModel), isBYOK, result.RetryCount,
+		result.TokenUsageInput, result.TokenUsageOutput,
 		result.FetchDurationMs, result.ExtractDurationMs,
 		nullTime(result.DiscoveredAt), nullTime(result.CompletedAt),
 		result.CreatedAt.Format(time.RFC3339),
@@ -456,6 +464,7 @@ func (r *SQLiteJobResultRepository) Create(ctx context.Context, result *models.J
 func (r *SQLiteJobResultRepository) GetByJobID(ctx context.Context, jobID string) ([]*models.JobResult, error) {
 	query := `
 		SELECT id, job_id, url, parent_url, depth, crawl_status, data_json, error_message,
+			error_details, error_category, llm_provider, llm_model, is_byok, retry_count,
 			token_usage_input, token_usage_output, fetch_duration_ms, extract_duration_ms,
 			discovered_at, completed_at, created_at
 		FROM job_results WHERE job_id = ? ORDER BY created_at ASC
@@ -474,6 +483,7 @@ func (r *SQLiteJobResultRepository) GetByJobID(ctx context.Context, jobID string
 func (r *SQLiteJobResultRepository) GetCrawlMap(ctx context.Context, jobID string) ([]*models.JobResult, error) {
 	query := `
 		SELECT id, job_id, url, parent_url, depth, crawl_status, data_json, error_message,
+			error_details, error_category, llm_provider, llm_model, is_byok, retry_count,
 			token_usage_input, token_usage_output, fetch_duration_ms, extract_duration_ms,
 			discovered_at, completed_at, created_at
 		FROM job_results WHERE job_id = ? ORDER BY depth ASC, created_at ASC
@@ -492,13 +502,17 @@ func (r *SQLiteJobResultRepository) scanJobResults(rows *sql.Rows) ([]*models.Jo
 	var results []*models.JobResult
 	for rows.Next() {
 		var result models.JobResult
-		var parentURL, dataJSON, errorMessage, crawlStatus sql.NullString
+		var parentURL, dataJSON, errorMessage, errorDetails, errorCategory, crawlStatus sql.NullString
+		var llmProvider, llmModel sql.NullString
+		var isBYOK int
 		var discoveredAt, completedAt sql.NullString
 		var createdAt string
 
 		err := rows.Scan(
 			&result.ID, &result.JobID, &result.URL, &parentURL, &result.Depth, &crawlStatus,
-			&dataJSON, &errorMessage, &result.TokenUsageInput, &result.TokenUsageOutput,
+			&dataJSON, &errorMessage, &errorDetails, &errorCategory,
+			&llmProvider, &llmModel, &isBYOK, &result.RetryCount,
+			&result.TokenUsageInput, &result.TokenUsageOutput,
 			&result.FetchDurationMs, &result.ExtractDurationMs,
 			&discoveredAt, &completedAt, &createdAt,
 		)
@@ -516,6 +530,11 @@ func (r *SQLiteJobResultRepository) scanJobResults(rows *sql.Rows) ([]*models.Jo
 		}
 		result.DataJSON = dataJSON.String
 		result.ErrorMessage = errorMessage.String
+		result.ErrorDetails = errorDetails.String
+		result.ErrorCategory = errorCategory.String
+		result.LLMProvider = llmProvider.String
+		result.LLMModel = llmModel.String
+		result.IsBYOK = isBYOK == 1
 		result.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 		if discoveredAt.Valid {
 			t, _ := time.Parse(time.RFC3339, discoveredAt.String)
@@ -533,6 +552,7 @@ func (r *SQLiteJobResultRepository) scanJobResults(rows *sql.Rows) ([]*models.Jo
 func (r *SQLiteJobResultRepository) GetAfter(ctx context.Context, jobID, afterID string) ([]*models.JobResult, error) {
 	query := `
 		SELECT id, job_id, url, parent_url, depth, crawl_status, data_json, error_message,
+			error_details, error_category, llm_provider, llm_model, is_byok, retry_count,
 			token_usage_input, token_usage_output, fetch_duration_ms, extract_duration_ms,
 			discovered_at, completed_at, created_at
 		FROM job_results WHERE job_id = ? AND id > ? ORDER BY created_at ASC

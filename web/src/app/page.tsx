@@ -1,10 +1,20 @@
 import Link from 'next/link';
+import type { Metadata } from 'next';
 import { Button } from '@/components/ui/button';
 import { AnimatedGrid } from '@/components/animated-grid';
 import { HeroVisualization } from '@/components/hero-visualization';
 import { RefyneText } from '@/components/refyne-logo';
 import { PricingSection } from '@/components/pricing-section';
 import { SiteHeader } from '@/components/site-header';
+
+export const metadata: Metadata = {
+  title: 'Refyne - AI-Powered Web Scraping API | Extract Structured Data',
+  description: 'Transform any website into structured JSON with AI-powered extraction. Refyne uses LLMs to extract, parse, and structure data from any webpage. No CSS selectors needed. Alternative to Scrapy, Puppeteer, Selenium, Apify, and Bright Data.',
+  keywords: 'web scraping API, AI web scraper, website to JSON, LLM data extraction, Scrapy alternative, Puppeteer alternative, Selenium alternative, Apify alternative, Bright Data alternative, Firecrawl alternative, no-code web scraper',
+  alternates: {
+    canonical: 'https://refyne.uk',
+  },
+};
 
 export default function Home() {
   return (

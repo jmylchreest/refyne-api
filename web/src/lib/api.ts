@@ -186,6 +186,7 @@ export interface CreateCrawlJobInput {
     concurrency?: number;
     same_domain_only?: boolean;
     extract_from_seeds?: boolean;
+    use_sitemap?: boolean;
   };
   webhook_url?: string;
 }
@@ -247,6 +248,8 @@ export interface FallbackChainEntry {
   position: number;
   provider: string;
   model: string;
+  temperature?: number;
+  max_tokens?: number;
   is_enabled: boolean;
   created_at: string;
   updated_at: string;
@@ -255,6 +258,8 @@ export interface FallbackChainEntry {
 export interface FallbackChainEntryInput {
   provider: 'openrouter' | 'anthropic' | 'openai' | 'ollama';
   model: string;
+  temperature?: number;
+  max_tokens?: number;
   is_enabled: boolean;
 }
 
@@ -306,6 +311,8 @@ export interface UserFallbackChainEntry {
   position: number;
   provider: string;
   model: string;
+  temperature?: number;
+  max_tokens?: number;
   is_enabled: boolean;
   created_at: string;
   updated_at: string;
@@ -314,6 +321,8 @@ export interface UserFallbackChainEntry {
 export interface UserFallbackChainEntryInput {
   provider: 'openrouter' | 'anthropic' | 'openai' | 'ollama';
   model: string;
+  temperature?: number;
+  max_tokens?: number;
   is_enabled: boolean;
 }
 
@@ -389,7 +398,13 @@ export async function validateTiers(tiers: TierValidationRequest[]) {
 }
 
 // Analyze
+export interface AnalyzeTokenUsage {
+  input_tokens: number;
+  output_tokens: number;
+}
+
 export interface AnalyzeResult {
+  job_id?: string;
   site_summary: string;
   page_type: string;
   detected_elements: DetectedElement[];
@@ -398,6 +413,7 @@ export interface AnalyzeResult {
   sample_links: string[];
   recommended_fetch_mode: string;
   sample_data?: unknown;
+  token_usage?: AnalyzeTokenUsage;
 }
 
 export interface DetectedElement {
@@ -502,6 +518,7 @@ export interface CrawlOptions {
   follow_pattern?: string;
   max_pages?: number;
   max_depth?: number;
+  use_sitemap?: boolean;
 }
 
 export interface SavedSite {

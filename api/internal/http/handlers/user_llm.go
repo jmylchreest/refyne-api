@@ -150,13 +150,15 @@ func (h *UserLLMHandler) DeleteServiceKey(ctx context.Context, input *DeleteUser
 
 // UserFallbackChainEntryResponse represents a fallback chain entry in API responses.
 type UserFallbackChainEntryResponse struct {
-	ID        string `json:"id"`
-	Position  int    `json:"position"`
-	Provider  string `json:"provider"`
-	Model     string `json:"model"`
-	IsEnabled bool   `json:"is_enabled"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	ID          string   `json:"id"`
+	Position    int      `json:"position"`
+	Provider    string   `json:"provider"`
+	Model       string   `json:"model"`
+	Temperature *float64 `json:"temperature,omitempty"`
+	MaxTokens   *int     `json:"max_tokens,omitempty"`
+	IsEnabled   bool     `json:"is_enabled"`
+	CreatedAt   string   `json:"created_at"`
+	UpdatedAt   string   `json:"updated_at"`
 }
 
 // GetUserFallbackChainOutput represents the get fallback chain response.
@@ -181,13 +183,15 @@ func (h *UserLLMHandler) GetFallbackChain(ctx context.Context, input *struct{}) 
 	responses := make([]UserFallbackChainEntryResponse, 0, len(entries))
 	for _, e := range entries {
 		responses = append(responses, UserFallbackChainEntryResponse{
-			ID:        e.ID,
-			Position:  e.Position,
-			Provider:  e.Provider,
-			Model:     e.Model,
-			IsEnabled: e.IsEnabled,
-			CreatedAt: e.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-			UpdatedAt: e.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			ID:          e.ID,
+			Position:    e.Position,
+			Provider:    e.Provider,
+			Model:       e.Model,
+			Temperature: e.Temperature,
+			MaxTokens:   e.MaxTokens,
+			IsEnabled:   e.IsEnabled,
+			CreatedAt:   e.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			UpdatedAt:   e.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		})
 	}
 
@@ -200,9 +204,11 @@ func (h *UserLLMHandler) GetFallbackChain(ctx context.Context, input *struct{}) 
 
 // UserFallbackChainEntryInput represents a fallback chain entry in API requests.
 type UserFallbackChainEntryInput struct {
-	Provider  string `json:"provider" enum:"openrouter,anthropic,openai,ollama" doc:"LLM provider name"`
-	Model     string `json:"model" minLength:"1" doc:"Model identifier"`
-	IsEnabled bool   `json:"is_enabled" doc:"Whether this entry is enabled"`
+	Provider    string   `json:"provider" enum:"openrouter,anthropic,openai,ollama" doc:"LLM provider name"`
+	Model       string   `json:"model" minLength:"1" doc:"Model identifier"`
+	Temperature *float64 `json:"temperature,omitempty" doc:"Temperature setting (0.0-1.0, nil for default)"`
+	MaxTokens   *int     `json:"max_tokens,omitempty" doc:"Max output tokens (nil for default)"`
+	IsEnabled   bool     `json:"is_enabled" doc:"Whether this entry is enabled"`
 }
 
 // SetUserFallbackChainInput represents the set fallback chain request.
@@ -230,9 +236,11 @@ func (h *UserLLMHandler) SetFallbackChain(ctx context.Context, input *SetUserFal
 	svcInput := make([]service.UserFallbackChainEntryInput, 0, len(input.Body.Chain))
 	for _, e := range input.Body.Chain {
 		svcInput = append(svcInput, service.UserFallbackChainEntryInput{
-			Provider:  e.Provider,
-			Model:     e.Model,
-			IsEnabled: e.IsEnabled,
+			Provider:    e.Provider,
+			Model:       e.Model,
+			Temperature: e.Temperature,
+			MaxTokens:   e.MaxTokens,
+			IsEnabled:   e.IsEnabled,
 		})
 	}
 
@@ -244,13 +252,15 @@ func (h *UserLLMHandler) SetFallbackChain(ctx context.Context, input *SetUserFal
 	responses := make([]UserFallbackChainEntryResponse, 0, len(entries))
 	for _, e := range entries {
 		responses = append(responses, UserFallbackChainEntryResponse{
-			ID:        e.ID,
-			Position:  e.Position,
-			Provider:  e.Provider,
-			Model:     e.Model,
-			IsEnabled: e.IsEnabled,
-			CreatedAt: e.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-			UpdatedAt: e.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			ID:          e.ID,
+			Position:    e.Position,
+			Provider:    e.Provider,
+			Model:       e.Model,
+			Temperature: e.Temperature,
+			MaxTokens:   e.MaxTokens,
+			IsEnabled:   e.IsEnabled,
+			CreatedAt:   e.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			UpdatedAt:   e.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		})
 	}
 

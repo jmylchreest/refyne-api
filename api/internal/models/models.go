@@ -63,7 +63,12 @@ type Job struct {
 	SchemaJSON       string     `json:"schema_json"`
 	CrawlOptionsJSON string     `json:"crawl_options_json,omitempty"`
 	ResultJSON       string     `json:"result_json,omitempty"`
-	ErrorMessage     string     `json:"error_message,omitempty"`
+	ErrorMessage     string     `json:"error_message,omitempty"`  // User-visible error (sanitized for non-BYOK)
+	ErrorDetails     string     `json:"error_details,omitempty"`  // Full error details (admin/BYOK only)
+	ErrorCategory    string     `json:"error_category,omitempty"` // Error classification
+	IsBYOK           bool       `json:"is_byok"`                  // True if user's own API key was used
+	LLMProvider      string     `json:"llm_provider,omitempty"`   // Last provider attempted
+	LLMModel         string     `json:"llm_model,omitempty"`      // Last model attempted
 	PageCount        int        `json:"page_count"`
 	TokenUsageInput  int        `json:"token_usage_input"`
 	TokenUsageOutput int        `json:"token_usage_output"`
@@ -99,7 +104,13 @@ type JobResult struct {
 	Depth             int          `json:"depth"`                  // 0 for seed URL, increments for each level
 	CrawlStatus       CrawlStatus  `json:"crawl_status"`           // pending, crawling, completed, failed, skipped
 	DataJSON          string       `json:"data_json,omitempty"`
-	ErrorMessage      string       `json:"error_message,omitempty"`
+	ErrorMessage      string       `json:"error_message,omitempty"`  // User-visible error (sanitized for non-BYOK)
+	ErrorDetails      string       `json:"error_details,omitempty"`  // Full error details (admin/BYOK only)
+	ErrorCategory     string       `json:"error_category,omitempty"` // Error classification for retry logic
+	LLMProvider       string       `json:"llm_provider,omitempty"`   // Provider used (admin/BYOK only)
+	LLMModel          string       `json:"llm_model,omitempty"`      // Model used (admin/BYOK only)
+	IsBYOK            bool         `json:"is_byok"`                  // True if user's own API key was used
+	RetryCount        int          `json:"retry_count"`              // Number of retry attempts made
 	TokenUsageInput   int          `json:"token_usage_input"`
 	TokenUsageOutput  int          `json:"token_usage_output"`
 	FetchDurationMs   int          `json:"fetch_duration_ms"`
@@ -163,14 +174,17 @@ type ServiceKey struct {
 // The extraction service tries each entry in order until one succeeds.
 // Tier can be nil for the default chain, or a specific tier name (free, pro, enterprise).
 type FallbackChainEntry struct {
-	ID        string    `json:"id"`
-	Tier      *string   `json:"tier,omitempty"` // nil = default chain, otherwise tier-specific
-	Position  int       `json:"position"`       // Order in the chain (1, 2, 3...)
-	Provider  string    `json:"provider"`       // openrouter, anthropic, openai, ollama
-	Model     string    `json:"model"`          // Model identifier (e.g., "xiaomi/mimo-v2-flash:free")
-	IsEnabled bool      `json:"is_enabled"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID          string    `json:"id"`
+	Tier        *string   `json:"tier,omitempty"` // nil = default chain, otherwise tier-specific
+	Position    int       `json:"position"`       // Order in the chain (1, 2, 3...)
+	Provider    string    `json:"provider"`       // openrouter, anthropic, openai, ollama
+	Model       string    `json:"model"`          // Model identifier (e.g., "xiaomi/mimo-v2-flash:free")
+	Temperature *float64  `json:"temperature,omitempty"` // nil = use default for model/provider
+	MaxTokens   *int      `json:"max_tokens,omitempty"`  // nil = use default for model/provider
+	StrictMode  *bool     `json:"strict_mode,omitempty"` // nil = use default for model (most models: false)
+	IsEnabled   bool      `json:"is_enabled"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // UserServiceKey represents a user-configured LLM provider API key.
@@ -190,12 +204,15 @@ type UserServiceKey struct {
 // The extraction service tries each entry in order, using the user's configured
 // provider keys from UserServiceKey.
 type UserFallbackChainEntry struct {
-	ID        string    `json:"id"`
-	UserID    string    `json:"user_id"` // Clerk user ID
-	Position  int       `json:"position"` // Order in the chain (1, 2, 3...)
-	Provider  string    `json:"provider"` // anthropic, openai, openrouter, ollama
-	Model     string    `json:"model"`    // Model identifier
-	IsEnabled bool      `json:"is_enabled"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID          string    `json:"id"`
+	UserID      string    `json:"user_id"` // Clerk user ID
+	Position    int       `json:"position"` // Order in the chain (1, 2, 3...)
+	Provider    string    `json:"provider"` // anthropic, openai, openrouter, ollama
+	Model       string    `json:"model"`    // Model identifier
+	Temperature *float64  `json:"temperature,omitempty"` // nil = use default for model/provider
+	MaxTokens   *int      `json:"max_tokens,omitempty"`  // nil = use default for model/provider
+	StrictMode  *bool     `json:"strict_mode,omitempty"` // nil = use default for model (most models: false)
+	IsEnabled   bool      `json:"is_enabled"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }

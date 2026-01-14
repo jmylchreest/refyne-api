@@ -75,6 +75,7 @@ type Config struct {
 	StorageSecretKey string // AWS_SECRET_ACCESS_KEY
 	StorageBucket    string // Bucket name (one per environment)
 	StorageRegion    string // Region (auto for Tigris)
+	BlocklistBucket  string // Optional separate bucket for blocklist (defaults to StorageBucket)
 
 	// Cleanup
 	CleanupEnabled     bool          // Enable automatic cleanup
@@ -131,6 +132,9 @@ func Load() (*Config, error) {
 
 	// Enable storage if bucket is configured
 	cfg.StorageEnabled = cfg.StorageBucket != "" && cfg.StorageEndpoint != ""
+
+	// Blocklist bucket defaults to main storage bucket
+	cfg.BlocklistBucket = getEnv("BLOCKLIST_BUCKET", cfg.StorageBucket)
 
 	// Cleanup configuration
 	cfg.CleanupEnabled = getEnvBool("CLEANUP_ENABLED", true)

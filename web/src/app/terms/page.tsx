@@ -1,6 +1,19 @@
 import Link from 'next/link';
+import type { Metadata } from 'next';
 import { SiteHeader } from '@/components/site-header';
 import { RefyneText } from '@/components/refyne-logo';
+
+export const metadata: Metadata = {
+  title: 'Terms of Service',
+  description: 'Terms of Service for Refyne web scraping API. Understand your rights and responsibilities when using our AI-powered data extraction service.',
+  alternates: {
+    canonical: 'https://refyne.uk/terms',
+  },
+  robots: {
+    index: true,
+    follow: true,
+  },
+};
 
 export default function TermsPage() {
   return (

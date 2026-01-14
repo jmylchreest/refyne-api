@@ -125,9 +125,11 @@ func (s *UserLLMService) GetFallbackChain(ctx context.Context, userID string) ([
 
 // UserFallbackChainEntryInput represents a single entry in the user's fallback chain input.
 type UserFallbackChainEntryInput struct {
-	Provider  string `json:"provider"`
-	Model     string `json:"model"`
-	IsEnabled bool   `json:"is_enabled"`
+	Provider    string   `json:"provider"`
+	Model       string   `json:"model"`
+	Temperature *float64 `json:"temperature,omitempty"`
+	MaxTokens   *int     `json:"max_tokens,omitempty"`
+	IsEnabled   bool     `json:"is_enabled"`
 }
 
 // SetFallbackChain replaces the user's fallback chain configuration.
@@ -146,11 +148,13 @@ func (s *UserLLMService) SetFallbackChain(ctx context.Context, userID string, en
 		}
 
 		modelEntries = append(modelEntries, &models.UserFallbackChainEntry{
-			UserID:    userID,
-			Position:  i + 1,
-			Provider:  e.Provider,
-			Model:     e.Model,
-			IsEnabled: e.IsEnabled,
+			UserID:      userID,
+			Position:    i + 1,
+			Provider:    e.Provider,
+			Model:       e.Model,
+			Temperature: e.Temperature,
+			MaxTokens:   e.MaxTokens,
+			IsEnabled:   e.IsEnabled,
 		})
 	}
 

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -21,18 +22,21 @@ import (
 // - Etag caching: only downloads when blocklist changes
 // - Error backoff: waits before retrying on S3 errors
 // - Fail open: allows requests if blocklist unavailable
+// - Optimized lookups: O(1) for exact IPs, sorted CIDRs for early exit
 type IPBlocklist struct {
 	s3Client *s3.Client
 	bucket   string
 	key      string
 
 	mu            sync.RWMutex
-	blocked       map[string]bool   // exact IP matches
-	blockedCIDRs  []*net.IPNet      // CIDR ranges
+	blocked       map[string]bool // exact IP matches (O(1) lookup)
+	blockedCIDRs  []*net.IPNet    // CIDR ranges sorted by prefix length (most specific first)
 	etag          string
-	lastCheck     time.Time
+	lastFetch     time.Time // when blocklist was last fetched from S3
+	lastCheck     time.Time // when we last checked for updates
 	lastError     time.Time
 	initialized   bool
+	totalEntries  int // total entries in blocklist
 	cacheTTL      time.Duration
 	errorBackoff  time.Duration
 	logger        *slog.Logger
@@ -115,7 +119,9 @@ func (b *IPBlocklist) maybeRefresh(ctx context.Context) {
 	}
 
 	// Refresh in background to not block requests
-	go b.refresh(ctx)
+	// Use a detached context since the request context will be canceled
+	// when the HTTP request completes, but the refresh should continue.
+	go b.refresh(context.WithoutCancel(ctx))
 }
 
 // refresh fetches the blocklist from S3.
@@ -135,12 +141,14 @@ func (b *IPBlocklist) refresh(ctx context.Context) {
 		Key:    &b.key,
 	}
 	if currentEtag != "" {
-		input.IfNoneMatch = &currentEtag
+		// Add quotes back for HTTP If-None-Match header (required by spec)
+		quotedEtag := "\"" + currentEtag + "\""
+		input.IfNoneMatch = &quotedEtag
 	}
 
 	resp, err := b.s3Client.GetObject(ctx, input)
 	if err != nil {
-		// Check for 304 Not Modified
+		// Check for NoSuchKey (file doesn't exist)
 		var apiErr *types.NoSuchKey
 		if errors.As(err, &apiErr) {
 			// Blocklist file doesn't exist - that's OK, just mark as checked
@@ -149,9 +157,10 @@ func (b *IPBlocklist) refresh(ctx context.Context) {
 			b.lastCheck = time.Now()
 			b.lastError = time.Now() // Backoff before checking again
 			b.mu.Unlock()
-			b.logger.Debug("blocklist file not found in S3, will retry later",
+			b.logger.Info("blocklist file not found in S3 (will allow all requests)",
 				"bucket", b.bucket,
 				"key", b.key,
+				"next_check", time.Now().Add(b.errorBackoff).Format(time.RFC3339),
 			)
 			return
 		}
@@ -161,7 +170,15 @@ func (b *IPBlocklist) refresh(ctx context.Context) {
 		if errors.As(err, &notModified) && notModified.ErrorCode() == "NotModified" {
 			b.mu.Lock()
 			b.lastCheck = time.Now()
+			entries := b.totalEntries
+			etag := b.etag
 			b.mu.Unlock()
+			b.logger.Debug("blocklist unchanged (etag match)",
+				"bucket", b.bucket,
+				"key", b.key,
+				"etag", etag,
+				"cached_entries", entries,
+			)
 			return
 		}
 
@@ -174,6 +191,7 @@ func (b *IPBlocklist) refresh(ctx context.Context) {
 			"error", err,
 			"bucket", b.bucket,
 			"key", b.key,
+			"next_retry", time.Now().Add(b.errorBackoff).Format(time.RFC3339),
 		)
 		return
 	}
@@ -193,6 +211,7 @@ func (b *IPBlocklist) refresh(ctx context.Context) {
 	// Build lookup structures
 	blocked := make(map[string]bool)
 	var cidrs []*net.IPNet
+	var invalidCount int
 
 	for _, entry := range entries {
 		entry = strings.TrimSpace(entry)
@@ -205,6 +224,7 @@ func (b *IPBlocklist) refresh(ctx context.Context) {
 			_, ipNet, err := net.ParseCIDR(entry)
 			if err != nil {
 				b.logger.Warn("invalid CIDR in blocklist", "entry", entry, "error", err)
+				invalidCount++
 				continue
 			}
 			cidrs = append(cidrs, ipNet)
@@ -214,25 +234,50 @@ func (b *IPBlocklist) refresh(ctx context.Context) {
 				blocked[ip.String()] = true
 			} else {
 				b.logger.Warn("invalid IP in blocklist", "entry", entry)
+				invalidCount++
 			}
 		}
 	}
 
+	// Sort CIDRs by prefix length (most specific/largest prefix first)
+	// This allows early exit when checking - more specific ranges checked first
+	sort.Slice(cidrs, func(i, j int) bool {
+		onesI, _ := cidrs[i].Mask.Size()
+		onesJ, _ := cidrs[j].Mask.Size()
+		return onesI > onesJ // larger prefix = more specific = first
+	})
+
 	// Update cache
+	now := time.Now()
+	newEtag := ""
+	if resp.ETag != nil {
+		// Strip quotes from ETag (S3 returns ETags with surrounding quotes per HTTP spec)
+		newEtag = strings.Trim(*resp.ETag, "\"")
+	}
+
 	b.mu.Lock()
+	previousEtag := b.etag
 	b.blocked = blocked
 	b.blockedCIDRs = cidrs
 	b.initialized = true
-	b.lastCheck = time.Now()
+	b.lastFetch = now
+	b.lastCheck = now
 	b.lastError = time.Time{} // Clear error state
-	if resp.ETag != nil {
-		b.etag = *resp.ETag
-	}
+	b.etag = newEtag
+	b.totalEntries = len(blocked) + len(cidrs)
 	b.mu.Unlock()
 
-	b.logger.Info("blocklist refreshed",
-		"exactIPs", len(blocked),
-		"cidrRanges", len(cidrs),
+	// Log detailed info about the refresh
+	b.logger.Info("blocklist loaded from S3",
+		"bucket", b.bucket,
+		"key", b.key,
+		"etag", newEtag,
+		"previous_etag", previousEtag,
+		"exact_ips", len(blocked),
+		"cidr_ranges", len(cidrs),
+		"total_entries", len(blocked)+len(cidrs),
+		"invalid_entries", invalidCount,
+		"fetch_time", now.Format(time.RFC3339),
 	)
 }
 
@@ -263,6 +308,35 @@ func (b *IPBlocklist) isBlocked(ipStr string) bool {
 	}
 
 	return false
+}
+
+// BlocklistStats contains statistics about the blocklist for observability.
+type BlocklistStats struct {
+	Initialized  bool      `json:"initialized"`
+	TotalEntries int       `json:"total_entries"`
+	ExactIPs     int       `json:"exact_ips"`
+	CIDRRanges   int       `json:"cidr_ranges"`
+	Etag         string    `json:"etag"`
+	LastFetch    time.Time `json:"last_fetch"`
+	LastCheck    time.Time `json:"last_check"`
+	CacheTTL     string    `json:"cache_ttl"`
+}
+
+// Stats returns current blocklist statistics.
+func (b *IPBlocklist) Stats() BlocklistStats {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	return BlocklistStats{
+		Initialized:  b.initialized,
+		TotalEntries: b.totalEntries,
+		ExactIPs:     len(b.blocked),
+		CIDRRanges:   len(b.blockedCIDRs),
+		Etag:         b.etag,
+		LastFetch:    b.lastFetch,
+		LastCheck:    b.lastCheck,
+		CacheTTL:     b.cacheTTL.String(),
+	}
 }
 
 // extractIP gets the client IP from the request.

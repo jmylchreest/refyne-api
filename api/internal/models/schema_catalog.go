@@ -58,6 +58,7 @@ type SavedSiteCrawlOptions struct {
 	FollowPattern  string `json:"follow_pattern,omitempty"`  // Regex pattern for URLs to filter
 	MaxPages       int    `json:"max_pages,omitempty"`       // Max pages (0 = no limit)
 	MaxDepth       int    `json:"max_depth,omitempty"`       // Max crawl depth
+	UseSitemap     bool   `json:"use_sitemap,omitempty"`     // Discover URLs from sitemap.xml
 }
 
 // SavedSite represents a user's saved site configuration.
@@ -106,10 +107,10 @@ type AnalysisResult struct {
 
 // DetectedElement represents a data element detected on the page.
 type DetectedElement struct {
-	Name        string `json:"name"`
-	Type        string `json:"type"` // text, number, url, image, date, etc.
-	Count       int    `json:"count,omitempty"`
-	Description string `json:"description"`
+	Name        string  `json:"name"`
+	Type        string  `json:"type"` // text, number, url, image, date, etc.
+	Count       FlexInt `json:"count,omitempty"`
+	Description string  `json:"description"`
 }
 
 // FollowPattern represents a URL/selector pattern for crawling.

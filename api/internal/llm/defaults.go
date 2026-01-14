@@ -1,0 +1,50 @@
+// Package llm provides LLM provider integrations and configuration.
+package llm
+
+// ModelSettings contains the recommended settings for an LLM model.
+type ModelSettings struct {
+	Temperature float64
+	MaxTokens   int
+	StrictMode  bool // Whether the model supports strict JSON schema mode
+}
+
+// ProviderDefaults contains default settings per provider.
+// Used when a model is not in the ModelOverrides map.
+// StrictMode defaults: OpenAI supports it, others generally don't via OpenRouter.
+var ProviderDefaults = map[string]ModelSettings{
+	"anthropic":  {Temperature: 0.2, MaxTokens: 8192, StrictMode: false}, // Anthropic uses tool_use, not strict
+	"openai":     {Temperature: 0.2, MaxTokens: 8192, StrictMode: true},  // Native OpenAI supports strict
+	"openrouter": {Temperature: 0.2, MaxTokens: 6144, StrictMode: false}, // Default false, override per model
+	"ollama":     {Temperature: 0.1, MaxTokens: 4096, StrictMode: false}, // Local models don't support strict
+}
+
+// ModelOverrides contains essential fallback settings for models.
+// Additional model settings should be configured via S3 config file: config/model_defaults.json
+// StrictMode: true = supports OpenAI structured outputs with strict validation
+var ModelOverrides = map[string]ModelSettings{
+	// OpenAI models - support strict JSON schema mode
+	"openai/gpt-4o":      {Temperature: 0.2, MaxTokens: 8192, StrictMode: true},
+	"openai/gpt-4o-mini": {Temperature: 0.2, MaxTokens: 4096, StrictMode: true},
+
+	// Common Ollama models (local fallback)
+	"llama3.2": {Temperature: 0.1, MaxTokens: 4096, StrictMode: false},
+}
+
+// GetModelSettings returns the recommended settings for a model.
+// Priority: chain config override > model override > provider default
+// Uses S3-backed defaults if configured via InitGlobalModelDefaults.
+func GetModelSettings(provider, model string, chainTemp *float64, chainMaxTokens *int, chainStrictMode *bool) (temperature float64, maxTokens int, strictMode bool) {
+	// Use global loader if available (supports S3-backed configuration)
+	return GlobalModelDefaults().GetModelSettings(provider, model, chainTemp, chainMaxTokens, chainStrictMode)
+}
+
+// GetDefaultSettings returns the default settings for a model without chain overrides.
+// This is useful for frontend to show recommended defaults.
+// Uses S3-backed defaults if configured via InitGlobalModelDefaults.
+func GetDefaultSettings(provider, model string) ModelSettings {
+	return GlobalModelDefaults().GetDefaultSettings(provider, model)
+}
+
+// AnalyzeSystemPrompt is the system prompt used for schema generation.
+// This reinforces the key instructions for generating good extraction schemas.
+const AnalyzeSystemPrompt = `You generate data extraction schemas. Your field descriptions are INSTRUCTIONS to other AI models that will perform extraction. Every description must specify: what to extract, the expected format, and how to handle edge cases. Schema-level descriptions must include CRITICAL OUTPUT REQUIREMENTS.`

@@ -99,6 +99,10 @@ const (
 	StaleJobAge = 30 * time.Minute
 	// DefaultWorkerConcurrency is the default number of worker goroutines
 	DefaultWorkerConcurrency = 3
+	// MaxSyncWaitTimeout is the maximum time a sync crawl request (wait=true) will block.
+	// This prevents long-held connections from consuming resources.
+	// Clients needing longer waits should use async mode with webhooks or polling.
+	MaxSyncWaitTimeout = 2 * time.Minute
 )
 
 // QuotaExceededMessage returns a user-friendly message for monthly quota exceeded.

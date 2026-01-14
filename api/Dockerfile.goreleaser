@@ -1,8 +1,0 @@
-# GoReleaser Dockerfile - uses pre-built binary
-FROM gcr.io/distroless/static-debian12:nonroot
-
-COPY refyne-api /usr/local/bin/refyne-api
-
-EXPOSE 8080
-
-ENTRYPOINT ["/usr/local/bin/refyne-api"]

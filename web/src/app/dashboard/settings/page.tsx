@@ -11,7 +11,6 @@ import {
   UsageSummary,
   UserServiceKey,
   UserFallbackChainEntry,
-  UserFallbackChainEntryInput,
 } from '@/lib/api';
 import { useUser } from '@clerk/nextjs';
 import { Button } from '@/components/ui/button';
@@ -19,9 +18,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ModelSelector } from '@/components/model-selector';
+import { FallbackChainEditor, ChainEntry, SavedChainEntry } from '@/components/fallback-chain-editor';
 import { toast } from 'sonner';
-import { Plus, Trash2, ChevronUp, ChevronDown, Eye, EyeOff } from 'lucide-react';
+import { Trash2, Eye, EyeOff } from 'lucide-react';
 
 const LLM_PROVIDERS = [
   { value: 'openrouter', label: 'OpenRouter' },
@@ -29,13 +28,6 @@ const LLM_PROVIDERS = [
   { value: 'openai', label: 'OpenAI' },
   { value: 'ollama', label: 'Ollama' },
 ] as const;
-
-const DEFAULT_MODELS: Record<string, string> = {
-  openrouter: 'google/gemini-2.0-flash-001',
-  anthropic: 'claude-sonnet-4-5-20250514',
-  openai: 'gpt-4o-mini',
-  ollama: 'llama3.2',
-};
 
 type Provider = typeof LLM_PROVIDERS[number]['value'];
 
@@ -53,9 +45,6 @@ export default function SettingsPage() {
 
   // Fallback chain state
   const [chain, setChain] = useState<UserFallbackChainEntry[]>([]);
-  const [isEditingChain, setIsEditingChain] = useState(false);
-  const [chainDraft, setChainDraft] = useState<UserFallbackChainEntryInput[]>([]);
-  const [isSavingChain, setIsSavingChain] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
@@ -143,60 +132,22 @@ export default function SettingsPage() {
     }
   };
 
-  // Fallback chain handlers
-  const startEditingChain = () => {
-    setChainDraft(chain.map(e => ({
-      provider: e.provider as Provider,
-      model: e.model,
-      is_enabled: e.is_enabled,
-    })));
-    setIsEditingChain(true);
-  };
-
-  const cancelEditingChain = () => {
-    setChainDraft([]);
-    setIsEditingChain(false);
-  };
-
-  const addChainEntry = () => {
-    setChainDraft([...chainDraft, {
-      provider: 'openrouter',
-      model: DEFAULT_MODELS.openrouter,
-      is_enabled: true,
-    }]);
-  };
-
-  const removeChainEntry = (index: number) => {
-    setChainDraft(chainDraft.filter((_, i) => i !== index));
-  };
-
-  const moveChainEntry = (index: number, direction: 'up' | 'down') => {
-    const newIndex = direction === 'up' ? index - 1 : index + 1;
-    if (newIndex < 0 || newIndex >= chainDraft.length) return;
-    const newDraft = [...chainDraft];
-    [newDraft[index], newDraft[newIndex]] = [newDraft[newIndex], newDraft[index]];
-    setChainDraft(newDraft);
-  };
-
-  const updateChainEntry = (index: number, updates: Partial<UserFallbackChainEntryInput>) => {
-    setChainDraft(chainDraft.map((entry, i) =>
-      i === index ? { ...entry, ...updates } : entry
-    ));
-  };
-
-  const handleSaveChain = async () => {
-    setIsSavingChain(true);
+  // Fallback chain save handler
+  const handleSaveChain = async (entries: ChainEntry[]) => {
     try {
-      const result = await setUserFallbackChain(chainDraft);
+      const result = await setUserFallbackChain(entries.map(e => ({
+        provider: e.provider,
+        model: e.model,
+        temperature: e.temperature,
+        max_tokens: e.max_tokens,
+        is_enabled: e.is_enabled,
+      })));
       setChain(result.chain);
-      setIsEditingChain(false);
-      setChainDraft([]);
       toast.success('Fallback chain saved');
     } catch (err) {
       const error = err as { error?: string };
       toast.error(error.error || 'Failed to save chain');
-    } finally {
-      setIsSavingChain(false);
+      throw err; // Re-throw so the component knows save failed
     }
   };
 
@@ -371,133 +322,20 @@ export default function SettingsPage() {
       {/* Fallback Chain */}
       <Card>
         <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="text-base">Fallback Chain</CardTitle>
-              <CardDescription className="text-xs">
-                Configure provider order for extractions. First successful provider wins.
-              </CardDescription>
-            </div>
-            {!isEditingChain && (
-              <Button variant="outline" size="sm" className="h-7 text-xs" onClick={startEditingChain}>
-                Edit Chain
-              </Button>
-            )}
-          </div>
+          <CardTitle className="text-base">Fallback Chain</CardTitle>
+          <CardDescription className="text-xs">
+            Configure provider order for extractions. First successful provider wins.
+            Click the settings icon on each entry to configure temperature and max tokens.
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          {!isEditingChain ? (
-            chain.length > 0 ? (
-              <div className="space-y-1">
-                {chain.map((entry, index) => (
-                  <div
-                    key={entry.id}
-                    className={`flex items-center gap-2 p-2 border rounded text-sm ${
-                      entry.is_enabled ? '' : 'opacity-50'
-                    }`}
-                  >
-                    <span className="text-xs text-zinc-500 w-5">{index + 1}.</span>
-                    <span className="font-medium">{getProviderLabel(entry.provider)}</span>
-                    <code className="text-xs bg-zinc-100 dark:bg-zinc-800 px-1 rounded">{entry.model}</code>
-                    {!configuredProviders.has(entry.provider) && (
-                      <Badge variant="destructive" className="text-xs">No key</Badge>
-                    )}
-                    <Badge variant={entry.is_enabled ? 'default' : 'secondary'} className="text-xs ml-auto">
-                      {entry.is_enabled ? 'On' : 'Off'}
-                    </Badge>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-sm text-zinc-500 text-center py-4">
-                No fallback chain configured. System defaults will be used.
-              </p>
-            )
-          ) : (
-            <div className="space-y-3">
-              {chainDraft.map((entry, index) => (
-                <div key={index} className="flex items-center gap-2 p-2 border rounded">
-                  <div className="flex flex-col gap-0.5">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-5 w-5 p-0"
-                      onClick={() => moveChainEntry(index, 'up')}
-                      disabled={index === 0}
-                    >
-                      <ChevronUp className="h-3 w-3" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-5 w-5 p-0"
-                      onClick={() => moveChainEntry(index, 'down')}
-                      disabled={index === chainDraft.length - 1}
-                    >
-                      <ChevronDown className="h-3 w-3" />
-                    </Button>
-                  </div>
-                  <span className="text-xs text-zinc-500 w-5">{index + 1}.</span>
-                  <select
-                    value={entry.provider}
-                    onChange={(e) => {
-                      const provider = e.target.value as Provider;
-                      updateChainEntry(index, {
-                        provider,
-                        model: DEFAULT_MODELS[provider],
-                      });
-                    }}
-                    className="h-8 px-2 text-sm border rounded bg-white dark:bg-zinc-900"
-                  >
-                    {LLM_PROVIDERS.map(p => (
-                      <option key={p.value} value={p.value}>{p.label}</option>
-                    ))}
-                  </select>
-                  <div className="flex-1">
-                    <ModelSelector
-                      provider={entry.provider}
-                      value={entry.model}
-                      onValueChange={(model) => updateChainEntry(index, { model })}
-                      useUserEndpoint
-                    />
-                  </div>
-                  <label className="flex items-center gap-1 text-xs cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={entry.is_enabled}
-                      onChange={(e) => updateChainEntry(index, { is_enabled: e.target.checked })}
-                      className="rounded"
-                    />
-                    On
-                  </label>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 px-2"
-                    onClick={() => removeChainEntry(index)}
-                  >
-                    <Trash2 className="h-3 w-3 text-red-500" />
-                  </Button>
-                </div>
-              ))}
-
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" className="h-7 text-xs" onClick={addChainEntry}>
-                  <Plus className="h-3 w-3 mr-1" />
-                  Add Entry
-                </Button>
-              </div>
-
-              <div className="flex gap-2 pt-2 border-t">
-                <Button size="sm" className="h-7 text-xs" onClick={handleSaveChain} disabled={isSavingChain}>
-                  {isSavingChain ? 'Saving...' : 'Save Chain'}
-                </Button>
-                <Button variant="outline" size="sm" className="h-7 text-xs" onClick={cancelEditingChain}>
-                  Cancel
-                </Button>
-              </div>
-            </div>
-          )}
+          <FallbackChainEditor
+            chain={chain as SavedChainEntry[]}
+            configuredProviders={configuredProviders}
+            onSave={handleSaveChain}
+            useUserEndpoint
+            compact
+          />
         </CardContent>
       </Card>
     </div>

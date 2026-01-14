@@ -24,6 +24,7 @@ import (
 	"github.com/jmylchreest/refyne-api/internal/database"
 	"github.com/jmylchreest/refyne-api/internal/http/handlers"
 	"github.com/jmylchreest/refyne-api/internal/http/mw"
+	"github.com/jmylchreest/refyne-api/internal/llm"
 	"github.com/jmylchreest/refyne-api/internal/logging"
 	"github.com/jmylchreest/refyne-api/internal/repository"
 	"github.com/jmylchreest/refyne-api/internal/service"
@@ -109,6 +110,7 @@ func main() {
 		services.Extraction,
 		services.Webhook,
 		services.Storage,
+		services.Sitemap,
 		worker.Config{
 			PollInterval: 5 * time.Second,
 			Concurrency:  3,
@@ -139,6 +141,51 @@ func main() {
 	// Global middleware
 	router.Use(middleware.RequestID)
 	router.Use(middleware.RealIP)
+
+	// IP blocklist (early in chain to reject bad actors quickly)
+	// Only enabled if storage is configured - fails open otherwise
+	if services.Storage.IsEnabled() && cfg.BlocklistBucket != "" {
+		blocklist := mw.NewIPBlocklist(mw.BlocklistConfig{
+			S3Client: services.Storage.Client(),
+			Bucket:   cfg.BlocklistBucket,
+			Key:      "config/blocklist.json",
+			Logger:   logger,
+		})
+		router.Use(blocklist.Middleware())
+		logger.Info("IP blocklist middleware enabled",
+			"bucket", cfg.BlocklistBucket,
+			"key", "config/blocklist.json",
+		)
+	}
+
+	// Log filters loader (loads dynamic log filters from S3)
+	// Only enabled if storage is configured - uses default logging otherwise
+	var logFiltersLoader *mw.LogFiltersLoader
+	if services.Storage.IsEnabled() && cfg.BlocklistBucket != "" {
+		logFiltersLoader = mw.NewLogFiltersLoader(mw.LogFiltersConfig{
+			S3Client: services.Storage.Client(),
+			Bucket:   cfg.BlocklistBucket,
+			Key:      "config/logfilters.json",
+			Logger:   logger,
+		})
+		logFiltersLoader.Start(ctx)
+	}
+
+	// Model defaults loader (loads model settings from S3)
+	// Falls back to hardcoded defaults if file not found
+	if services.Storage.IsEnabled() && cfg.BlocklistBucket != "" {
+		llm.InitGlobalModelDefaults(llm.ModelDefaultsConfig{
+			S3Client: services.Storage.Client(),
+			Bucket:   cfg.BlocklistBucket,
+			Key:      "config/model_defaults.json",
+			Logger:   logger,
+		})
+		logger.Info("model defaults loader enabled",
+			"bucket", cfg.BlocklistBucket,
+			"key", "config/model_defaults.json",
+		)
+	}
+
 	router.Use(middleware.Logger)
 	router.Use(middleware.Recoverer)
 	// Custom timeout that skips SSE streaming endpoints
@@ -312,7 +359,7 @@ func main() {
 		r.Use(mw.RequireFeature("content_analyzer"))
 
 		analyzeAPI := humachi.New(r, protectedConfig)
-		huma.Post(analyzeAPI, "/api/v1/analyze", handlers.NewAnalyzeHandler(services.Analyzer).Analyze)
+		huma.Post(analyzeAPI, "/api/v1/analyze", handlers.NewAnalyzeHandler(services.Analyzer, repos.Job).Analyze)
 	})
 
 	// Extraction/crawl routes with quota and concurrency checking
@@ -322,6 +369,8 @@ func main() {
 		r.Use(mw.RequireUsageQuota(services.Usage))
 		r.Use(mw.RequireConcurrentJobLimit(services.Job))
 		r.Use(mw.RateLimitByUser(mw.DefaultRateLimitConfig()))
+		// Extend write deadline for sync crawl requests (wait=true)
+		r.Use(mw.ExtendWriteDeadlineForSyncRequests())
 
 		// Create a new Huma API for quota-gated routes
 		quotaAPI := humachi.New(r, protectedConfig)
@@ -353,6 +402,11 @@ func main() {
 		// Stop the worker first
 		cancel()
 		jobWorker.Stop()
+
+		// Stop log filters loader if running
+		if logFiltersLoader != nil {
+			logFiltersLoader.Stop()
+		}
 
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer shutdownCancel()

@@ -147,14 +147,16 @@ func (h *AdminHandler) DeleteServiceKey(ctx context.Context, input *DeleteServic
 
 // FallbackChainEntryResponse represents a fallback chain entry in API responses.
 type FallbackChainEntryResponse struct {
-	ID        string  `json:"id"`
-	Tier      *string `json:"tier,omitempty"`
-	Position  int     `json:"position"`
-	Provider  string  `json:"provider"`
-	Model     string  `json:"model"`
-	IsEnabled bool    `json:"is_enabled"`
-	CreatedAt string  `json:"created_at"`
-	UpdatedAt string  `json:"updated_at"`
+	ID          string   `json:"id"`
+	Tier        *string  `json:"tier,omitempty"`
+	Position    int      `json:"position"`
+	Provider    string   `json:"provider"`
+	Model       string   `json:"model"`
+	Temperature *float64 `json:"temperature,omitempty"`
+	MaxTokens   *int     `json:"max_tokens,omitempty"`
+	IsEnabled   bool     `json:"is_enabled"`
+	CreatedAt   string   `json:"created_at"`
+	UpdatedAt   string   `json:"updated_at"`
 }
 
 // GetFallbackChainInput represents the get fallback chain request.
@@ -203,14 +205,16 @@ func (h *AdminHandler) GetFallbackChain(ctx context.Context, input *GetFallbackC
 	responses := make([]FallbackChainEntryResponse, 0, len(entries))
 	for _, e := range entries {
 		responses = append(responses, FallbackChainEntryResponse{
-			ID:        e.ID,
-			Tier:      e.Tier,
-			Position:  e.Position,
-			Provider:  e.Provider,
-			Model:     e.Model,
-			IsEnabled: e.IsEnabled,
-			CreatedAt: e.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-			UpdatedAt: e.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			ID:          e.ID,
+			Tier:        e.Tier,
+			Position:    e.Position,
+			Provider:    e.Provider,
+			Model:       e.Model,
+			Temperature: e.Temperature,
+			MaxTokens:   e.MaxTokens,
+			IsEnabled:   e.IsEnabled,
+			CreatedAt:   e.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			UpdatedAt:   e.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		})
 	}
 
@@ -224,9 +228,11 @@ func (h *AdminHandler) GetFallbackChain(ctx context.Context, input *GetFallbackC
 
 // FallbackChainEntryInput represents a fallback chain entry in API requests.
 type FallbackChainEntryInput struct {
-	Provider  string `json:"provider" enum:"openrouter,anthropic,openai,ollama" doc:"LLM provider name"`
-	Model     string `json:"model" minLength:"1" doc:"Model identifier"`
-	IsEnabled bool   `json:"is_enabled" doc:"Whether this entry is enabled"`
+	Provider    string   `json:"provider" enum:"openrouter,anthropic,openai,ollama" doc:"LLM provider name"`
+	Model       string   `json:"model" minLength:"1" doc:"Model identifier"`
+	Temperature *float64 `json:"temperature,omitempty" doc:"Temperature setting (0.0-1.0, nil for default)"`
+	MaxTokens   *int     `json:"max_tokens,omitempty" doc:"Max output tokens (nil for default)"`
+	IsEnabled   bool     `json:"is_enabled" doc:"Whether this entry is enabled"`
 }
 
 // SetFallbackChainInput represents the set fallback chain request.
@@ -258,9 +264,11 @@ func (h *AdminHandler) SetFallbackChain(ctx context.Context, input *SetFallbackC
 	}
 	for _, e := range input.Body.Chain {
 		svcInput.Entries = append(svcInput.Entries, service.FallbackChainEntryInput{
-			Provider:  e.Provider,
-			Model:     e.Model,
-			IsEnabled: e.IsEnabled,
+			Provider:    e.Provider,
+			Model:       e.Model,
+			Temperature: e.Temperature,
+			MaxTokens:   e.MaxTokens,
+			IsEnabled:   e.IsEnabled,
 		})
 	}
 
@@ -272,14 +280,16 @@ func (h *AdminHandler) SetFallbackChain(ctx context.Context, input *SetFallbackC
 	responses := make([]FallbackChainEntryResponse, 0, len(entries))
 	for _, e := range entries {
 		responses = append(responses, FallbackChainEntryResponse{
-			ID:        e.ID,
-			Tier:      e.Tier,
-			Position:  e.Position,
-			Provider:  e.Provider,
-			Model:     e.Model,
-			IsEnabled: e.IsEnabled,
-			CreatedAt: e.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-			UpdatedAt: e.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			ID:          e.ID,
+			Tier:        e.Tier,
+			Position:    e.Position,
+			Provider:    e.Provider,
+			Model:       e.Model,
+			Temperature: e.Temperature,
+			MaxTokens:   e.MaxTokens,
+			IsEnabled:   e.IsEnabled,
+			CreatedAt:   e.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			UpdatedAt:   e.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		})
 	}
 
