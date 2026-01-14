@@ -119,14 +119,18 @@ func (l *S3Loader) Fetch(ctx context.Context) (*S3LoadResult, error) {
 		var noSuchKey *types.NoSuchKey
 		if errors.As(err, &noSuchKey) {
 			l.mu.Lock()
+			wasInitialized := l.initialized
 			l.initialized = true
 			l.lastCheck = time.Now()
 			l.lastError = time.Now()
 			l.mu.Unlock()
-			l.logger.Debug("S3 config file not found (using defaults)",
-				"bucket", l.bucket,
-				"key", l.key,
-			)
+			// Only log on first check, not every poll
+			if !wasInitialized {
+				l.logger.Debug("S3 config file not found (using defaults)",
+					"bucket", l.bucket,
+					"key", l.key,
+				)
+			}
 			return nil, nil
 		}
 

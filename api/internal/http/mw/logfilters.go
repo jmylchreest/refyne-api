@@ -139,14 +139,18 @@ func (l *LogFiltersLoader) refresh(ctx context.Context) {
 		var apiErr *types.NoSuchKey
 		if errors.As(err, &apiErr) {
 			l.mu.Lock()
+			wasInitialized := l.initialized
 			l.initialized = true
 			l.lastCheck = time.Now()
 			l.lastError = time.Now()
 			l.mu.Unlock()
-			l.logger.Debug("log filters file not found in S3 (using default filters)",
-				"bucket", l.bucket,
-				"key", l.key,
-			)
+			// Only log on first check, not every poll
+			if !wasInitialized {
+				l.logger.Debug("log filters file not found in S3 (using default filters)",
+					"bucket", l.bucket,
+					"key", l.key,
+				)
+			}
 			return
 		}
 

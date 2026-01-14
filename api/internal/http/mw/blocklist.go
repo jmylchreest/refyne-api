@@ -153,14 +153,18 @@ func (b *IPBlocklist) refresh(ctx context.Context) {
 		if errors.As(err, &apiErr) {
 			// Blocklist file doesn't exist - that's OK, just mark as checked
 			b.mu.Lock()
+			wasInitialized := b.initialized
 			b.initialized = true
 			b.lastCheck = time.Now()
 			b.lastError = time.Now() // Backoff before checking again
 			b.mu.Unlock()
-			b.logger.Debug("blocklist file not found in S3 (will allow all requests)",
-				"bucket", b.bucket,
-				"key", b.key,
-			)
+			// Only log on first check, not every poll
+			if !wasInitialized {
+				b.logger.Debug("blocklist file not found in S3 (will allow all requests)",
+					"bucket", b.bucket,
+					"key", b.key,
+				)
+			}
 			return
 		}
 
