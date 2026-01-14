@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gocolly/colly/v2"
+	"github.com/oklog/ulid/v2"
 	"github.com/refyne/refyne/pkg/cleaner"
 
 	"github.com/jmylchreest/refyne-api/internal/config"
@@ -101,11 +102,13 @@ type llmCallResult struct {
 // Analyze fetches and analyzes a URL to generate schema suggestions.
 func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input AnalyzeInput, tier string) (*AnalyzeOutput, error) {
 	startTime := time.Now()
+	requestID := ulid.Make().String()
 
 	// Normalize URL - add https:// if no scheme present
 	targetURL := normalizeURL(input.URL)
 
 	s.logger.Info("starting URL analysis",
+		"request_id", requestID,
 		"user_id", userID,
 		"url", targetURL,
 		"depth", input.Depth,
@@ -113,9 +116,11 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 	)
 
 	// Get LLM config for analysis early (needed for error recording)
-	s.logger.Debug("resolving LLM config", "user_id", userID, "tier", tier)
+	s.logger.Debug("resolving LLM config", "request_id", requestID, "user_id", userID, "tier", tier)
 	llmConfig, isBYOK := s.resolveLLMConfig(ctx, userID, tier)
 	s.logger.Debug("LLM config resolved",
+		"request_id", requestID,
+		"user_id", userID,
 		"provider", llmConfig.Provider,
 		"model", llmConfig.Model,
 		"has_api_key", llmConfig.APIKey != "",
@@ -124,16 +129,18 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 
 	// Fetch main page content
 	fetchStart := time.Now()
-	s.logger.Debug("fetching main page content", "url", targetURL)
+	s.logger.Debug("fetching main page content", "request_id", requestID, "user_id", userID, "url", targetURL)
 	mainContent, links, fetchMode, err := s.fetchContent(ctx, targetURL, input.FetchMode)
 	if err != nil {
-		s.logger.Error("failed to fetch page content", "url", targetURL, "error", err)
+		s.logger.Error("failed to fetch page content", "request_id", requestID, "user_id", userID, "url", targetURL, "error", err)
 		s.recordAnalyzeUsage(ctx, userID, tier, targetURL, llmConfig, isBYOK, 0, 0,
 			int(time.Since(fetchStart).Milliseconds()), 0, int(time.Since(startTime).Milliseconds()),
-			"failed", err.Error())
+			"failed", err.Error(), requestID)
 		return nil, fmt.Errorf("failed to fetch page content: %w", err)
 	}
 	s.logger.Debug("page content fetched",
+		"request_id", requestID,
+		"user_id", userID,
 		"content_length", len(mainContent),
 		"links_found", len(links),
 		"fetch_mode", fetchMode,
@@ -150,7 +157,7 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 		for i := 0; i < maxSamples; i++ {
 			content, _, _, err := s.fetchContent(ctx, links[i], string(fetchMode))
 			if err != nil {
-				s.logger.Warn("failed to fetch detail page", "url", links[i], "error", err)
+				s.logger.Warn("failed to fetch detail page", "request_id", requestID, "user_id", userID, "url", links[i], "error", err)
 				continue
 			}
 			detailContents = append(detailContents, content)
@@ -161,13 +168,15 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 	// Generate analysis prompt and call LLM
 	// First try with raw content (noop cleaner), retry with fallback cleaner on context length errors
 	llmStart := time.Now()
-	s.logger.Debug("calling LLM for analysis", "provider", llmConfig.Provider, "model", llmConfig.Model)
+	s.logger.Debug("calling LLM for analysis", "request_id", requestID, "user_id", userID, "provider", llmConfig.Provider, "model", llmConfig.Model)
 	result, err := s.analyzeWithLLM(ctx, mainContent, detailContents, links, llmConfig)
 	llmDuration := time.Since(llmStart)
 
 	// If context length error, retry with cleaned content
 	if err != nil && isContextLengthError(err) {
 		s.logger.Info("context length error detected, retrying with cleaned content",
+			"request_id", requestID,
+			"user_id", userID,
 			"original_content_length", len(mainContent),
 			"error", err.Error(),
 		)
@@ -175,10 +184,12 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 		// Clean main content with fallback cleaner (Trafilatura HTML with tables/links)
 		cleanedMain, cleanErr := s.fallbackCleaner.Clean(mainContent)
 		if cleanErr != nil {
-			s.logger.Warn("fallback cleaner failed, using original content", "error", cleanErr)
+			s.logger.Warn("fallback cleaner failed, using original content", "request_id", requestID, "user_id", userID, "error", cleanErr)
 			cleanedMain = mainContent
 		} else {
 			s.logger.Debug("content cleaned for retry",
+				"request_id", requestID,
+				"user_id", userID,
 				"original_length", len(mainContent),
 				"cleaned_length", len(cleanedMain),
 				"reduction_percent", 100-int(float64(len(cleanedMain))/float64(len(mainContent))*100),
@@ -202,25 +213,29 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 
 		if err != nil {
 			s.logger.Error("LLM analysis failed after retry with cleaned content",
+				"request_id", requestID,
+				"user_id", userID,
 				"provider", llmConfig.Provider,
 				"model", llmConfig.Model,
 				"error", err,
 			)
 			s.recordAnalyzeUsage(ctx, userID, tier, targetURL, llmConfig, isBYOK, 0, 0,
 				int(fetchDuration.Milliseconds()), int(llmDuration.Milliseconds()), int(time.Since(startTime).Milliseconds()),
-				"failed", "retry failed: "+err.Error())
+				"failed", "retry failed: "+err.Error(), requestID)
 			return nil, fmt.Errorf("LLM analysis failed after retry: %w", err)
 		}
-		s.logger.Info("analysis succeeded after retry with cleaned content")
+		s.logger.Info("analysis succeeded after retry with cleaned content", "request_id", requestID, "user_id", userID)
 	} else if err != nil {
 		s.logger.Error("LLM analysis failed",
+			"request_id", requestID,
+			"user_id", userID,
 			"provider", llmConfig.Provider,
 			"model", llmConfig.Model,
 			"error", err,
 		)
 		s.recordAnalyzeUsage(ctx, userID, tier, targetURL, llmConfig, isBYOK, 0, 0,
 			int(fetchDuration.Milliseconds()), int(llmDuration.Milliseconds()), int(time.Since(startTime).Milliseconds()),
-			"failed", err.Error())
+			"failed", err.Error(), requestID)
 		return nil, fmt.Errorf("LLM analysis failed: %w", err)
 	}
 
@@ -228,7 +243,7 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 	s.recordAnalyzeUsage(ctx, userID, tier, targetURL, llmConfig, isBYOK,
 		result.InputTokens, result.OutputTokens,
 		int(fetchDuration.Milliseconds()), int(llmDuration.Milliseconds()), int(time.Since(startTime).Milliseconds()),
-		"success", "")
+		"success", "", requestID)
 
 	result.Output.RecommendedFetchMode = fetchMode
 	if len(links) > 0 {
@@ -242,11 +257,13 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 	}
 
 	s.logger.Info("URL analysis completed",
+		"request_id", requestID,
 		"user_id", userID,
 		"url", targetURL,
 		"page_type", result.Output.PageType,
 		"input_tokens", result.InputTokens,
 		"output_tokens", result.OutputTokens,
+		"duration_ms", time.Since(startTime).Milliseconds(),
 	)
 
 	return result.Output, nil
@@ -261,6 +278,7 @@ func (s *AnalyzerService) recordAnalyzeUsage(
 	inputTokens, outputTokens int,
 	fetchDurationMs, extractDurationMs, totalDurationMs int,
 	status, errorMessage string,
+	requestID string,
 ) {
 	if s.billing == nil {
 		return
@@ -273,6 +291,7 @@ func (s *AnalyzerService) recordAnalyzeUsage(
 
 	usageRecord := &UsageRecord{
 		UserID:            userID,
+		JobID:             requestID, // Use request_id as job_id for analyze operations
 		JobType:           models.JobTypeAnalyze,
 		Status:            status,
 		TotalChargedUSD:   0, // Analyze operations are currently free
@@ -290,6 +309,7 @@ func (s *AnalyzerService) recordAnalyzeUsage(
 		FetchDurationMs:   fetchDurationMs,
 		ExtractDurationMs: extractDurationMs,
 		TotalDurationMs:   totalDurationMs,
+		RequestID:         requestID,
 	}
 
 	if status == "failed" {
@@ -298,7 +318,7 @@ func (s *AnalyzerService) recordAnalyzeUsage(
 
 	// Use detached context - we want to record usage even if request timed out
 	if err := s.billing.RecordUsage(context.WithoutCancel(ctx), usageRecord); err != nil {
-		s.logger.Warn("failed to record analyze usage", "error", err)
+		s.logger.Warn("failed to record analyze usage", "request_id", requestID, "user_id", userID, "error", err)
 	}
 }
 
