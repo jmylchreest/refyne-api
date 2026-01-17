@@ -1,12 +1,14 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import yaml from 'js-yaml';
 import { useAuth } from '@clerk/nextjs';
 import { useSearchParams } from 'next/navigation';
 import {
   extract,
   analyze,
   createCrawlJob,
+  getJobResults,
   listSchemas,
   listSavedSites,
   createSavedSite,
@@ -19,6 +21,7 @@ import {
   AnalyzeResult,
   Schema,
   SavedSite,
+  ApiError,
 } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -40,10 +43,11 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { toast } from 'sonner';
-import { Loader2, Sparkles, Save, BookOpen, Globe, Clock, ChevronDown, ChevronUp, Play } from 'lucide-react';
+import { Loader2, Sparkles, Save, BookOpen, Globe, Clock, ChevronDown, ChevronUp, Play, Copy, Check, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { ProgressAvatarDialog, defaultStages, AvatarStage } from '@/components/ui/progress-avatar';
-import { CrawlModeSection, CrawlOptions } from '@/components/crawl-mode-section';
+import { CrawlModeSection, CrawlOptions, ExtractionMode } from '@/components/crawl-mode-section';
 import { cn } from '@/lib/utils';
 
 // Extraction-specific stages
@@ -67,61 +71,13 @@ fields:
     type: string
     description: Product description`;
 
-// Streaming result item for crawl mode
-interface CrawlResult {
+// Crawl progress tracking - URLs with status (merging done by backend)
+interface CrawlProgressUrl {
   url: string;
-  data: unknown;
   timestamp: Date;
-}
-
-// Deep merge utility for combining crawl results
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function deepMergeResults(target: Record<string, any>, source: Record<string, any>): Record<string, any> {
-  const result = { ...target };
-
-  for (const key of Object.keys(source)) {
-    const sourceVal = source[key];
-    const targetVal = result[key];
-
-    if (sourceVal === null || sourceVal === undefined) {
-      continue;
-    }
-
-    if (targetVal === null || targetVal === undefined) {
-      result[key] = sourceVal;
-      continue;
-    }
-
-    if (Array.isArray(sourceVal) && Array.isArray(targetVal)) {
-      const combined = [...targetVal, ...sourceVal];
-      result[key] = dedupeArray(combined);
-    } else if (typeof sourceVal === 'object' && typeof targetVal === 'object' && !Array.isArray(sourceVal)) {
-      result[key] = deepMergeResults(targetVal, sourceVal);
-    }
-  }
-
-  return result;
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function dedupeArray(arr: any[]): any[] {
-  const seen = new Set<string>();
-  return arr.filter(item => {
-    const key = typeof item === 'object' ? JSON.stringify(item) : String(item);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
-function getMergedCrawlResult(results: CrawlResult[]): Record<string, unknown> {
-  let merged: Record<string, unknown> = {};
-  for (const result of results) {
-    if (result.data && typeof result.data === 'object' && !Array.isArray(result.data)) {
-      merged = deepMergeResults(merged, result.data as Record<string, unknown>);
-    }
-  }
-  return merged;
+  error?: string;
+  errorCategory?: string;
+  errorDetails?: string; // Full error details (BYOK users only)
 }
 
 function parseClerkFeatures(feaClaim: string | undefined): string[] {
@@ -132,6 +88,40 @@ function parseClerkFeatures(feaClaim: string | undefined): string[] {
     if (trimmed.startsWith('o:')) return trimmed.slice(2);
     return trimmed;
   }).filter(Boolean);
+}
+
+// Get user-friendly error message based on error category
+function getErrorMessage(error: ApiError | { error?: string }): string {
+  const apiError = error as ApiError;
+
+  // If we have an error category, provide a more helpful message
+  if (apiError.error_category) {
+    const categoryMessages: Record<string, string> = {
+      invalid_api_key: apiError.is_byok
+        ? 'Your API key is invalid. Please check your LLM provider settings.'
+        : 'Authentication error. Please try again.',
+      insufficient_credits: 'Insufficient credits. Please add credits to continue.',
+      quota_exceeded: 'You have exceeded your usage quota. Please upgrade your plan or wait for your quota to reset.',
+      feature_disabled: 'This feature is not available on your current plan.',
+      rate_limited: 'Too many requests. Please wait a moment and try again.',
+      quota_exhausted: 'Free tier quota exhausted. Please upgrade or try again later.',
+      provider_unavailable: apiError.is_byok
+        ? `The ${apiError.provider || 'LLM'} provider is currently unavailable. Please check their status or try a different provider.`
+        : 'The extraction service is temporarily unavailable. Please try again later.',
+      model_unavailable: apiError.is_byok
+        ? `The model ${apiError.model || ''} is unavailable. Please try a different model.`
+        : 'The extraction model is temporarily unavailable. Please try again later.',
+      provider_error: apiError.is_byok
+        ? `Error from ${apiError.provider || 'provider'}: ${apiError.error}${apiError.error_details ? `\n\nDetails: ${apiError.error_details}` : ''}`
+        : 'A temporary error occurred. Please try again.',
+      extraction_error: apiError.error || 'Extraction failed. Please check your schema and try again.',
+    };
+
+    return categoryMessages[apiError.error_category] || apiError.error || 'An error occurred';
+  }
+
+  // Fallback to the error message
+  return apiError.error || 'An error occurred';
 }
 
 export default function DashboardPage() {
@@ -148,8 +138,8 @@ export default function DashboardPage() {
   const [result, setResult] = useState<ExtractResult | null>(null);
   const [analysisResult, setAnalysisResult] = useState<AnalyzeResult | null>(null);
 
-  // Crawl mode state
-  const [isCrawlMode, setIsCrawlMode] = useState(false);
+  // Extraction mode state
+  const [extractionMode, setExtractionMode] = useState<ExtractionMode>('single');
   const [isCrawling, setIsCrawling] = useState(false);
   const [crawlOptions, setCrawlOptions] = useState<CrawlOptions>({
     followSelector: '',
@@ -158,9 +148,12 @@ export default function DashboardPage() {
     maxDepth: 1,
     useSitemap: false,
   });
-  const [crawlResults, setCrawlResults] = useState<CrawlResult[]>([]);
+  const [crawlJobId, setCrawlJobId] = useState<string | null>(null);
+  const [crawlUrls, setCrawlUrls] = useState<CrawlProgressUrl[]>([]);
+  const [crawlFinalResult, setCrawlFinalResult] = useState<Record<string, unknown> | null>(null);
   const [crawlProgress, setCrawlProgress] = useState({
     extracted: 0,
+    urlsQueued: 0, // Total URLs queued for processing (from sitemap or link discovery)
     maxPages: 0,
     status: 'pending' as 'pending' | 'running' | 'completed' | 'failed'
   });
@@ -208,25 +201,33 @@ export default function DashboardPage() {
   // Analysis details collapsed state
   const [analysisExpanded, setAnalysisExpanded] = useState(false);
 
-  // Auto-scroll to latest crawl result
+  // Copy state
+  const [schemaCopied, setSchemaCopied] = useState(false);
+  const [resultsCopied, setResultsCopied] = useState(false);
+
+  // Auto-scroll to latest crawl URL
   useEffect(() => {
-    if (crawlResults.length > 0) {
+    if (crawlUrls.length > 0) {
       resultsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [crawlResults.length]);
+  }, [crawlUrls.length]);
 
   // Update crawl options when analysis result has follow patterns
+  // Auto-populate with ALL suggested selectors, replacing any existing ones
   useEffect(() => {
-    if (analysisResult?.follow_patterns?.[0]?.pattern) {
-      setCrawlOptions(prev => {
-        if (prev.followSelector) {
-          return prev;
-        }
-        return {
+    if (analysisResult?.follow_patterns && analysisResult.follow_patterns.length > 0) {
+      // Combine all suggested patterns into the selector field
+      const allPatterns = analysisResult.follow_patterns
+        .map(fp => fp.pattern)
+        .filter(Boolean)
+        .join('\n');
+
+      if (allPatterns) {
+        setCrawlOptions(prev => ({
           ...prev,
-          followSelector: analysisResult.follow_patterns[0].pattern,
-        };
-      });
+          followSelector: allPatterns,
+        }));
+      }
     }
   }, [analysisResult]);
 
@@ -318,6 +319,12 @@ export default function DashboardPage() {
 
     setIsAnalyzing(true);
     setAnalysisResult(null);
+    // Clear existing selectors so they get replaced by analysis results
+    setCrawlOptions(prev => ({
+      ...prev,
+      followSelector: '',
+      followPattern: '',
+    }));
     setShowProgressAvatar(true);
     setProgressMode('analyze');
     setProgressStage('connecting');
@@ -351,10 +358,11 @@ export default function DashboardPage() {
       setProgressComplete(true);
       toast.success('Analysis completed');
     } catch (err) {
-      const error = err as { error?: string };
+      const error = err as ApiError | { error?: string };
+      const errorMessage = getErrorMessage(error);
       setProgressError(true);
-      setProgressErrorMessage(error.error || 'Analysis failed');
-      toast.error(error.error || 'Analysis failed');
+      setProgressErrorMessage(errorMessage);
+      toast.error(errorMessage);
     } finally {
       setIsAnalyzing(false);
     }
@@ -386,7 +394,9 @@ export default function DashboardPage() {
 
     setIsLoading(true);
     setResult(null);
-    setCrawlResults([]);
+    setCrawlUrls([]);
+    setCrawlFinalResult(null);
+    setCrawlJobId(null);
     setShowProgressAvatar(true);
     setProgressMode('extract');
     setProgressStage('connecting');
@@ -402,37 +412,44 @@ export default function DashboardPage() {
     };
 
     try {
-      if (isCrawlMode && canCrawl) {
+      if (extractionMode !== 'single' && canCrawl) {
         setShowProgressAvatar(false);
-        setCrawlResults([]);
+        setCrawlUrls([]);
+        setCrawlFinalResult(null);
         setIsCrawling(true);
         setCrawlProgress({
           extracted: 0,
+          urlsQueued: 0,
           maxPages: crawlOptions.maxPages,
           status: 'running'
         });
+
+        // In sitemap mode, don't pass follow_selector (no link following)
+        const isSitemapMode = extractionMode === 'sitemap';
 
         const crawlResult = await createCrawlJob({
           url: normalizedUrl,
           schema: parsedSchema,
           options: {
-            follow_selector: crawlOptions.followSelector || undefined,
+            follow_selector: isSitemapMode ? undefined : (crawlOptions.followSelector || undefined),
             follow_pattern: crawlOptions.followPattern || undefined,
             max_pages: crawlOptions.maxPages,
-            max_depth: crawlOptions.maxDepth,
+            max_depth: isSitemapMode ? 0 : crawlOptions.maxDepth,
             same_domain_only: true,
             extract_from_seeds: true,
-            use_sitemap: crawlOptions.useSitemap,
+            use_sitemap: isSitemapMode,
           },
         });
 
-        toast.info(`Crawl job started - streaming results...`);
+        const jobId = crawlResult.job_id;
+        setCrawlJobId(jobId);
+        toast.info(`Crawl job started - streaming progress...`);
 
         const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
         const token = await getToken();
 
         const streamResponse = await fetch(
-          `${apiBase}/api/v1/jobs/${crawlResult.job_id}/stream`,
+          `${apiBase}/api/v1/jobs/${jobId}/stream`,
           {
             headers: {
               'Authorization': `Bearer ${token}`,
@@ -474,10 +491,13 @@ export default function DashboardPage() {
                     const data = JSON.parse(dataStr);
 
                     if (currentEvent === 'result') {
-                      setCrawlResults(prev => [...prev, {
+                      // Track URL with error status for progress display
+                      setCrawlUrls(prev => [...prev, {
                         url: data.url,
-                        data: data.data,
                         timestamp: new Date(),
+                        error: data.error_message,
+                        errorCategory: data.error_category,
+                        errorDetails: data.error_details, // Full details for BYOK users
                       }]);
                       setCrawlProgress(prev => ({
                         ...prev,
@@ -486,21 +506,34 @@ export default function DashboardPage() {
                     } else if (currentEvent === 'status') {
                       setCrawlProgress(prev => ({
                         ...prev,
-                        extracted: data.page_count || prev.extracted
+                        extracted: data.page_count || prev.extracted,
+                        urlsQueued: data.urls_queued || prev.urlsQueued
                       }));
                     } else if (currentEvent === 'complete') {
-                      setIsLoading(false);
                       setIsCrawling(false);
                       setCrawlProgress(prev => ({
                         ...prev,
                         status: data.status === 'completed' ? 'completed' : 'failed',
-                        extracted: data.page_count || prev.extracted
+                        extracted: data.page_count || prev.extracted,
+                        urlsQueued: data.urls_queued || prev.urlsQueued
                       }));
+
                       if (data.status === 'completed') {
-                        toast.success(`Crawl completed! ${data.page_count} pages extracted.`);
+                        // Fetch merged results from backend
+                        try {
+                          const resultsResponse = await getJobResults(jobId, true);
+                          if (resultsResponse.merged) {
+                            setCrawlFinalResult(resultsResponse.merged);
+                          }
+                          toast.success(`Crawl completed! ${data.page_count} pages extracted.`);
+                        } catch (fetchErr) {
+                          console.error('Failed to fetch merged results:', fetchErr);
+                          toast.error('Crawl completed but failed to fetch merged results');
+                        }
                       } else {
                         toast.error(`Crawl failed: ${data.error || 'Unknown error'}`);
                       }
+                      setIsLoading(false);
                       return;
                     }
                   } catch {
@@ -525,9 +558,9 @@ export default function DashboardPage() {
         return;
       }
 
-      if (isCrawlMode && !canCrawl) {
-        toast.error('Crawl requires a paid plan. Running single page extraction instead.');
-        setIsCrawlMode(false);
+      if (extractionMode !== 'single' && !canCrawl) {
+        toast.error('Crawl and Sitemap modes require a paid plan. Running single page extraction instead.');
+        setExtractionMode('single');
       }
 
       const progressPromise = stageProgression();
@@ -541,10 +574,13 @@ export default function DashboardPage() {
       setProgressComplete(true);
       toast.success('Extraction completed');
     } catch (err) {
-      const error = err as { error?: string };
+      const error = err as ApiError | { error?: string };
+      const errorMessage = getErrorMessage(error);
       setProgressError(true);
-      setProgressErrorMessage(error.error || 'Extraction failed');
-      toast.error(error.error || 'Extraction failed');
+      setProgressErrorMessage(errorMessage);
+      setIsCrawling(false);
+      setCrawlProgress(prev => ({ ...prev, status: 'failed' }));
+      toast.error(errorMessage);
     } finally {
       setIsLoading(false);
     }
@@ -749,75 +785,13 @@ export default function DashboardPage() {
     }
   };
 
-  const yamlToJson = (yaml: string): object => {
-    const lines = yaml.split('\n');
-    const result: Record<string, unknown> = {};
-    let currentKey = '';
-    let currentArray: Record<string, unknown>[] = [];
-    let inArray = false;
-    let arrayKey = '';
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-
-      if (trimmed.startsWith('- ')) {
-        const content = trimmed.substring(2);
-        if (content.includes(':')) {
-          const [key, ...valueParts] = content.split(':');
-          const value = valueParts.join(':').trim();
-          if (inArray) {
-            const lastItem = currentArray[currentArray.length - 1] || {};
-            lastItem[key.trim()] = parseValue(value);
-            if (currentArray.length === 0) {
-              currentArray.push(lastItem);
-            }
-          }
-        } else {
-          currentArray.push({});
-        }
-        if (!inArray) {
-          inArray = true;
-        }
-      } else if (trimmed.includes(':')) {
-        if (inArray && arrayKey) {
-          result[arrayKey] = currentArray;
-          currentArray = [];
-          inArray = false;
-        }
-
-        const [key, ...valueParts] = trimmed.split(':');
-        const value = valueParts.join(':').trim();
-        currentKey = key.trim();
-
-        if (!value) {
-          arrayKey = currentKey;
-        } else {
-          result[currentKey] = parseValue(value);
-        }
-      } else if (inArray && trimmed) {
-        const [key, ...valueParts] = trimmed.split(':');
-        const value = valueParts.join(':').trim();
-        const lastItem = currentArray[currentArray.length - 1];
-        if (lastItem) {
-          lastItem[key.trim()] = parseValue(value);
-        }
-      }
+  // Convert YAML schema to JSON using js-yaml library
+  const yamlToJson = (yamlStr: string): object => {
+    const parsed = yaml.load(yamlStr);
+    if (typeof parsed !== 'object' || parsed === null) {
+      throw new Error('Invalid YAML: must be an object');
     }
-
-    if (inArray && arrayKey) {
-      result[arrayKey] = currentArray;
-    }
-
-    return result;
-  };
-
-  const parseValue = (value: string): unknown => {
-    if (!value) return '';
-    if (value === 'true') return true;
-    if (value === 'false') return false;
-    if (!isNaN(Number(value))) return Number(value);
-    return value.replace(/^["']|["']$/g, '');
+    return parsed as object;
   };
 
   const getTotalTime = () => {
@@ -826,7 +800,25 @@ export default function DashboardPage() {
     return total > 1000 ? `${(total / 1000).toFixed(1)}s` : `${total}ms`;
   };
 
-  const hasResults = result !== null || crawlResults.length > 0 || isCrawling;
+  const copySchema = async () => {
+    await navigator.clipboard.writeText(schema);
+    setSchemaCopied(true);
+    setTimeout(() => setSchemaCopied(false), 2000);
+  };
+
+  const copyResults = async () => {
+    let content = '';
+    if (crawlFinalResult) {
+      content = JSON.stringify(crawlFinalResult, null, 2);
+    } else if (result) {
+      content = JSON.stringify(result.data, null, 2);
+    }
+    await navigator.clipboard.writeText(content);
+    setResultsCopied(true);
+    setTimeout(() => setResultsCopied(false), 2000);
+  };
+
+  const hasResults = result !== null || crawlFinalResult !== null || isCrawling;
 
   return (
     <div className="flex flex-col h-full gap-4">
@@ -859,6 +851,12 @@ export default function DashboardPage() {
                 placeholder="https://example.com/product"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !isLoading && !isAnalyzing && url) {
+                    e.preventDefault();
+                    handleAnalyze();
+                  }
+                }}
                 disabled={isLoading || isAnalyzing}
                 className="flex-1 font-mono text-sm"
               />
@@ -955,8 +953,8 @@ export default function DashboardPage() {
 
       {/* SECTION 2: Extraction Mode */}
       <CrawlModeSection
-        isCrawlMode={isCrawlMode}
-        onModeChange={setIsCrawlMode}
+        extractionMode={extractionMode}
+        onModeChange={setExtractionMode}
         crawlOptions={crawlOptions}
         onOptionsChange={setCrawlOptions}
         suggestedSelectors={analysisResult?.follow_patterns}
@@ -1000,25 +998,52 @@ export default function DashboardPage() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setShowSaveSchemaDialog(true)}
+              onClick={() => {
+                // Pre-populate schema name with normalized URL
+                if (url && !newSchemaName) {
+                  setNewSchemaName(normalizeUrl(url));
+                }
+                setShowSaveSchemaDialog(true);
+              }}
               className="h-8 text-xs"
             >
               <Save className="h-3 w-3 mr-1" />
               Save
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={copySchema}
+              className="h-8 w-8"
+              title="Copy schema"
+            >
+              {schemaCopied ? (
+                <Check className="h-3 w-3 text-green-500" />
+              ) : (
+                <Copy className="h-3 w-3" />
+              )}
             </Button>
           </div>
           <Button
             size="sm"
             onClick={handleExtract}
             disabled={isLoading || !url}
-            className={cn('h-8', isCrawlMode && canCrawl && 'bg-amber-600 hover:bg-amber-700')}
+            className={cn(
+              'h-8',
+              extractionMode === 'crawl' && canCrawl && 'bg-amber-600 hover:bg-amber-700',
+              extractionMode === 'sitemap' && canCrawl && 'bg-emerald-600 hover:bg-emerald-700'
+            )}
           >
             {isLoading ? (
               <Loader2 className="h-3 w-3 animate-spin mr-1" />
             ) : (
               <Play className="h-3 w-3 mr-1" />
             )}
-            {isCrawlMode && canCrawl ? 'Crawl & Extract' : 'Extract'}
+            {extractionMode === 'crawl' && canCrawl
+              ? 'Crawl & Extract'
+              : extractionMode === 'sitemap' && canCrawl
+                ? 'Sitemap Extract'
+                : 'Extract'}
           </Button>
         </div>
 
@@ -1041,112 +1066,232 @@ export default function DashboardPage() {
           <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 px-4 py-2 shrink-0">
             <div className="flex items-center gap-3">
               <span className="text-sm font-medium">Results</span>
-              {isCrawling || crawlResults.length > 0 ? (
-                <Badge variant={isCrawling ? 'default' : 'secondary'} className="text-xs">
-                  {crawlResults.length} pages
-                </Badge>
-              ) : result && (
+              {!isCrawling && !crawlFinalResult && result && (
                 <span className="text-xs text-zinc-500">{result.url}</span>
               )}
             </div>
-            {result && (
-              <div className="flex items-center gap-3 text-xs text-zinc-500">
-                <span className="flex items-center gap-1">
-                  <Clock className="h-3 w-3" />
-                  {getTotalTime()}
-                </span>
-                {result.usage.cost_usd && result.usage.cost_usd > 0 && (
-                  <span>${result.usage.cost_usd.toFixed(4)}</span>
-                )}
-              </div>
-            )}
+            <div className="flex items-center gap-3 text-xs text-zinc-500">
+              {result && (
+                <>
+                  <span className="flex items-center gap-1">
+                    <Clock className="h-3 w-3" />
+                    {getTotalTime()}
+                  </span>
+                  {result.usage.cost_usd && result.usage.cost_usd > 0 && (
+                    <span>${result.usage.cost_usd.toFixed(4)}</span>
+                  )}
+                </>
+              )}
+              {(result || crawlFinalResult) && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={copyResults}
+                  className="h-8 w-8"
+                  title="Copy results"
+                >
+                  {resultsCopied ? (
+                    <Check className="h-3 w-3 text-green-500" />
+                  ) : (
+                    <Copy className="h-3 w-3" />
+                  )}
+                </Button>
+              )}
+            </div>
           </div>
 
           {/* Results Content */}
           <div className="flex-1 overflow-hidden flex flex-col min-h-0">
-            {isCrawling || crawlResults.length > 0 ? (
+            {isCrawling || crawlFinalResult ? (
               // Crawl results
               <>
                 {/* Crawl Progress */}
-                <div className="px-4 py-2 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/50 shrink-0">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      {isCrawling ? (
-                        <>
-                          <div className="flex items-center gap-2 text-sm font-medium">
+                {(() => {
+                  const successCount = crawlUrls.filter(u => !u.error).length;
+                  const failedCount = crawlUrls.filter(u => u.error).length;
+                  return (
+                    <div className="px-4 py-2 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/50 shrink-0">
+                      <div className="flex items-center justify-between">
+                        {isCrawling ? (
+                          <div className="flex items-center gap-3 text-sm font-medium">
                             <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
                             <span>Crawling...</span>
-                          </div>
-                          <div className="flex items-center gap-4 text-sm text-zinc-500">
-                            <span className="flex items-center gap-1">
-                              <span className="font-medium text-zinc-700 dark:text-zinc-300">
-                                {crawlProgress.extracted}
-                              </span>
-                              {crawlProgress.maxPages > 0 && (
-                                <>
-                                  <span>/</span>
-                                  <span>{crawlProgress.maxPages}</span>
-                                </>
-                              )}
-                              <span className="text-zinc-400">pages</span>
+                            <span className="flex items-center gap-1 text-green-600">
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                              {successCount}
                             </span>
+                            {failedCount > 0 && (
+                              <span className="flex items-center gap-1 text-red-500">
+                                <AlertCircle className="h-3.5 w-3.5" />
+                                {failedCount}
+                              </span>
+                            )}
                           </div>
-                        </>
-                      ) : (
-                        <div className="text-sm font-medium text-green-600 dark:text-green-400">
-                          Crawl complete
-                        </div>
-                      )}
-                    </div>
-                    {crawlProgress.maxPages > 0 ? (
-                      <div className="w-32 h-1.5 bg-zinc-200 dark:bg-zinc-700 rounded-full overflow-hidden">
-                        <div
-                          className={cn(
-                            "h-full transition-all duration-300 rounded-full",
-                            isCrawling ? "bg-amber-500" : "bg-green-500"
-                          )}
-                          style={{
-                            width: `${Math.min(100, (crawlProgress.extracted / crawlProgress.maxPages) * 100)}%`
-                          }}
-                        />
-                      </div>
-                    ) : isCrawling ? (
-                      <div className="w-32 h-1.5 bg-zinc-200 dark:bg-zinc-700 rounded-full overflow-hidden">
-                        <div className="h-full w-full bg-amber-500 animate-pulse rounded-full" />
-                      </div>
-                    ) : (
-                      <div className="w-32 h-1.5 bg-green-500 rounded-full" />
-                    )}
-                  </div>
-                </div>
+                        ) : (
+                          <div className="flex items-center gap-3 text-sm font-medium">
+                            <span className="text-green-600 dark:text-green-400">Crawl complete</span>
+                            <span className="flex items-center gap-1 text-green-600">
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                              {successCount}
+                            </span>
+                            {failedCount > 0 && (
+                              <span className="flex items-center gap-1 text-red-500">
+                                <AlertCircle className="h-3.5 w-3.5" />
+                                {failedCount} failed
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        {(() => {
+                          const total = crawlProgress.maxPages > 0 ? crawlProgress.maxPages : crawlProgress.urlsQueued;
+                          const current = crawlProgress.extracted;
+                          const showCount = total > 0;
+                          const progressPercent = showCount ? Math.min(100, (current / total) * 100) : 0;
 
-                {/* Merged Results */}
-                {crawlResults.length > 0 ? (
+                          return (
+                            <div className="flex items-center gap-2">
+                              {showCount && (
+                                <span className="text-xs text-zinc-500 dark:text-zinc-400 tabular-nums">
+                                  {current}/{total}
+                                </span>
+                              )}
+                              <div className="w-32 h-1.5 bg-zinc-200 dark:bg-zinc-700 rounded-full overflow-hidden">
+                                {showCount ? (
+                                  <div
+                                    className={cn(
+                                      "h-full transition-all duration-300 rounded-full",
+                                      isCrawling ? "bg-amber-500" : "bg-green-500"
+                                    )}
+                                    style={{ width: `${progressPercent}%` }}
+                                  />
+                                ) : isCrawling ? (
+                                  <div className="h-full w-full bg-amber-500 animate-pulse rounded-full" />
+                                ) : (
+                                  <div className="h-full w-full bg-green-500 rounded-full" />
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Final Merged Results from Backend */}
+                {crawlFinalResult ? (
                   <>
                     <div className="flex-1 overflow-auto bg-zinc-950 min-h-0">
                       <pre className="p-4 text-sm text-zinc-300 min-h-full">
-                        {JSON.stringify(getMergedCrawlResult(crawlResults), null, 2)}
+                        {JSON.stringify(crawlFinalResult, null, 2)}
                       </pre>
                     </div>
-                    <details className="border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 shrink-0">
-                      <summary className="px-4 py-2 text-xs text-zinc-500 cursor-pointer hover:text-zinc-700 dark:hover:text-zinc-300">
-                        Source pages ({crawlResults.length})
-                      </summary>
-                      <div className="px-4 pb-2 space-y-1 max-h-32 overflow-auto">
-                        {crawlResults.map((item, idx) => (
-                          <div key={idx} className="text-xs font-mono text-zinc-400 truncate">
-                            {item.url}
-                          </div>
-                        ))}
-                      </div>
-                    </details>
+                    {crawlUrls.length > 0 && (
+                      <details className="border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 shrink-0">
+                        <summary className="px-4 py-2 text-xs text-zinc-500 cursor-pointer hover:text-zinc-700 dark:hover:text-zinc-300">
+                          Source pages ({crawlUrls.length})
+                        </summary>
+                        <div className="px-4 pb-2 space-y-1.5 max-h-48 overflow-auto">
+                          {crawlUrls.map((item, idx) => (
+                            <div key={idx} className="text-xs">
+                              <div className="flex items-center gap-2">
+                                {item.error ? (
+                                  <AlertCircle className="h-3.5 w-3.5 text-red-500 shrink-0" />
+                                ) : (
+                                  <CheckCircle2 className="h-3.5 w-3.5 text-green-500 shrink-0" />
+                                )}
+                                <a
+                                  href={item.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className={cn(
+                                    "font-mono truncate hover:underline",
+                                    item.error ? "text-red-400 hover:text-red-300" : "text-zinc-400 hover:text-zinc-200"
+                                  )}
+                                >
+                                  {item.url}
+                                </a>
+                              </div>
+                              {item.error && (
+                                item.errorDetails ? (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <div className="ml-5.5 mt-0.5 text-red-400/80 text-[11px] leading-tight cursor-help underline decoration-dotted decoration-red-400/50">
+                                        {item.error}
+                                      </div>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="bottom" className="max-w-md text-left font-mono text-[10px] whitespace-pre-wrap">
+                                      {item.errorDetails}
+                                    </TooltipContent>
+                                  </Tooltip>
+                                ) : (
+                                  <div className="ml-5.5 mt-0.5 text-red-400/80 text-[11px] leading-tight">
+                                    {item.error}
+                                  </div>
+                                )
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    )}
                   </>
                 ) : isCrawling ? (
-                  <div className="flex-1 flex items-center justify-center text-zinc-400">
-                    <div className="text-center">
-                      <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />
-                      <p>Waiting for first extraction result...</p>
-                    </div>
+                  <div className="flex-1 flex flex-col min-h-0">
+                    {/* Show URLs being processed during crawl */}
+                    {crawlUrls.length > 0 ? (
+                      <div className="flex-1 overflow-auto bg-zinc-950 min-h-0">
+                        <div className="p-4 space-y-1.5">
+                          {crawlUrls.map((item, idx) => (
+                            <div key={idx} className="text-xs">
+                              <div className="flex items-center gap-2">
+                                {item.error ? (
+                                  <AlertCircle className="h-3.5 w-3.5 text-red-500 shrink-0" />
+                                ) : (
+                                  <CheckCircle2 className="h-3.5 w-3.5 text-green-500 shrink-0" />
+                                )}
+                                <a
+                                  href={item.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className={cn(
+                                    "font-mono truncate hover:underline",
+                                    item.error ? "text-red-400 hover:text-red-300" : "text-zinc-400 hover:text-zinc-200"
+                                  )}
+                                >
+                                  {item.url}
+                                </a>
+                              </div>
+                              {item.error && (
+                                item.errorDetails ? (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <div className="ml-5.5 mt-0.5 text-red-400/80 text-[11px] leading-tight cursor-help underline decoration-dotted decoration-red-400/50">
+                                        {item.error}
+                                      </div>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="bottom" className="max-w-md text-left font-mono text-[10px] whitespace-pre-wrap">
+                                      {item.errorDetails}
+                                    </TooltipContent>
+                                  </Tooltip>
+                                ) : (
+                                  <div className="ml-5.5 mt-0.5 text-red-400/80 text-[11px] leading-tight">
+                                    {item.error}
+                                  </div>
+                                )
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex-1 flex items-center justify-center text-zinc-400">
+                        <div className="text-center">
+                          <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />
+                          <p>Waiting for first extraction result...</p>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : null}
                 <div ref={resultsEndRef} />
@@ -1164,7 +1309,13 @@ export default function DashboardPage() {
       )}
 
       {/* Save Schema Dialog */}
-      <Dialog open={showSaveSchemaDialog} onOpenChange={setShowSaveSchemaDialog}>
+      <Dialog open={showSaveSchemaDialog} onOpenChange={(open) => {
+        if (!open) {
+          setNewSchemaName('');
+          setNewSchemaDescription('');
+        }
+        setShowSaveSchemaDialog(open);
+      }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Save Schema</DialogTitle>

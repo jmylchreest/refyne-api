@@ -9,6 +9,7 @@ jobs:
   # Deploy API to Fly.io
   deploy-api:
     name: Deploy API
+    if: false  # Temporarily disabled during active development
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -28,6 +29,7 @@ jobs:
   # Deploy Web to Cloudflare Pages
   deploy-web:
     name: Deploy Web
+    if: false  # Temporarily disabled during active development
     runs-on: ubuntu-latest
     defaults:
       run:

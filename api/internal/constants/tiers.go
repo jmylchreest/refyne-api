@@ -136,6 +136,15 @@ const (
 	MaxSyncWaitTimeout = 2 * time.Minute
 )
 
+// HTTP request timeouts
+const (
+	// DefaultRequestTimeout is the timeout for most API endpoints
+	DefaultRequestTimeout = 60 * time.Second
+	// LLMRequestTimeout is the extended timeout for LLM-based operations
+	// (analyze, extract) which involve page fetching + LLM inference
+	LLMRequestTimeout = 3 * time.Minute
+)
+
 // QuotaExceededMessage returns a user-friendly message for monthly quota exceeded.
 func QuotaExceededMessage(tier string) string {
 	normalized := normalizeTierName(tier)

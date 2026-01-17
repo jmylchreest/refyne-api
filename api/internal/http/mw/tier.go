@@ -16,9 +16,9 @@ import (
 type TierLimits = constants.TierLimits
 
 // GetTierLimits returns the limits for a given tier.
-// This delegates to the centralized constants package.
-func GetTierLimits(tier string) TierLimits {
-	return constants.GetTierLimits(tier)
+// This delegates to the centralized constants package, checking S3 overrides first.
+func GetTierLimits(ctx context.Context, tier string) TierLimits {
+	return constants.GetTierLimitsWithS3(ctx, tier)
 }
 
 // TierContextKey is the context key for tier limits.
@@ -40,8 +40,8 @@ func TierGate(usageSvc *service.UsageService) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Get tier limits
-			limits := GetTierLimits(claims.Tier)
+			// Get tier limits (checks S3 overrides first)
+			limits := GetTierLimits(r.Context(), claims.Tier)
 
 			// Add limits to context for use in handlers
 			ctx := context.WithValue(r.Context(), TierLimitsKey, limits)
@@ -61,8 +61,8 @@ func RequireUsageQuota(usageSvc *service.UsageService) func(http.Handler) http.H
 				return
 			}
 
-			// Get tier limits
-			limits := GetTierLimits(claims.Tier)
+			// Get tier limits (checks S3 overrides first)
+			limits := GetTierLimits(r.Context(), claims.Tier)
 
 			// If unlimited (0), allow through
 			if limits.MonthlyExtractions == 0 {
@@ -83,6 +83,12 @@ func RequireUsageQuota(usageSvc *service.UsageService) func(http.Handler) http.H
 
 			// Check if over quota
 			if usage.TotalJobs >= limits.MonthlyExtractions {
+				slog.Debug("monthly quota exceeded",
+					"user_id", claims.UserID,
+					"tier", claims.Tier,
+					"limit", limits.MonthlyExtractions,
+					"used", usage.TotalJobs,
+				)
 				w.Header().Set("Content-Type", "application/json")
 				w.Header().Set("X-RateLimit-Limit", intToString(limits.MonthlyExtractions))
 				w.Header().Set("X-RateLimit-Remaining", "0")
@@ -190,8 +196,8 @@ func RequireConcurrentJobLimit(jobSvc JobService) func(http.Handler) http.Handle
 				return
 			}
 
-			// Get tier limits
-			limits := GetTierLimits(claims.Tier)
+			// Get tier limits (checks S3 overrides first)
+			limits := GetTierLimits(r.Context(), claims.Tier)
 
 			// If unlimited (0), allow through
 			if limits.MaxConcurrentJobs == 0 {
@@ -212,6 +218,12 @@ func RequireConcurrentJobLimit(jobSvc JobService) func(http.Handler) http.Handle
 
 			// Check if at limit
 			if activeJobs >= limits.MaxConcurrentJobs {
+				slog.Debug("concurrent job limit exceeded",
+					"user_id", claims.UserID,
+					"tier", claims.Tier,
+					"limit", limits.MaxConcurrentJobs,
+					"active", activeJobs,
+				)
 				w.Header().Set("Content-Type", "application/json")
 				w.Header().Set("X-Concurrent-Limit", intToString(limits.MaxConcurrentJobs))
 				w.Header().Set("X-Concurrent-Active", intToString(activeJobs))

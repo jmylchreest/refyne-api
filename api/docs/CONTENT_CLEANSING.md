@@ -19,17 +19,20 @@ cleanerChain := cleaner.NewChain(
 ```
 
 Available cleaners:
-- `cleaner.NewNoop()` - Pass-through, no cleaning
-- `cleaner.NewTrafilatura(config)` - Main content extraction
+- `cleaner.NewNoop()` - Pass-through, no cleaning (raw HTML)
+- `cleaner.NewTrafilatura(config)` - Main content extraction (article-focused)
+- `cleaner.NewReadability(config)` - Mozilla Readability-based extraction
 - `cleaner.NewMarkdown()` - HTML to Markdown conversion
 - `cleaner.NewChain(cleaners...)` - Compose multiple cleaners
 
 ## Current Implementation
 
 ### Extraction Service
-Uses: `Trafilatura (text output) -> Markdown` chain
-- Extracts main content and converts to clean markdown
-- Good for LLM consumption but loses some structural detail
+Uses: `Markdown` cleaner only (HTML to Markdown conversion)
+- Converts raw HTML to Markdown preserving structure
+- Links become `[text](url)`, images become `![alt](src)`
+- Tables preserved as Markdown tables
+- Still quite large for complex e-commerce pages
 
 ### Analyzer Service
 - **Primary:** `Noop` cleaner (raw HTML) - preserves all detail
@@ -45,6 +48,17 @@ Different use cases have conflicting requirements:
 | **Analysis** | Maximum detail to understand page structure | Context length errors |
 | **Extraction** | Clean, focused content for accurate extraction | May lose relevant data |
 | **E-commerce/Listings** | Preserve tables, product grids, prices | Article extractors remove these |
+
+## Cleaner Comparison (Tested)
+
+| Cleaner | Token Usage | Extraction Quality | Notes |
+|---------|-------------|-------------------|-------|
+| **Noop (raw HTML)** | Very high (~32K/page) | Best | Too expensive for production |
+| **Markdown only** | High (~28-30K/page) | Good | ~10% reduction, still expensive |
+| **Trafilatura -> MD** | Low | Poor for e-commerce | Strips product grids, images |
+| **Readability -> MD** | Medium (TBD) | TBD | Worth testing as middle ground |
+
+The challenge: article extractors (Trafilatura, Readability) are designed to find the "main content" and strip "boilerplate". For e-commerce sites, product grids ARE the main content but look like navigation to these algorithms.
 
 ## Available In-Process Go Libraries
 
@@ -73,19 +87,45 @@ trafilatura.Extract(reader, trafilatura.Options{
 })
 ```
 
-### 2. go-readability (go-shiori)
-**Repo:** https://github.com/go-shiori/go-readability
-**Status:** DEPRECATED - use codeberg.org/readeck/go-readability/v2
+### 2. go-readability v2 (IMPLEMENTED)
+**Repo:** https://codeberg.org/readeck/go-readability
+**Package:** `codeberg.org/readeck/go-readability/v2`
 
 **Pros:**
-- Mozilla Readability port
+- Mozilla Readability.js v0.6.0 compatible
 - Produces HTML and text output
-- Extracts metadata (title, author, etc.)
+- Extracts metadata (title, author, published date, etc.)
+- Better content preservation than older versions
+- Preserves images, links, and tables in main content
+- Actively maintained
 
 **Cons:**
-- Article-focused, not data extraction
-- Limited structure preservation
-- Deprecated
+- Article-focused (like Trafilatura)
+- May strip product grids/listings on e-commerce sites
+
+**Configuration Options:**
+```go
+readabilityCleaner := cleaner.NewReadability(&cleaner.ReadabilityConfig{
+    Output:            cleaner.OutputHTML,  // or OutputText
+    MaxElemsToParse:   0,                   // 0 = no limit
+    NTopCandidates:    5,                   // candidates to analyze
+    CharThreshold:     500,                 // min chars for valid content
+    KeepClasses:       false,               // preserve CSS classes
+    ClassesToPreserve: []string{},          // specific classes to keep
+    BaseURL:           "https://example.com", // for resolving relative URLs
+})
+```
+
+**Usage in chain:**
+```go
+// Readability extracts main content, then Markdown converts to clean format
+cleanerChain := cleaner.NewChain(
+    cleaner.NewReadability(&cleaner.ReadabilityConfig{
+        Output: cleaner.OutputHTML,
+    }),
+    cleaner.NewMarkdown(),
+)
+```
 
 ### 3. GoOse
 **Repo:** https://github.com/advancedlogic/GoOse
@@ -153,15 +193,27 @@ The `isContextLengthError()` function detects errors containing:
 - `too long`, `maximum context`, `exceeds limit`
 - `input too large`, `content_too_large`, `request too large`
 
-### For Extraction Service
+### For Extraction Service (UPDATED)
 
-**Current approach is good:**
-- Trafilatura text -> Markdown works well
-- Consider switching to HTML output for e-commerce sites
+**Now uses HTML output:**
+- Trafilatura HTML (with tables/links) -> Markdown
+- Preserves structure for e-commerce, listings, product pages
+- Markdown conversion creates clean content for LLM
 
-**Future enhancement:**
-- Detect page type (article vs listing vs product)
-- Use appropriate cleaner chain per type
+```go
+trafilaturaCleaner := cleaner.NewTrafilatura(&cleaner.TrafilaturaConfig{
+    Output: cleaner.OutputHTML, // HTML preserves structure
+    Tables: cleaner.Include,    // Product grids, specs tables
+    Links:  cleaner.Include,    // Product URLs
+})
+markdownCleaner := cleaner.NewMarkdown()
+cleanerChain := cleaner.NewChain(trafilaturaCleaner, markdownCleaner)
+```
+
+**Why HTML -> Markdown instead of Text -> Markdown:**
+- Text output strips structure (treats product grids as "boilerplate")
+- HTML output preserves tables, links, and layout
+- Markdown converter then creates structured, readable content
 
 ## Error Detection
 
@@ -184,8 +236,29 @@ func isContextLengthError(err error) bool {
 ## Implementation Priority
 
 1. **DONE:** Add retry logic to analyzer with Trafilatura HTML fallback
-2. **Medium-term:** Evaluate MinerU-HTML for complex sites (out-of-process)
-3. **Long-term:** Page-type-aware cleaner selection
+2. **DONE:** Auto mini-crawl for better schema generation
+3. **Medium-term:** Evaluate MinerU-HTML for complex sites (out-of-process)
+4. **Long-term:** Page-type-aware cleaner selection
+
+## Analyzer Auto Mini-Crawl
+
+The analyzer now automatically fetches 1-2 sample detail pages to generate better combined schemas:
+
+1. **Smart link detection** - Identifies product/detail page links based on URL patterns:
+   - `/product/`, `/products/`, `/item/`, `/p/`
+   - `/article/`, `/post/`, `/job/`
+   - URLs with slugs (hyphenated paths like `/products/raspberry-pi-5`)
+   - Paths with numeric IDs
+
+2. **Combined schema generation** - The prompt instructs the LLM to create schemas that work across:
+   - Listing pages (partial data - title, url, price)
+   - Detail pages (full data - description, specs, images)
+   - Only `title` and `url` are marked required for flexible merging
+
+3. **Minimal prompt philosophy** - Less prescriptive rules, more focus on:
+   - Clear model types (products, jobs, articles, properties)
+   - Show don't tell (examples over rules)
+   - Trust the model to understand context
 
 ## References
 

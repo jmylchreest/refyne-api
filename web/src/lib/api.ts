@@ -1,9 +1,14 @@
 // API client for refyne-api
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
-interface ApiError {
+export interface ApiError {
   error: string;
   status: number;
+  error_category?: string;  // Error classification (rate_limited, invalid_api_key, provider_error, etc.)
+  error_details?: string;   // Full error details (only for BYOK users)
+  is_byok?: boolean;        // Whether user's own API key was used
+  provider?: string;        // LLM provider (only for BYOK users)
+  model?: string;           // LLM model (only for BYOK users)
 }
 
 // Token getter function - will be set by the auth hook
@@ -37,20 +42,83 @@ async function request<T>(
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Request failed' }));
-    throw { error: error.error || error.message || 'Request failed', status: response.status } as ApiError;
+    // Provide helpful error messages for common HTTP errors
+    const statusMessages: Record<number, string> = {
+      400: 'Invalid request - please check your input',
+      401: 'Authentication required - please sign in',
+      403: 'Access denied - you may not have permission for this action',
+      404: 'Resource not found',
+      408: 'Request timed out - please try again',
+      429: 'Too many requests - please wait and try again',
+      500: 'Server error - please try again later',
+      502: 'Service temporarily unavailable - the extraction provider may be down',
+      503: 'Service unavailable - please try again later',
+      504: 'Request timed out - extraction took too long. Try a simpler schema or check if the URL is accessible',
+    };
+
+    const error = await response.json().catch(() => ({}));
+    const errorMessage = error.error || error.message || statusMessages[response.status] || `Request failed (${response.status})`;
+    throw { error: errorMessage, status: response.status } as ApiError;
   }
 
   return response.json();
 }
 
-// Extraction
+// Extraction with client-side timeout
 export async function extract(url: string, schema: object, llmConfig?: LLMConfigInput) {
-  return request<ExtractResult>('POST', '/api/v1/extract', {
-    url,
-    schema,
-    llm_config: llmConfig,
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute client timeout
+
+  try {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+
+    if (getToken) {
+      const token = await getToken();
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/v1/extract`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ url, schema, llm_config: llmConfig }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const statusMessages: Record<number, string> = {
+        400: 'Invalid request - please check your schema format',
+        502: 'Extraction provider unavailable - try a different model in your fallback chain',
+        504: 'Extraction timed out - the page may be too complex or the model too slow',
+      };
+      const errorBody = await response.json().catch(() => ({}));
+      // Use detail field from our custom ExtractionError, falling back to other fields
+      const errorMessage = errorBody.detail || errorBody.error || errorBody.message || statusMessages[response.status] || `Extraction failed (${response.status})`;
+      const apiError: ApiError = {
+        error: errorMessage,
+        status: response.status,
+        error_category: errorBody.error_category,
+        error_details: errorBody.error_details,
+        is_byok: errorBody.is_byok,
+        provider: errorBody.provider,
+        model: errorBody.model,
+      };
+      throw apiError;
+    }
+
+    return response.json() as Promise<ExtractResult>;
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw { error: 'Extraction timed out after 2 minutes. The page may be complex or the LLM provider slow. Try using Crawl mode for long-running extractions.', status: 408 };
+    }
+    throw err;
+  }
 }
 
 // Crawl Jobs
@@ -138,6 +206,7 @@ export async function deleteServiceKey(provider: string) {
 
 // Types
 export interface ExtractResult {
+  job_id: string;  // Job ID for history/tracking
   data: unknown;
   url: string;
   fetched_at: string;
@@ -572,4 +641,3 @@ export async function deleteSavedSite(id: string) {
   return request<{ success: boolean }>('DELETE', `/api/v1/sites/${id}`);
 }
 
-export type { ApiError };

@@ -1,0 +1,48 @@
+[
+  {
+    "type": "job_id",
+    "pattern": "debug_*",
+    "level": "debug",
+    "output_level": "info",
+    "enabled": false
+  },
+  {
+    "type": "source:file",
+    "pattern": "internal/service/*",
+    "level": "debug",
+    "enabled": false
+  },
+  {
+    "type": "source:file",
+    "pattern": "@github.com/jmylchreest/refyne/*",
+    "level": "debug",
+    "output_level": "info",
+    "enabled": false
+  },
+  {
+    "type": "source:function",
+    "pattern": "*Extraction*",
+    "level": "debug",
+    "output_level": "info",
+    "enabled": false
+  },
+  {
+    "type": "context:request_id",
+    "pattern": "*",
+    "level": "debug",
+    "enabled": false
+  },
+  {
+    "type": "user_id",
+    "pattern": "user_*",
+    "level": "debug",
+    "enabled": false
+  },
+  {
+    "type": "url",
+    "pattern": "*example.com*",
+    "level": "debug",
+    "output_level": "info",
+    "enabled": false
+  }
+]

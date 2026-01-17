@@ -120,7 +120,9 @@ func (e *LLMError) IsQuotaError() bool {
 
 // ClassifyError analyzes an error from an LLM call and returns a classified LLMError.
 // This handles OpenRouter-specific errors and other provider errors.
-func ClassifyError(err error, provider, model string, statusCode int) *LLMError {
+// The isBYOK parameter indicates whether the user is using their own API key - if true,
+// they should see actual error details rather than generic "free tier" messages.
+func ClassifyError(err error, provider, model string, statusCode int, isBYOK bool) *LLMError {
 	if err == nil {
 		return nil
 	}
@@ -134,8 +136,9 @@ func ClassifyError(err error, provider, model string, statusCode int) *LLMError 
 		RawMessage: err.Error(),
 	}
 
-	// Check if using free model
-	isFreeTier := strings.Contains(model, ":free") || provider == "credits"
+	// Check if using free model WITHOUT BYOK - BYOK users should see actual errors
+	// even when using free models, since they're paying for their own usage
+	isFreeTier := (strings.Contains(model, ":free") || provider == "credits") && !isBYOK
 
 	// First check error message for specific patterns that override status code classification
 	// This is important because 400 Bad Request can mean many different things
@@ -338,7 +341,8 @@ func classifyByErrorMessage(llmErr *LLMError, errStr string, isFreeTier bool) *L
 
 // WrapError wraps a raw error into an LLMError with classification.
 // This is a convenience function for use in services.
-func WrapError(err error, provider, model string) *LLMError {
+// The isBYOK parameter indicates whether the user is using their own API key.
+func WrapError(err error, provider, model string, isBYOK bool) *LLMError {
 	if err == nil {
 		return nil
 	}
@@ -352,7 +356,7 @@ func WrapError(err error, provider, model string) *LLMError {
 	// Check for HTTP status in error message (common pattern)
 	statusCode := extractStatusCode(err.Error())
 
-	return ClassifyError(err, provider, model, statusCode)
+	return ClassifyError(err, provider, model, statusCode, isBYOK)
 }
 
 // extractStatusCode attempts to extract an HTTP status code from an error message.

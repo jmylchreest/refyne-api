@@ -1,10 +1,201 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { useTheme } from 'next-themes';
+import yaml from 'js-yaml';
 import { cn } from '@/lib/utils';
 
 type OutputFormat = 'json' | 'jsonl' | 'yaml';
+type SchemaFormat = 'json' | 'yaml';
+
+// Single source of truth for schema definition
+const SCHEMA_DATA = {
+  name: 'Product',
+  description: 'Extract product listing details including pricing and shipping.',
+  fields: [
+    { name: 'title', type: 'string', required: true },
+    {
+      name: 'price',
+      type: 'object',
+      required: true,
+      properties: {
+        amount: { type: 'number' },
+        currency: { type: 'string' },
+      },
+    },
+    {
+      name: 'volume_pricing',
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          min_qty: { type: 'integer' },
+          amount: { type: 'number' },
+          currency: { type: 'string' },
+        },
+      },
+    },
+    {
+      name: 'shipping',
+      type: 'object',
+      properties: {
+        cost: { type: 'number' },
+        currency: { type: 'string' },
+        estimated_days: { type: 'string' },
+      },
+    },
+  ],
+};
+
+// Single source of truth for output example
+const OUTPUT_DATA = {
+  title: 'Premium Widget Pro',
+  price: { amount: 49.99, currency: 'USD' },
+  volume_pricing: [
+    { min_qty: 10, amount: 44.99, currency: 'USD' },
+    { min_qty: 50, amount: 39.99, currency: 'USD' },
+  ],
+  shipping: { cost: 5.99, currency: 'USD', estimated_days: '3-5 business days' },
+};
+
+// Additional items for JSONL format
+const JSONL_ITEMS = [
+  OUTPUT_DATA,
+  { title: 'Basic Widget', price: { amount: 19.99, currency: 'USD' } },
+  { title: 'Enterprise Widget', price: { amount: 199.99, currency: 'USD' } },
+];
+
+// Color theme types for syntax highlighting
+type ColorTheme = 'schema' | 'output';
+
+// Syntax highlighting component that renders colored code
+function SyntaxHighlight({
+  content,
+  format,
+  theme,
+}: {
+  content: string;
+  format: 'json' | 'yaml' | 'jsonl';
+  theme: ColorTheme;
+}) {
+  const colors = theme === 'schema'
+    ? {
+        key: 'text-indigo-600 dark:text-indigo-400',
+        string: 'text-amber-600 dark:text-amber-400',
+        number: 'text-blue-600 dark:text-blue-400',
+        boolean: 'text-purple-600 dark:text-purple-400',
+        punctuation: 'text-zinc-400',
+        bracket: 'text-zinc-500',
+      }
+    : {
+        key: 'text-emerald-400',
+        string: 'text-amber-300',
+        number: 'text-blue-400',
+        boolean: 'text-purple-400',
+        punctuation: 'text-zinc-500',
+        bracket: 'text-zinc-500',
+      };
+
+  // Tokenize and colorize the content
+  const highlighted = useMemo(() => {
+    if (format === 'yaml') {
+      return content.split('\n').map((line, i) => {
+        // Match YAML patterns: key: value
+        const parts: React.ReactNode[] = [];
+        let remaining = line;
+        let keyId = 0;
+
+        // Handle list items prefix
+        const listMatch = remaining.match(/^(\s*)(- )(.*)/);
+        if (listMatch) {
+          parts.push(<span key={`indent-${i}`}>{listMatch[1]}</span>);
+          parts.push(<span key={`dash-${i}`} className={colors.punctuation}>- </span>);
+          remaining = listMatch[3];
+        }
+
+        // Handle key: value pairs
+        const kvMatch = remaining.match(/^(\s*)([a-zA-Z_][a-zA-Z0-9_]*)(:)(\s*)(.*)/);
+        if (kvMatch) {
+          const [, indent, key, colon, space, value] = kvMatch;
+          parts.push(<span key={`ind-${i}`}>{indent}</span>);
+          parts.push(<span key={`key-${i}-${keyId++}`} className={colors.key}>{key}</span>);
+          parts.push(<span key={`col-${i}`} className={colors.punctuation}>{colon}</span>);
+          parts.push(<span key={`sp-${i}`}>{space}</span>);
+
+          // Color the value
+          if (value) {
+            if (value === 'true' || value === 'false') {
+              parts.push(<span key={`val-${i}`} className={colors.boolean}>{value}</span>);
+            } else if (/^-?\d+(\.\d+)?$/.test(value)) {
+              parts.push(<span key={`val-${i}`} className={colors.number}>{value}</span>);
+            } else if (value === '|' || value === '>') {
+              parts.push(<span key={`val-${i}`} className={colors.punctuation}>{value}</span>);
+            } else {
+              parts.push(<span key={`val-${i}`} className={colors.string}>{value}</span>);
+            }
+          }
+        } else if (parts.length === 0) {
+          // Plain indented content (like multiline strings)
+          parts.push(<span key={`plain-${i}`} className={`${colors.string} italic`}>{remaining}</span>);
+        } else if (remaining) {
+          // Rest after list item dash
+          const restKv = remaining.match(/^([a-zA-Z_][a-zA-Z0-9_]*)(:)(\s*)(.*)/);
+          if (restKv) {
+            const [, key, colon, space, value] = restKv;
+            parts.push(<span key={`rkey-${i}`} className={colors.key}>{key}</span>);
+            parts.push(<span key={`rcol-${i}`} className={colors.punctuation}>{colon}</span>);
+            parts.push(<span key={`rsp-${i}`}>{space}</span>);
+            if (value) {
+              if (/^-?\d+(\.\d+)?$/.test(value)) {
+                parts.push(<span key={`rval-${i}`} className={colors.number}>{value}</span>);
+              } else {
+                parts.push(<span key={`rval-${i}`} className={colors.string}>{value}</span>);
+              }
+            }
+          } else {
+            parts.push(<span key={`rest-${i}`}>{remaining}</span>);
+          }
+        }
+
+        return <div key={i}>{parts.length > 0 ? parts : line || '\u00A0'}</div>;
+      });
+    }
+
+    // JSON/JSONL tokenizer
+    const tokens: React.ReactNode[] = [];
+    let idx = 0;
+    const regex = /("(?:[^"\\]|\\.)*")|(\d+\.?\d*)|(\btrue\b|\bfalse\b|\bnull\b)|([{}\[\]:,])|(\s+)/g;
+    let match;
+    let inKey = false;
+
+    while ((match = regex.exec(content)) !== null) {
+      const [full, str, num, bool, punct, space] = match;
+      if (str) {
+        // Check if this is a key (followed by colon)
+        const afterMatch = content.slice(regex.lastIndex);
+        const isKey = /^\s*:/.test(afterMatch);
+        tokens.push(
+          <span key={idx++} className={isKey ? colors.key : colors.string}>
+            {str}
+          </span>
+        );
+        inKey = isKey;
+      } else if (num) {
+        tokens.push(<span key={idx++} className={colors.number}>{num}</span>);
+      } else if (bool) {
+        tokens.push(<span key={idx++} className={colors.boolean}>{bool}</span>);
+      } else if (punct) {
+        tokens.push(<span key={idx++} className={punct === ':' || punct === ',' ? colors.punctuation : colors.bracket}>{punct}</span>);
+      } else if (space) {
+        tokens.push(<span key={idx++}>{space}</span>);
+      }
+    }
+
+    return tokens;
+  }, [content, format, colors]);
+
+  return <code>{highlighted}</code>;
+}
 
 interface DataParticle {
   x: number;
@@ -263,10 +454,15 @@ function WebsiteSkeleton() {
   );
 }
 
-type SchemaFormat = 'json' | 'yaml';
-
 function SchemaDefinition({ compact = false }: { compact?: boolean }) {
   const [format, setFormat] = useState<SchemaFormat>('yaml');
+
+  const content = useMemo(() => {
+    if (format === 'yaml') {
+      return yaml.dump(SCHEMA_DATA, { lineWidth: -1, quotingType: '"', forceQuotes: false });
+    }
+    return JSON.stringify(SCHEMA_DATA, null, 2);
+  }, [format]);
 
   return (
     <div className={cn(
@@ -296,221 +492,13 @@ function SchemaDefinition({ compact = false }: { compact?: boolean }) {
       </div>
       <div className="overflow-y-auto h-[calc(100%-2.5rem)] schema-scrollbar">
         <pre className="font-mono text-[11px] leading-relaxed">
-          {format === 'yaml' ? <SchemaYAML /> : <SchemaJSON />}
+          <SyntaxHighlight content={content} format={format} theme="schema" />
         </pre>
       </div>
     </div>
   );
 }
 
-function SchemaYAML() {
-  return (
-    <code>
-      <span className="text-indigo-600 dark:text-indigo-400">name</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-amber-600 dark:text-amber-400">Product</span>{'\n'}
-      <span className="text-indigo-600 dark:text-indigo-400">description</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-zinc-500 dark:text-zinc-400">|</span>{'\n'}
-      <span className="text-zinc-500 dark:text-zinc-400 italic">{'  '}Extract product listing details</span>{'\n'}
-      <span className="text-zinc-500 dark:text-zinc-400 italic">{'  '}including pricing and shipping.</span>{'\n'}
-      {'\n'}
-      <span className="text-indigo-600 dark:text-indigo-400">fields</span>
-      <span className="text-zinc-400">:</span>{'\n'}
-      <span className="text-zinc-400">  - </span>
-      <span className="text-indigo-600 dark:text-indigo-400">name</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-amber-600 dark:text-amber-400">title</span>{'\n'}
-      <span className="text-zinc-400">    </span>
-      <span className="text-indigo-600 dark:text-indigo-400">type</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-blue-600 dark:text-blue-400">string</span>{'\n'}
-      <span className="text-zinc-400">    </span>
-      <span className="text-indigo-600 dark:text-indigo-400">required</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-purple-600 dark:text-purple-400">true</span>{'\n'}
-      {'\n'}
-      <span className="text-zinc-400">  - </span>
-      <span className="text-indigo-600 dark:text-indigo-400">name</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-amber-600 dark:text-amber-400">price</span>{'\n'}
-      <span className="text-zinc-400">    </span>
-      <span className="text-indigo-600 dark:text-indigo-400">type</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-blue-600 dark:text-blue-400">object</span>{'\n'}
-      <span className="text-zinc-400">    </span>
-      <span className="text-indigo-600 dark:text-indigo-400">required</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-purple-600 dark:text-purple-400">true</span>{'\n'}
-      <span className="text-zinc-400">    </span>
-      <span className="text-indigo-600 dark:text-indigo-400">properties</span>
-      <span className="text-zinc-400">:</span>{'\n'}
-      <span className="text-zinc-400">      </span>
-      <span className="text-indigo-600 dark:text-indigo-400">amount</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-blue-600 dark:text-blue-400">number</span>{'\n'}
-      <span className="text-zinc-400">      </span>
-      <span className="text-indigo-600 dark:text-indigo-400">currency</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-blue-600 dark:text-blue-400">string</span>{'\n'}
-      {'\n'}
-      <span className="text-zinc-400">  - </span>
-      <span className="text-indigo-600 dark:text-indigo-400">name</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-amber-600 dark:text-amber-400">volume_pricing</span>{'\n'}
-      <span className="text-zinc-400">    </span>
-      <span className="text-indigo-600 dark:text-indigo-400">type</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-blue-600 dark:text-blue-400">array</span>{'\n'}
-      <span className="text-zinc-400">    </span>
-      <span className="text-indigo-600 dark:text-indigo-400">items</span>
-      <span className="text-zinc-400">:</span>{'\n'}
-      <span className="text-zinc-400">      </span>
-      <span className="text-indigo-600 dark:text-indigo-400">type</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-blue-600 dark:text-blue-400">object</span>{'\n'}
-      <span className="text-zinc-400">      </span>
-      <span className="text-indigo-600 dark:text-indigo-400">properties</span>
-      <span className="text-zinc-400">:</span>{'\n'}
-      <span className="text-zinc-400">        </span>
-      <span className="text-indigo-600 dark:text-indigo-400">min_qty</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-blue-600 dark:text-blue-400">integer</span>{'\n'}
-      <span className="text-zinc-400">        </span>
-      <span className="text-indigo-600 dark:text-indigo-400">amount</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-blue-600 dark:text-blue-400">number</span>{'\n'}
-      <span className="text-zinc-400">        </span>
-      <span className="text-indigo-600 dark:text-indigo-400">currency</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-blue-600 dark:text-blue-400">string</span>{'\n'}
-      {'\n'}
-      <span className="text-zinc-400">  - </span>
-      <span className="text-indigo-600 dark:text-indigo-400">name</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-amber-600 dark:text-amber-400">shipping</span>{'\n'}
-      <span className="text-zinc-400">    </span>
-      <span className="text-indigo-600 dark:text-indigo-400">type</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-blue-600 dark:text-blue-400">object</span>{'\n'}
-      <span className="text-zinc-400">    </span>
-      <span className="text-indigo-600 dark:text-indigo-400">properties</span>
-      <span className="text-zinc-400">:</span>{'\n'}
-      <span className="text-zinc-400">      </span>
-      <span className="text-indigo-600 dark:text-indigo-400">cost</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-blue-600 dark:text-blue-400">number</span>{'\n'}
-      <span className="text-zinc-400">      </span>
-      <span className="text-indigo-600 dark:text-indigo-400">currency</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-blue-600 dark:text-blue-400">string</span>{'\n'}
-      <span className="text-zinc-400">      </span>
-      <span className="text-indigo-600 dark:text-indigo-400">estimated_days</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-blue-600 dark:text-blue-400">string</span>
-    </code>
-  );
-}
-
-function SchemaJSON() {
-  return (
-    <code>
-      <span className="text-zinc-500">{'{'}</span>{'\n'}
-      {'  '}<span className="text-indigo-600 dark:text-indigo-400">&quot;name&quot;</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-amber-600 dark:text-amber-400">&quot;Product&quot;</span>
-      <span className="text-zinc-500">,</span>{'\n'}
-      {'  '}<span className="text-indigo-600 dark:text-indigo-400">&quot;description&quot;</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-amber-600 dark:text-amber-400">&quot;Extract product listing details&quot;</span>
-      <span className="text-zinc-500">,</span>{'\n'}
-      {'  '}<span className="text-indigo-600 dark:text-indigo-400">&quot;fields&quot;</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-zinc-500">[</span>{'\n'}
-      {'    '}<span className="text-zinc-500">{'{'}</span>{'\n'}
-      {'      '}<span className="text-indigo-600 dark:text-indigo-400">&quot;name&quot;</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-amber-600 dark:text-amber-400">&quot;title&quot;</span>
-      <span className="text-zinc-500">,</span>{'\n'}
-      {'      '}<span className="text-indigo-600 dark:text-indigo-400">&quot;type&quot;</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-blue-600 dark:text-blue-400">&quot;string&quot;</span>
-      <span className="text-zinc-500">,</span>{'\n'}
-      {'      '}<span className="text-indigo-600 dark:text-indigo-400">&quot;required&quot;</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-purple-600 dark:text-purple-400">true</span>{'\n'}
-      {'    '}<span className="text-zinc-500">{'}'}</span>
-      <span className="text-zinc-500">,</span>{'\n'}
-      {'    '}<span className="text-zinc-500">{'{'}</span>{'\n'}
-      {'      '}<span className="text-indigo-600 dark:text-indigo-400">&quot;name&quot;</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-amber-600 dark:text-amber-400">&quot;price&quot;</span>
-      <span className="text-zinc-500">,</span>{'\n'}
-      {'      '}<span className="text-indigo-600 dark:text-indigo-400">&quot;type&quot;</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-blue-600 dark:text-blue-400">&quot;object&quot;</span>
-      <span className="text-zinc-500">,</span>{'\n'}
-      {'      '}<span className="text-indigo-600 dark:text-indigo-400">&quot;required&quot;</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-purple-600 dark:text-purple-400">true</span>
-      <span className="text-zinc-500">,</span>{'\n'}
-      {'      '}<span className="text-indigo-600 dark:text-indigo-400">&quot;properties&quot;</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-zinc-500">{'{'}</span>{'\n'}
-      {'        '}<span className="text-indigo-600 dark:text-indigo-400">&quot;amount&quot;</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-zinc-500">{'{'}</span>
-      <span className="text-indigo-600 dark:text-indigo-400">&quot;type&quot;</span>
-      <span className="text-zinc-400">:</span>
-      <span className="text-blue-600 dark:text-blue-400">&quot;number&quot;</span>
-      <span className="text-zinc-500">{'}'}</span>
-      <span className="text-zinc-500">,</span>{'\n'}
-      {'        '}<span className="text-indigo-600 dark:text-indigo-400">&quot;currency&quot;</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-zinc-500">{'{'}</span>
-      <span className="text-indigo-600 dark:text-indigo-400">&quot;type&quot;</span>
-      <span className="text-zinc-400">:</span>
-      <span className="text-blue-600 dark:text-blue-400">&quot;string&quot;</span>
-      <span className="text-zinc-500">{'}'}</span>{'\n'}
-      {'      '}<span className="text-zinc-500">{'}'}</span>{'\n'}
-      {'    '}<span className="text-zinc-500">{'}'}</span>
-      <span className="text-zinc-500">,</span>{'\n'}
-      {'    '}<span className="text-zinc-500">{'{'}</span>{'\n'}
-      {'      '}<span className="text-indigo-600 dark:text-indigo-400">&quot;name&quot;</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-amber-600 dark:text-amber-400">&quot;volume_pricing&quot;</span>
-      <span className="text-zinc-500">,</span>{'\n'}
-      {'      '}<span className="text-indigo-600 dark:text-indigo-400">&quot;type&quot;</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-blue-600 dark:text-blue-400">&quot;array&quot;</span>
-      <span className="text-zinc-500">,</span>{'\n'}
-      {'      '}<span className="text-indigo-600 dark:text-indigo-400">&quot;items&quot;</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-zinc-500">{'{'}</span>
-      <span className="text-zinc-500">...</span>
-      <span className="text-zinc-500">{'}'}</span>{'\n'}
-      {'    '}<span className="text-zinc-500">{'}'}</span>
-      <span className="text-zinc-500">,</span>{'\n'}
-      {'    '}<span className="text-zinc-500">{'{'}</span>{'\n'}
-      {'      '}<span className="text-indigo-600 dark:text-indigo-400">&quot;name&quot;</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-amber-600 dark:text-amber-400">&quot;shipping&quot;</span>
-      <span className="text-zinc-500">,</span>{'\n'}
-      {'      '}<span className="text-indigo-600 dark:text-indigo-400">&quot;type&quot;</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-blue-600 dark:text-blue-400">&quot;object&quot;</span>
-      <span className="text-zinc-500">,</span>{'\n'}
-      {'      '}<span className="text-indigo-600 dark:text-indigo-400">&quot;properties&quot;</span>
-      <span className="text-zinc-400">: </span>
-      <span className="text-zinc-500">{'{'}</span>
-      <span className="text-zinc-500">...</span>
-      <span className="text-zinc-500">{'}'}</span>{'\n'}
-      {'    '}<span className="text-zinc-500">{'}'}</span>{'\n'}
-      {'  '}<span className="text-zinc-500">]</span>{'\n'}
-      <span className="text-zinc-500">{'}'}</span>
-    </code>
-  );
-}
 
 function SchemaArrow({ direction = 'right' }: { direction?: 'right' | 'down' }) {
   if (direction === 'down') {
@@ -561,6 +549,16 @@ function StructuredOutput() {
     yaml: 'response.yaml',
   };
 
+  const content = useMemo(() => {
+    if (format === 'yaml') {
+      return yaml.dump(OUTPUT_DATA, { lineWidth: -1, quotingType: '"', forceQuotes: false });
+    }
+    if (format === 'jsonl') {
+      return JSONL_ITEMS.map((item) => JSON.stringify(item)).join('\n');
+    }
+    return JSON.stringify(OUTPUT_DATA, null, 2);
+  }, [format]);
+
   return (
     <div className="relative rounded-lg border border-emerald-500/30 bg-zinc-950/70 backdrop-blur-sm p-3 sm:p-5 overflow-hidden h-[280px] sm:h-[360px] lg:h-[480px]">
       {/* Terminal header with format tabs */}
@@ -592,178 +590,7 @@ function StructuredOutput() {
       {/* Content based on format */}
       <div className="mt-3 overflow-y-auto h-[calc(100%-3rem)] output-scrollbar">
         <pre className="font-[family-name:var(--font-code)] text-xs leading-relaxed">
-          {format === 'json' && (
-            <code>
-              <span className="text-zinc-500">{'{'}</span>{'\n'}
-              {'  '}<span className="text-emerald-400">&quot;title&quot;</span>
-              <span className="text-zinc-500">: </span>
-              <span className="text-amber-300">&quot;Premium Widget Pro&quot;</span>
-              <span className="text-zinc-500">,</span>{'\n'}
-              {'  '}<span className="text-emerald-400">&quot;price&quot;</span>
-              <span className="text-zinc-500">: {'{'}</span>{'\n'}
-              {'    '}<span className="text-emerald-400">&quot;amount&quot;</span>
-              <span className="text-zinc-500">: </span>
-              <span className="text-blue-400">49.99</span>
-              <span className="text-zinc-500">,</span>{'\n'}
-              {'    '}<span className="text-emerald-400">&quot;currency&quot;</span>
-              <span className="text-zinc-500">: </span>
-              <span className="text-amber-300">&quot;USD&quot;</span>{'\n'}
-              {'  '}<span className="text-zinc-500">{'}'}</span>
-              <span className="text-zinc-500">,</span>{'\n'}
-              {'  '}<span className="text-emerald-400">&quot;volume_pricing&quot;</span>
-              <span className="text-zinc-500">: [</span>{'\n'}
-              {'    '}<span className="text-zinc-500">{'{'}</span>
-              <span className="text-emerald-400">&quot;min_qty&quot;</span>
-              <span className="text-zinc-500">:</span>
-              <span className="text-blue-400">10</span>
-              <span className="text-zinc-500">,</span>
-              <span className="text-emerald-400">&quot;amount&quot;</span>
-              <span className="text-zinc-500">:</span>
-              <span className="text-blue-400">44.99</span>
-              <span className="text-zinc-500">,</span>
-              <span className="text-emerald-400">&quot;currency&quot;</span>
-              <span className="text-zinc-500">:</span>
-              <span className="text-amber-300">&quot;USD&quot;</span>
-              <span className="text-zinc-500">{'}'}</span>
-              <span className="text-zinc-500">,</span>{'\n'}
-              {'    '}<span className="text-zinc-500">{'{'}</span>
-              <span className="text-emerald-400">&quot;min_qty&quot;</span>
-              <span className="text-zinc-500">:</span>
-              <span className="text-blue-400">50</span>
-              <span className="text-zinc-500">,</span>
-              <span className="text-emerald-400">&quot;amount&quot;</span>
-              <span className="text-zinc-500">:</span>
-              <span className="text-blue-400">39.99</span>
-              <span className="text-zinc-500">,</span>
-              <span className="text-emerald-400">&quot;currency&quot;</span>
-              <span className="text-zinc-500">:</span>
-              <span className="text-amber-300">&quot;USD&quot;</span>
-              <span className="text-zinc-500">{'}'}</span>{'\n'}
-              {'  '}<span className="text-zinc-500">]</span>
-              <span className="text-zinc-500">,</span>{'\n'}
-              {'  '}<span className="text-emerald-400">&quot;shipping&quot;</span>
-              <span className="text-zinc-500">: {'{'}</span>{'\n'}
-              {'    '}<span className="text-emerald-400">&quot;cost&quot;</span>
-              <span className="text-zinc-500">: </span>
-              <span className="text-blue-400">5.99</span>
-              <span className="text-zinc-500">,</span>{'\n'}
-              {'    '}<span className="text-emerald-400">&quot;currency&quot;</span>
-              <span className="text-zinc-500">: </span>
-              <span className="text-amber-300">&quot;USD&quot;</span>
-              <span className="text-zinc-500">,</span>{'\n'}
-              {'    '}<span className="text-emerald-400">&quot;estimated_days&quot;</span>
-              <span className="text-zinc-500">: </span>
-              <span className="text-amber-300">&quot;3-5 business days&quot;</span>{'\n'}
-              {'  '}<span className="text-zinc-500">{'}'}</span>{'\n'}
-              <span className="text-zinc-500">{'}'}</span>
-            </code>
-          )}
-          {format === 'jsonl' && (
-            <code>
-              <span className="text-zinc-500">{'{'}</span>
-              <span className="text-emerald-400">&quot;title&quot;</span>
-              <span className="text-zinc-500">:</span>
-              <span className="text-amber-300">&quot;Premium Widget Pro&quot;</span>
-              <span className="text-zinc-500">,</span>
-              <span className="text-emerald-400">&quot;price&quot;</span>
-              <span className="text-zinc-500">:{'{'}</span>
-              <span className="text-emerald-400">&quot;amount&quot;</span>
-              <span className="text-zinc-500">:</span>
-              <span className="text-blue-400">49.99</span>
-              <span className="text-zinc-500">,</span>
-              <span className="text-emerald-400">&quot;currency&quot;</span>
-              <span className="text-zinc-500">:</span>
-              <span className="text-amber-300">&quot;USD&quot;</span>
-              <span className="text-zinc-500">{'},...}'}</span>{'\n'}
-              <span className="text-zinc-500">{'{'}</span>
-              <span className="text-emerald-400">&quot;title&quot;</span>
-              <span className="text-zinc-500">:</span>
-              <span className="text-amber-300">&quot;Basic Widget&quot;</span>
-              <span className="text-zinc-500">,</span>
-              <span className="text-emerald-400">&quot;price&quot;</span>
-              <span className="text-zinc-500">:{'{'}</span>
-              <span className="text-emerald-400">&quot;amount&quot;</span>
-              <span className="text-zinc-500">:</span>
-              <span className="text-blue-400">19.99</span>
-              <span className="text-zinc-500">,</span>
-              <span className="text-emerald-400">&quot;currency&quot;</span>
-              <span className="text-zinc-500">:</span>
-              <span className="text-amber-300">&quot;USD&quot;</span>
-              <span className="text-zinc-500">{'},...}'}</span>{'\n'}
-              <span className="text-zinc-500">{'{'}</span>
-              <span className="text-emerald-400">&quot;title&quot;</span>
-              <span className="text-zinc-500">:</span>
-              <span className="text-amber-300">&quot;Enterprise Widget&quot;</span>
-              <span className="text-zinc-500">,</span>
-              <span className="text-emerald-400">&quot;price&quot;</span>
-              <span className="text-zinc-500">:{'{'}</span>
-              <span className="text-emerald-400">&quot;amount&quot;</span>
-              <span className="text-zinc-500">:</span>
-              <span className="text-blue-400">199.99</span>
-              <span className="text-zinc-500">,</span>
-              <span className="text-emerald-400">&quot;currency&quot;</span>
-              <span className="text-zinc-500">:</span>
-              <span className="text-amber-300">&quot;USD&quot;</span>
-              <span className="text-zinc-500">{'},...}'}</span>
-            </code>
-          )}
-          {format === 'yaml' && (
-            <code>
-              <span className="text-emerald-400">title</span>
-              <span className="text-zinc-500">: </span>
-              <span className="text-amber-300">Premium Widget Pro</span>{'\n'}
-              <span className="text-emerald-400">price</span>
-              <span className="text-zinc-500">:</span>{'\n'}
-              <span className="text-zinc-500">  </span>
-              <span className="text-emerald-400">amount</span>
-              <span className="text-zinc-500">: </span>
-              <span className="text-blue-400">49.99</span>{'\n'}
-              <span className="text-zinc-500">  </span>
-              <span className="text-emerald-400">currency</span>
-              <span className="text-zinc-500">: </span>
-              <span className="text-amber-300">USD</span>{'\n'}
-              <span className="text-emerald-400">volume_pricing</span>
-              <span className="text-zinc-500">:</span>{'\n'}
-              <span className="text-zinc-500">  - </span>
-              <span className="text-emerald-400">min_qty</span>
-              <span className="text-zinc-500">: </span>
-              <span className="text-blue-400">10</span>{'\n'}
-              <span className="text-zinc-500">    </span>
-              <span className="text-emerald-400">amount</span>
-              <span className="text-zinc-500">: </span>
-              <span className="text-blue-400">44.99</span>{'\n'}
-              <span className="text-zinc-500">    </span>
-              <span className="text-emerald-400">currency</span>
-              <span className="text-zinc-500">: </span>
-              <span className="text-amber-300">USD</span>{'\n'}
-              <span className="text-zinc-500">  - </span>
-              <span className="text-emerald-400">min_qty</span>
-              <span className="text-zinc-500">: </span>
-              <span className="text-blue-400">50</span>{'\n'}
-              <span className="text-zinc-500">    </span>
-              <span className="text-emerald-400">amount</span>
-              <span className="text-zinc-500">: </span>
-              <span className="text-blue-400">39.99</span>{'\n'}
-              <span className="text-zinc-500">    </span>
-              <span className="text-emerald-400">currency</span>
-              <span className="text-zinc-500">: </span>
-              <span className="text-amber-300">USD</span>{'\n'}
-              <span className="text-emerald-400">shipping</span>
-              <span className="text-zinc-500">:</span>{'\n'}
-              <span className="text-zinc-500">  </span>
-              <span className="text-emerald-400">cost</span>
-              <span className="text-zinc-500">: </span>
-              <span className="text-blue-400">5.99</span>{'\n'}
-              <span className="text-zinc-500">  </span>
-              <span className="text-emerald-400">currency</span>
-              <span className="text-zinc-500">: </span>
-              <span className="text-amber-300">USD</span>{'\n'}
-              <span className="text-zinc-500">  </span>
-              <span className="text-emerald-400">estimated_days</span>
-              <span className="text-zinc-500">: </span>
-              <span className="text-amber-300">3-5 business days</span>
-            </code>
-          )}
+          <SyntaxHighlight content={content} format={format} theme="output" />
         </pre>
       </div>
 

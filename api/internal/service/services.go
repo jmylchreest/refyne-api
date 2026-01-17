@@ -30,6 +30,7 @@ type Services struct {
 	Storage    *StorageService
 	UserLLM    *UserLLMService
 	Sitemap    *SitemapService
+	Pricing    *PricingService
 }
 
 // NewServices creates all service instances.
@@ -51,8 +52,13 @@ func NewServices(cfg *config.Config, repos *repository.Repositories, logger *slo
 		orClient = llm.NewOpenRouterClient(cfg.ServiceOpenRouterKey)
 	}
 
+	// Create pricing service for model cost estimation
+	pricingSvc := NewPricingService(PricingServiceConfig{
+		OpenRouterAPIKey: cfg.ServiceOpenRouterKey,
+	}, logger)
+
 	// Create billing service
-	billingSvc := NewBillingService(repos, &billingCfg, orClient, logger)
+	billingSvc := NewBillingService(repos, &billingCfg, orClient, pricingSvc, logger)
 
 	// Create extraction service with billing dependency
 	extractionSvc := NewExtractionServiceWithBilling(cfg, repos, billingSvc, logger)
@@ -96,5 +102,7 @@ func NewServices(cfg *config.Config, repos *repository.Repositories, logger *slo
 		Storage:    storageSvc,
 		UserLLM:    userLLMSvc,
 		Sitemap:    sitemapSvc,
+		Pricing:    pricingSvc,
 	}, nil
 }
+

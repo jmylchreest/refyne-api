@@ -21,18 +21,20 @@ import (
 // - Cost estimation and calculation
 // - Schema snapshot management
 type BillingService struct {
-	repos         *repository.Repositories
-	billingCfg    *config.BillingConfig
-	orClient      *llm.OpenRouterClient
-	logger        *slog.Logger
+	repos      *repository.Repositories
+	billingCfg *config.BillingConfig
+	orClient   *llm.OpenRouterClient
+	pricingSvc *PricingService
+	logger     *slog.Logger
 }
 
 // NewBillingService creates a new billing service.
-func NewBillingService(repos *repository.Repositories, billingCfg *config.BillingConfig, orClient *llm.OpenRouterClient, logger *slog.Logger) *BillingService {
+func NewBillingService(repos *repository.Repositories, billingCfg *config.BillingConfig, orClient *llm.OpenRouterClient, pricingSvc *PricingService, logger *slog.Logger) *BillingService {
 	return &BillingService{
 		repos:      repos,
 		billingCfg: billingCfg,
 		orClient:   orClient,
+		pricingSvc: pricingSvc,
 		logger:     logger,
 	}
 }
@@ -111,9 +113,17 @@ func (s *BillingService) DeductUsage(ctx context.Context, userID string, amountU
 // ========================================
 
 // EstimateCost provides a conservative cost estimate for pre-flight balance checks.
-func (s *BillingService) EstimateCost(pages int, model string) float64 {
+func (s *BillingService) EstimateCost(pages int, model, provider string) float64 {
 	const avgTokensPerPage = 2000
-	baseCost := llm.EstimateCost(avgTokensPerPage*pages, avgTokensPerPage*pages/4, model)
+	inputTokens := avgTokensPerPage * pages
+	outputTokens := avgTokensPerPage * pages / 4
+
+	var baseCost float64
+	if s.pricingSvc != nil {
+		baseCost = s.pricingSvc.EstimateCost(provider, model, inputTokens, outputTokens)
+	} else {
+		baseCost = llm.EstimateCost(inputTokens, outputTokens, model)
+	}
 	// Add maximum possible markup (100% for free tier)
 	return baseCost * 2
 }
@@ -127,10 +137,59 @@ func (s *BillingService) CalculateTotalCost(llmCostUSD float64, tier string) (to
 }
 
 // GetActualCost retrieves actual cost from OpenRouter or falls back to estimation.
-func (s *BillingService) GetActualCost(ctx context.Context, tokensInput, tokensOutput int, model, generationID string) float64 {
-	// TODO: Query OpenRouter for actual cost if generationID is available
-	// For now, use estimation
+// Uses cached pricing data for cost calculation. For actual recorded cost from the provider,
+// use GetActualCostFromProvider with the generation ID.
+func (s *BillingService) GetActualCost(ctx context.Context, tokensInput, tokensOutput int, model, provider string) float64 {
+	if s.pricingSvc != nil {
+		return s.pricingSvc.EstimateCost(provider, model, tokensInput, tokensOutput)
+	}
 	return llm.EstimateCost(tokensInput, tokensOutput, model)
+}
+
+// GetActualCostFromProvider retrieves the actual recorded cost from the provider.
+// This makes an API call, so should only be used for final cost recording.
+// Returns the cost and any error. If error, falls back to estimation.
+// apiKey is the user's API key for BYOK users (used to query their generation stats).
+func (s *BillingService) GetActualCostFromProvider(ctx context.Context, provider, generationID, apiKey string, tokensInput, tokensOutput int, model string) float64 {
+	if s.pricingSvc != nil && generationID != "" {
+		cost, err := s.pricingSvc.GetActualCost(ctx, provider, generationID, apiKey)
+		if err == nil && cost > 0 {
+			s.logger.Debug("using actual cost from provider",
+				"provider", provider,
+				"generation_id", generationID,
+				"cost_usd", cost,
+			)
+			return cost
+		}
+		// Log the error but don't fail - fall back to estimation
+		if err != nil {
+			s.logger.Debug("failed to get actual cost from provider, using estimation",
+				"provider", provider,
+				"generation_id", generationID,
+				"error", err,
+			)
+		} else if cost == 0 {
+			s.logger.Debug("provider returned zero cost, using estimation",
+				"provider", provider,
+				"generation_id", generationID,
+			)
+		}
+	} else if generationID == "" {
+		s.logger.Debug("no generation ID available, using estimation",
+			"provider", provider,
+			"model", model,
+		)
+	}
+	// Fall back to estimation
+	cost := s.GetActualCost(ctx, tokensInput, tokensOutput, model, provider)
+	s.logger.Debug("cost estimated",
+		"provider", provider,
+		"model", model,
+		"input_tokens", tokensInput,
+		"output_tokens", tokensOutput,
+		"cost_usd", cost,
+	)
+	return cost
 }
 
 // ========================================
@@ -304,15 +363,16 @@ func (s *BillingService) IsBYOK(provider, apiKey, serviceOpenRouterKey, serviceA
 
 // ChargeForUsageInput contains all info needed to charge and record usage.
 type ChargeForUsageInput struct {
-	UserID      string
-	Tier        string
-	JobID       string
-	JobType     models.JobType
-	IsBYOK      bool
-	TokensInput int
+	UserID       string
+	Tier         string
+	JobID        string
+	JobType      models.JobType
+	IsBYOK       bool
+	TokensInput  int
 	TokensOutput int
 	Model        string
 	Provider     string
+	APIKey       string // User's API key for BYOK (used to query actual cost)
 
 	// For recording insights
 	TargetURL         string
@@ -343,8 +403,8 @@ type ChargeForUsageResult struct {
 func (s *BillingService) ChargeForUsage(ctx context.Context, input *ChargeForUsageInput) (*ChargeForUsageResult, error) {
 	result := &ChargeForUsageResult{}
 
-	// Get actual cost
-	result.LLMCostUSD = s.GetActualCost(ctx, input.TokensInput, input.TokensOutput, input.Model, input.GenerationID)
+	// Get actual cost - use provider API when generation ID is available
+	result.LLMCostUSD = s.GetActualCostFromProvider(ctx, input.Provider, input.GenerationID, input.APIKey, input.TokensInput, input.TokensOutput, input.Model)
 
 	// Apply markup for non-BYOK
 	if !input.IsBYOK && result.LLMCostUSD > 0 {

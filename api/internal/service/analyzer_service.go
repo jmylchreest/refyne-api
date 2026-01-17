@@ -113,6 +113,7 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 		"url", targetURL,
 		"depth", input.Depth,
 		"tier", tier,
+		"cleaner", "noop (fallback: trafilatura->html)",
 	)
 
 	// Get LLM config for analysis early (needed for error recording)
@@ -126,6 +127,19 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 		"has_api_key", llmConfig.APIKey != "",
 		"is_byok", isBYOK,
 	)
+
+	// Pre-flight cost estimate (triggers pricing cache refresh if needed)
+	if s.billing != nil {
+		estimatedCost := s.billing.EstimateCost(1, llmConfig.Model, llmConfig.Provider)
+		s.logger.Debug("pre-flight cost estimate",
+			"request_id", requestID,
+			"user_id", userID,
+			"provider", llmConfig.Provider,
+			"model", llmConfig.Model,
+			"estimated_cost_usd", estimatedCost,
+			"is_byok", isBYOK,
+		)
+	}
 
 	// Fetch main page content
 	fetchStart := time.Now()
@@ -146,21 +160,60 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 		"fetch_mode", fetchMode,
 	)
 
-	// Fetch sample detail pages if depth > 0
+	// Auto mini-crawl: Fetch sample detail/product pages to understand site structure
+	// This helps generate better combined schemas that work across listing and detail pages
 	var detailContents []string
-	if input.Depth > 0 && len(links) > 0 {
-		// Fetch up to 3 sample detail pages
-		maxSamples := 3
+	var detailURLs []string
+
+	// Identify promising detail page links
+	detailLinks := s.identifyDetailLinks(targetURL, links)
+
+	if len(detailLinks) > 0 {
+		s.logger.Debug("auto mini-crawl: identified detail page candidates",
+			"request_id", requestID,
+			"user_id", userID,
+			"detail_links", detailLinks,
+		)
+
+		for _, detailURL := range detailLinks {
+			content, _, _, err := s.fetchContent(ctx, detailURL, string(fetchMode))
+			if err != nil {
+				s.logger.Warn("failed to fetch detail page for mini-crawl",
+					"request_id", requestID,
+					"user_id", userID,
+					"url", detailURL,
+					"error", err,
+				)
+				continue
+			}
+			detailContents = append(detailContents, content)
+			detailURLs = append(detailURLs, detailURL)
+		}
+
+		s.logger.Info("auto mini-crawl completed",
+			"request_id", requestID,
+			"user_id", userID,
+			"pages_fetched", len(detailContents),
+		)
+	} else if input.Depth > 0 && len(links) > 0 {
+		// Fallback: if no detail links identified but depth > 0, use first few links
+		maxSamples := 2
 		if len(links) < maxSamples {
 			maxSamples = len(links)
 		}
 		for i := 0; i < maxSamples; i++ {
 			content, _, _, err := s.fetchContent(ctx, links[i], string(fetchMode))
 			if err != nil {
-				s.logger.Warn("failed to fetch detail page", "request_id", requestID, "user_id", userID, "url", links[i], "error", err)
+				s.logger.Warn("failed to fetch detail page",
+					"request_id", requestID,
+					"user_id", userID,
+					"url", links[i],
+					"error", err,
+				)
 				continue
 			}
 			detailContents = append(detailContents, content)
+			detailURLs = append(detailURLs, links[i])
 		}
 	}
 	fetchDuration := time.Since(fetchStart)
@@ -169,7 +222,7 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 	// First try with raw content (noop cleaner), retry with fallback cleaner on context length errors
 	llmStart := time.Now()
 	s.logger.Debug("calling LLM for analysis", "request_id", requestID, "user_id", userID, "provider", llmConfig.Provider, "model", llmConfig.Model)
-	result, err := s.analyzeWithLLM(ctx, mainContent, detailContents, links, llmConfig)
+	result, err := s.analyzeWithLLM(ctx, mainContent, detailContents, detailURLs, links, llmConfig)
 	llmDuration := time.Since(llmStart)
 
 	// If context length error, retry with cleaned content
@@ -208,7 +261,7 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 
 		// Retry with cleaned content
 		llmRetryStart := time.Now()
-		result, err = s.analyzeWithLLM(ctx, cleanedMain, cleanedDetails, links, llmConfig)
+		result, err = s.analyzeWithLLM(ctx, cleanedMain, cleanedDetails, detailURLs, links, llmConfig)
 		llmDuration = time.Since(llmStart) + time.Since(llmRetryStart) // Total LLM time including retry
 
 		if err != nil {
@@ -256,13 +309,25 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 		OutputTokens: result.OutputTokens,
 	}
 
+	// Calculate costs for logging
+	var llmCostUSD, userCostUSD float64
+	if s.billing != nil {
+		llmCostUSD = s.billing.GetActualCost(ctx, result.InputTokens, result.OutputTokens, llmConfig.Model, llmConfig.Provider)
+		userCostUSD, _, _ = s.billing.CalculateTotalCost(llmCostUSD, tier)
+	}
+
 	s.logger.Info("URL analysis completed",
 		"request_id", requestID,
 		"user_id", userID,
 		"url", targetURL,
+		"provider", llmConfig.Provider,
+		"model", llmConfig.Model,
 		"page_type", result.Output.PageType,
 		"input_tokens", result.InputTokens,
 		"output_tokens", result.OutputTokens,
+		"llm_cost_usd", llmCostUSD,
+		"user_cost_usd", userCostUSD,
+		"is_byok", isBYOK,
 		"duration_ms", time.Since(startTime).Milliseconds(),
 	)
 
@@ -435,6 +500,115 @@ func (s *AnalyzerService) filterLinks(baseURL string, links []string) []string {
 	return filtered
 }
 
+// identifyDetailLinks finds links that are likely product/item detail pages.
+// These are used for auto mini-crawl to understand detail page structure.
+func (s *AnalyzerService) identifyDetailLinks(baseURL string, links []string) []string {
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return nil
+	}
+	basePath := parsed.Path
+
+	// Patterns that suggest a detail/product page
+	detailPatterns := []string{
+		"/product/", "/products/", "/item/", "/items/",
+		"/p/", "/pd/", "/dp/", // Common short product paths
+		"/listing/", "/listings/",
+		"/article/", "/articles/", "/post/", "/posts/",
+		"/property/", "/properties/",
+		"/job/", "/jobs/", "/career/", "/careers/",
+		"/service/", "/services/",
+		"/collection/", "/collections/", "/category/", "/categories/",
+	}
+
+	// Score links by how likely they are detail pages
+	type scoredLink struct {
+		url   string
+		score int
+	}
+	var scored []scoredLink
+
+	for _, link := range links {
+		linkParsed, err := url.Parse(link)
+		if err != nil {
+			continue
+		}
+
+		// Skip if it's the same as base URL
+		if linkParsed.Path == basePath {
+			continue
+		}
+
+		path := strings.ToLower(linkParsed.Path)
+		score := 0
+
+		// Check for detail patterns
+		for _, pattern := range detailPatterns {
+			if strings.Contains(path, pattern) {
+				score += 10
+				break
+			}
+		}
+
+		// Paths with slugs (contain hyphens) are often detail pages
+		segments := strings.Split(strings.Trim(path, "/"), "/")
+		if len(segments) >= 2 {
+			lastSegment := segments[len(segments)-1]
+			if strings.Contains(lastSegment, "-") && len(lastSegment) > 10 {
+				score += 5 // Slug-like path (e.g., /products/raspberry-pi-5-8gb)
+			}
+		}
+
+		// Deeper paths are more likely to be detail pages
+		if len(segments) >= 2 {
+			score += 2
+		}
+
+		// Paths with IDs (numbers) are often detail pages
+		if regexp.MustCompile(`/\d+`).MatchString(path) {
+			score += 3
+		}
+
+		if score > 0 {
+			scored = append(scored, scoredLink{url: link, score: score})
+		}
+	}
+
+	// Sort by score (highest first) and return top candidates
+	for i := 0; i < len(scored)-1; i++ {
+		for j := i + 1; j < len(scored); j++ {
+			if scored[j].score > scored[i].score {
+				scored[i], scored[j] = scored[j], scored[i]
+			}
+		}
+	}
+
+	// Return top 2 unique patterns (avoid duplicates like /products/a and /products/b)
+	var result []string
+	seenPatterns := make(map[string]bool)
+
+	for _, sl := range scored {
+		if len(result) >= 2 {
+			break
+		}
+
+		// Extract pattern from URL (e.g., "/products/" from "/products/item-name")
+		linkParsed, _ := url.Parse(sl.url)
+		segments := strings.Split(strings.Trim(linkParsed.Path, "/"), "/")
+		if len(segments) >= 2 {
+			pattern := "/" + segments[0] + "/"
+			if seenPatterns[pattern] {
+				continue // Already have a link from this pattern
+			}
+			seenPatterns[pattern] = true
+		}
+
+		result = append(result, sl.url)
+	}
+
+	return result
+}
+
 // analyzeResult holds the result of LLM analysis including token usage.
 type analyzeResult struct {
 	Output       *AnalyzeOutput
@@ -443,7 +617,7 @@ type analyzeResult struct {
 }
 
 // analyzeWithLLM calls the LLM to analyze page content and generate a schema.
-func (s *AnalyzerService) analyzeWithLLM(ctx context.Context, mainContent string, detailContents []string, links []string, llmConfig *LLMConfigInput) (*analyzeResult, error) {
+func (s *AnalyzerService) analyzeWithLLM(ctx context.Context, mainContent string, detailContents []string, detailURLs []string, links []string, llmConfig *LLMConfigInput) (*analyzeResult, error) {
 	// Truncate content to avoid token limits
 	mainContent = s.truncateContent(mainContent, 15000)
 	for i := range detailContents {
@@ -451,7 +625,7 @@ func (s *AnalyzerService) analyzeWithLLM(ctx context.Context, mainContent string
 	}
 
 	// Build the prompt
-	prompt := s.buildAnalysisPrompt(mainContent, detailContents, links)
+	prompt := s.buildAnalysisPrompt(mainContent, detailContents, detailURLs, links)
 
 	// Call LLM API
 	llmResult, err := s.callLLM(ctx, llmConfig, prompt)
@@ -488,471 +662,154 @@ func (s *AnalyzerService) truncateContent(content string, maxLen int) string {
 }
 
 // buildAnalysisPrompt creates the prompt for the LLM to analyze the page.
-func (s *AnalyzerService) buildAnalysisPrompt(mainContent string, detailContents []string, links []string) string {
+func (s *AnalyzerService) buildAnalysisPrompt(mainContent string, detailContents []string, detailURLs []string, links []string) string {
 	var sb strings.Builder
 
-	sb.WriteString(`You are an expert data architect analyzing a website to generate a comprehensive extraction schema.
+	sb.WriteString(`You are analyzing a website to generate an extraction schema.
 
-Your goal is to:
-1. IDENTIFY what type of organization/business this website represents
-2. DETERMINE what structured data would be most valuable to extract
-3. GENERATE a schema that produces RICH, COMBINABLE data across multiple pages
+## Page Content
 
-## CRITICAL: Writing Effective Field Descriptions
-
-The schema you generate will be used by OTHER AI models to extract data. Your field descriptions are INSTRUCTIONS to those models. Write them accordingly:
-
-BAD description (vague, won't extract consistently):
-  description: "The property price"
-
-GOOD description (specific, actionable):
-  description: "Property sale price as integer. Extract from prominent price display. If shown with currency symbol, omit symbol. If price is a range, use the lower value."
-
-For EVERY field description, include:
-1. **What to extract** - Be specific about the data type and format
-2. **Where to find it** - Hint at typical page locations if relevant
-3. **Edge cases** - What to do if missing, ambiguous, or in unexpected format
-4. **Output format** - Exact format expected (e.g., "ISO date YYYY-MM-DD", "integer in cents", "array of strings")
-
-Additional patterns that improve extraction reliability:
-- For multilingual sites: specify which language to prefer, format for including originals: "English Name (原文)"
-- For currency/units: specify whether to convert and to what
-- For dates: specify format and calendar system handling
-- For missing data: explicitly state "null if not found" vs required
-- For arrays: specify ordering preference if relevant (e.g., "in order of appearance")
-
-## Main Page Content (HTML)
+### Main Page (listing/collection/homepage)
 `)
 	sb.WriteString("```html\n")
 	sb.WriteString(mainContent)
-	sb.WriteString("\n```\n\n")
+	sb.WriteString("\n```\n")
 
 	if len(detailContents) > 0 {
-		sb.WriteString("## Sample Detail Pages (for understanding the site structure)\n")
+		sb.WriteString("\n### Sample Detail Pages\n")
+		sb.WriteString("I've also fetched sample detail/product pages to help you understand the full data structure:\n\n")
 		for i, content := range detailContents {
-			sb.WriteString(fmt.Sprintf("\n### Detail Page %d\n```html\n%s\n```\n", i+1, content))
+			url := ""
+			if i < len(detailURLs) {
+				url = detailURLs[i]
+			}
+			sb.WriteString(fmt.Sprintf("**Detail Page %d** (%s)\n```html\n%s\n```\n\n", i+1, url, content))
 		}
 	}
 
 	if len(links) > 0 {
-		sb.WriteString("\n## Sample Links Found on Page\n")
-		for i, link := range links[:min(20, len(links))] {
-			sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, link))
+		sb.WriteString("\n### Links Found\n")
+		maxLinks := min(15, len(links))
+		for i := 0; i < maxLinks; i++ {
+			sb.WriteString(fmt.Sprintf("- %s\n", links[i]))
 		}
 	}
 
 	sb.WriteString(`
 
-## Schema Design Principles
-
-When generating schemas, follow these principles:
-
-1. **Schema-Level Description is Critical**: The top-level description field should contain:
-   - What type of page/site this schema is for
-   - CRITICAL OUTPUT REQUIREMENTS as a numbered list
-   - Any data transformation rules (currency conversion, date format conversion, language handling)
-   - Domain-specific knowledge the extractor needs
-
-2. **Nested Objects for Complex Data**: Use objects within arrays when data has multiple related attributes
-   - Good: services: [{name: "...", description: "...", pricing: "..."}]
-   - Bad: service_names: ["..."], service_descriptions: ["..."]
-
-3. **Consistent Keys Across Pages**: Schema should work across multiple pages of the same site
-   - If crawling /about, /services, /team pages, each should extract into the same structure
-   - Empty arrays/nulls are fine when data isn't present on a specific page
-
-4. **Field Descriptions Are Extraction Instructions**: Write descriptions as if you're instructing another AI model how to extract that specific field. Include:
-   - Expected format and data type
-   - Edge case handling
-   - What to return if not found
-
-5. **Appropriate Nesting Depth**: Don't over-flatten. If clients have industries and descriptions, nest them.
-
-6. **Add Source/Metadata Fields When Useful**: For prices, dates, or derived data, consider adding fields to track:
-   - source: "page" vs "calculated/converted"
-   - confidence indicators
-   - original vs processed values
-
-7. **Common Business Data Patterns**:
-   - Company info: name, tagline, description, founded, team_size
-   - Services/Products: array of objects with name, description, optional pricing/features
-   - Clients/Testimonials: array of objects with name, industry, quote/description
-   - Team members: array of objects with name, role, bio, image_url
-   - Locations: array of strings or objects with city, address, phone
-   - Contact: object with email, phone, address
-
-## Example Schemas (Use as templates, adapt to actual site)
-
-### Consultancy/Agency
-` + "```yaml" + `
-name: Consultancy
-description: Extract company info, services, industries served, and clients
-fields:
-  - name: company_name
-    type: string
-    description: The name of the company
-    required: true
-  - name: tagline
-    type: string
-    description: Company tagline or value proposition
-  - name: description
-    type: string
-    description: Brief overview of what the company does
-  - name: founded
-    type: string
-    description: Year founded or establishment date
-  - name: team_size
-    type: string
-    description: Number of employees or team size description
-  - name: services
-    type: array
-    description: Services or capabilities offered
-    items:
-      type: object
-      properties:
-        - name: name
-          type: string
-          description: Service name
-          required: true
-        - name: description
-          type: string
-          description: Service description
-  - name: industries
-    type: array
-    description: Industries or sectors served
-    items:
-      type: string
-  - name: clients
-    type: array
-    description: Notable clients or case studies
-    items:
-      type: object
-      properties:
-        - name: name
-          type: string
-          description: Client company name
-          required: true
-        - name: industry
-          type: string
-          description: Client's industry
-        - name: description
-          type: string
-          description: Work done or testimonial
-  - name: locations
-    type: array
-    description: Office locations
-    items:
-      type: string
-  - name: contact
-    type: object
-    description: Contact information
-    properties:
-      - name: email
-        type: string
-      - name: phone
-        type: string
-      - name: address
-        type: string
-` + "```" + `
-
-### E-commerce Product
-` + "```yaml" + `
-name: Product
-description: Product listing with full details
-fields:
-  - name: title
-    type: string
-    description: Product name
-    required: true
-  - name: price
-    type: number
-    description: Current price
-  - name: original_price
-    type: number
-    description: Original price before discount
-  - name: currency
-    type: string
-    description: Currency code (USD, EUR, etc.)
-  - name: description
-    type: string
-    description: Full product description
-  - name: brand
-    type: string
-    description: Brand or manufacturer
-  - name: category
-    type: string
-    description: Product category
-  - name: specifications
-    type: array
-    description: Product specifications
-    items:
-      type: object
-      properties:
-        - name: name
-          type: string
-        - name: value
-          type: string
-  - name: rating
-    type: number
-    description: Average rating out of 5
-  - name: review_count
-    type: number
-    description: Number of reviews
-  - name: images
-    type: array
-    items:
-      type: string
-    description: Product image URLs
-  - name: availability
-    type: string
-    description: Stock status
-  - name: url
-    type: string
-    description: Product detail page URL
-` + "```" + `
-
-### Real Estate Listing (Detailed Example)
-` + "```yaml" + `
-name: PropertyListing
-description: |
-  A real estate property listing page.
-
-  CRITICAL OUTPUT REQUIREMENTS:
-  1. All prices must be extracted as integers (no decimals, no currency symbols)
-  2. If prices shown in multiple currencies, extract all with source tracking
-  3. Areas should be in square meters (convert from sq ft if needed: divide by 10.764)
-  4. Dates in ISO format YYYY-MM-DD
-  5. For missing optional fields, return null (not empty string)
-
-fields:
-  - name: title
-    type: string
-    description: "Property listing headline. Extract the main title text, not taglines or subtitles."
-    required: true
-  - name: prices
-    type: array
-    description: "All prices shown for this property. Include each currency found on page."
-    required: true
-    items:
-      type: object
-      properties:
-        currency:
-          type: string
-          description: "ISO currency code: USD, EUR, GBP, etc."
-        value:
-          type: integer
-          description: "Price as integer. Remove decimals, commas, currency symbols."
-        period:
-          type: string
-          description: "For rentals: 'month', 'week', 'year'. Null for sales."
-        source:
-          type: string
-          description: "'page' if shown on page, 'converted' if you calculated it"
-  - name: location
-    type: object
-    description: "Property location details"
-    required: true
-    properties:
-      full_address:
-        type: string
-        description: "Complete address as shown, or null if only partial info available"
-      city:
-        type: string
-        description: "City or town name"
-      state_province:
-        type: string
-        description: "State, province, or region"
-      postal_code:
-        type: string
-        description: "ZIP or postal code if shown"
-      country:
-        type: string
-        description: "Country name or code"
-  - name: bedrooms
-    type: integer
-    description: "Number of bedrooms as integer. Studio = 0. Null if not specified."
-  - name: bathrooms
-    type: number
-    description: "Number of bathrooms. Can be decimal (e.g., 2.5 for 2 full + 1 half bath)."
-  - name: area_sqm
-    type: number
-    description: "Living area in square meters. If shown in sq ft, convert by dividing by 10.764."
-  - name: property_type
-    type: string
-    description: "Standardize to: House, Condo, Apartment, Townhouse, Villa, Land, Commercial, or Other"
-  - name: listing_type
-    type: string
-    description: "'Sale' or 'Rent' - determine from context and price display"
-  - name: features
-    type: array
-    description: "Property features and amenities. Use lowercase standard terms: pool, garage, garden, balcony, etc."
-    items:
-      type: string
-  - name: description
-    type: string
-    description: "Main property description text. Limit to 2000 characters. Preserve key details."
-  - name: images
-    type: array
-    description: "Property image URLs. First 10 only, in order of appearance."
-    items:
-      type: string
-  - name: agent
-    type: object
-    description: "Listing agent or seller contact info"
-    properties:
-      name:
-        type: string
-        description: "Agent or agency name"
-      phone:
-        type: string
-        description: "Phone number as shown (preserve formatting)"
-      email:
-        type: string
-        description: "Email if displayed (may be hidden or require click)"
-      type:
-        type: string
-        description: "'Agent', 'Agency', 'Owner', or 'Developer'"
-  - name: listing_date
-    type: string
-    description: "Date listed in ISO format YYYY-MM-DD. Convert from relative ('3 days ago') if possible."
-  - name: url
-    type: string
-    description: "Full URL of the listing page"
-` + "```" + `
-
-### Job Listing
-` + "```yaml" + `
-name: Job
-description: Job posting details
-fields:
-  - name: title
-    type: string
-    description: Job title
-    required: true
-  - name: company
-    type: string
-    description: Hiring company name
-  - name: location
-    type: string
-    description: Job location (city, remote, etc.)
-  - name: job_type
-    type: string
-    description: Full-time, part-time, contract, etc.
-  - name: salary
-    type: object
-    properties:
-      - name: min
-        type: number
-      - name: max
-        type: number
-      - name: period
-        type: string
-        description: yearly, hourly, etc.
-  - name: description
-    type: string
-    description: Full job description
-  - name: requirements
-    type: array
-    items:
-      type: string
-    description: Job requirements and qualifications
-  - name: benefits
-    type: array
-    items:
-      type: string
-  - name: posted_date
-    type: string
-  - name: apply_url
-    type: string
-` + "```" + `
-
-### News Article
-` + "```yaml" + `
-name: Article
-description: News or blog article
-fields:
-  - name: title
-    type: string
-    description: Article headline
-    required: true
-  - name: author
-    type: string
-  - name: published_date
-    type: string
-  - name: category
-    type: string
-  - name: tags
-    type: array
-    items:
-      type: string
-  - name: summary
-    type: string
-    description: Article summary or excerpt
-  - name: content
-    type: string
-    description: Full article text
-  - name: image_url
-    type: string
-    description: Featured image
-  - name: source
-    type: string
-    description: Publication name
-` + "```" + `
-
 ## Your Task
 
-Analyze the HTML and:
+Generate a **combined schema** that works across BOTH listing pages and detail pages. This is critical because:
+- Users will crawl multiple pages and merge results
+- The same schema must handle partial data from listings AND full data from detail pages
+- Fields should be optional so partial data can still be extracted
 
-1. **Identify the Site Type**: What kind of organization/business is this? (consultancy, e-commerce, news, job board, real estate, SaaS, agency, portfolio, etc.)
+### Schema Model Types
 
-2. **site_summary**: Write a 1-2 sentence description of the site and what data would be valuable
+Choose the most appropriate model and adapt field names to match the actual site content:
 
-3. **page_type**: Choose the best fit: listing, detail, article, product, recipe, company, service, team, contact, portfolio, unknown
+**E-commerce / Products**
+- products[] with: title, url, price, currency, image_url, description, sku, availability, category, brand
 
-4. **detected_elements**: List the data elements you found, with:
-   - name: Field name (snake_case)
-   - type: string, number, boolean, array, object, url, date
-   - count: How many instances (if applicable)
-   - description: What this represents
+**Jobs / Careers**
+- jobs[] with: title, url, company, location, salary, currency, job_type, posted_date, description
 
-5. **suggested_schema**: Generate a YAML schema that:
-   - Has a multi-line description with CRITICAL OUTPUT REQUIREMENTS
-   - Is appropriate for the site type
-   - Uses nested objects where it makes data cleaner
-   - Will produce COMBINABLE results when crawling multiple pages
-   - Has DETAILED field descriptions that serve as extraction instructions
-   - Marks required fields appropriately
+**Real Estate / Properties**
+- properties[] with: title, url, price, currency, address, bedrooms, bathrooms, area_sqft, image_url
 
-6. **follow_patterns**: Provide CSS selectors and/or URL patterns to find related pages:
-   - pattern: CSS selector like "a[href*='/services']" or URL pattern like "/product/.*"
-   - description: What pages this targets
-   - sample_urls: 1-3 example URLs
+**Articles / Blog / News**
+- articles[] with: title, url, author, published_date, summary, image_url, category, read_time
 
-## Quality Checklist (verify before outputting)
+**Podcasts / Episodes**
+- episodes[] with: title, url, description, duration, published_date, guest, host, episode_number
 
-Before finalizing your schema, verify:
-- [ ] Schema description includes numbered CRITICAL OUTPUT REQUIREMENTS
-- [ ] Every field description explains WHAT to extract, not just what the field is
-- [ ] Field descriptions specify output FORMAT (date format, number format, etc.)
-- [ ] Field descriptions handle edge cases (what if missing? what if ambiguous?)
-- [ ] Arrays specify item format clearly
-- [ ] Nested objects have complete property descriptions
-- [ ] Required fields are marked appropriately (only truly essential fields)
+**Case Studies / Success Stories**
+- case_studies[] with: title, url, company_name, industry, challenge, solution, results, testimonial
 
-## Output Format
+**Services / Portfolio**
+- services[] with: name, description, price, currency, features[], image_url
 
-Return ONLY valid JSON (no markdown code blocks):
+**Landing Pages / Product Features**
+- features[] with: title, description, icon_url, category
+
+**IMPORTANT - Mixed Content Sites**: If the follow patterns target DIFFERENT content types (e.g., /blog/ AND /solutions/ AND /case-study/), create a FLEXIBLE schema with:
+
+1. **Common fields** (always present): title, url, content_type
+2. **Dynamic metadata object** for type-specific fields that vary by content
+
+Use this pattern for items[]:
+- title (string, required)
+- url (string, required)
+- content_type (string) - e.g., blog, case_study, solution, podcast
+- description (string)
+- image_url (string)
+- date (string)
+- metadata (object) - Additional fields specific to this content type
+
+The metadata object allows the LLM to extract type-specific fields dynamically:
+- Blog: metadata.author, metadata.read_time, metadata.category
+- Case study: metadata.company, metadata.industry, metadata.results, metadata.testimonial
+- Podcast: metadata.duration, metadata.guest, metadata.episode_number
+- Solution: metadata.features[], metadata.benefits[], metadata.pricing
+
+### Schema Guidelines
+
+1. **Use descriptive field names** based on what you see (e.g., products, listings, jobs - not generic "items")
+2. **Prices**: integer in smallest currency unit (e.g., £15.99 = 1599) + separate currency field (ISO code: GBP, USD, EUR)
+3. **URLs must be absolute** (include domain)
+4. **Mark ONLY title and url as required** - everything else optional for partial extraction
+5. **Keep descriptions short** - just describe what the field contains
+
+### Output Format
+
+Return valid JSON only (no markdown blocks):
+
 {
-  "site_summary": "...",
-  "page_type": "...",
+  "site_summary": "Brief description of what this site is",
+  "page_type": "listing|detail|article|product|company|unknown",
   "detected_elements": [
-    {"name": "...", "type": "...", "count": 0, "description": "..."}
+    {"name": "field_name", "type": "string|number|array|url|date", "count": 10, "description": "What this is"}
   ],
-  "suggested_schema": "name: ...\ndescription: ...\nfields:\n  ...",
+  "suggested_schema": "name: SiteName\ndescription: Brief description\nfields:\n  - name: products\n    type: array\n    items:\n      type: object\n      properties:\n        - name: title\n          type: string\n          required: true\n        - name: url\n          type: string\n          required: true\n        - name: price\n          type: integer\n          description: Price in smallest currency unit\n        - name: currency\n          type: string\n          description: ISO currency code (GBP, USD, EUR)",
   "follow_patterns": [
-    {"pattern": "...", "description": "...", "sample_urls": ["..."]}
+    {"pattern": "a[href*='/news/world']", "description": "World news section"},
+    {"pattern": "a[href*='/news/business']", "description": "Business news section"},
+    {"pattern": "a[href*='/news/technology']", "description": "Technology section"},
+    {"pattern": "a[href*='/articles/']", "description": "Individual article pages"}
   ]
 }
+
+### Follow Pattern Guidelines (CRITICAL)
+
+Generate CSS selectors based on the URL patterns in the Links Found section.
+
+RULE: Use ONLY href-based selectors. Do NOT invent class names.
+
+**IMPORTANT**: Complex sites often have MULTIPLE content sections. Identify ALL distinct content patterns:
+- News sites have sections like /world, /business, /technology, /health, /sports, /articles
+- E-commerce has /products/, /categories/, /collections/
+- Job boards have /jobs/, /careers/, /positions/
+
+GOOD selectors (use these patterns):
+- a[href*='/blog/'] for blog sections
+- a[href*='/products/'] for product listings
+- a[href*='/news/world'] for world news section
+- a[href*='/news/business'] for business section
+- a[href*='/articles/'] for article pages
+- a[href^='/jobs/'] for job listings (starts with)
+
+BAD selectors (DO NOT use invented classes):
+- .blog-post a - WRONG: class does not exist
+- .article-list a - WRONG: class does not exist
+- main a[href*='/blog/'] - WRONG if no main tag in HTML
+
+How to generate patterns:
+1. Look at ALL links in the Links Found section
+2. Identify DISTINCT URL path patterns (sections, categories, content types)
+3. Create a separate pattern for EACH content section
+4. Include article/detail page patterns like /articles/ or /article/
+
+RETURN MULTIPLE patterns if the site has multiple content sections. Most large sites (news, e-commerce) need 3-6 patterns to capture all content.
 `)
 
 	return sb.String()

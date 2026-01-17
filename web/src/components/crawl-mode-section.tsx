@@ -3,23 +3,23 @@
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Badge } from '@/components/ui/badge';
-import { Checkbox } from '@/components/ui/checkbox';
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { HelpCircle, Layers, FileText, Lock } from 'lucide-react';
+import { HelpCircle, Layers, FileText, Link2, Lock } from 'lucide-react';
 import { cn } from '@/lib/utils';
+
+export type ExtractionMode = 'single' | 'crawl' | 'sitemap';
 
 export interface CrawlOptions {
   followSelector: string;
   followPattern: string;
   maxPages: number;
   maxDepth: number;
-  useSitemap: boolean;
+  useSitemap: boolean; // Derived from mode, kept for API compatibility
 }
 
 export interface FollowPattern {
@@ -28,8 +28,8 @@ export interface FollowPattern {
 }
 
 interface CrawlModeSectionProps {
-  isCrawlMode: boolean;
-  onModeChange: (crawlMode: boolean) => void;
+  extractionMode: ExtractionMode;
+  onModeChange: (mode: ExtractionMode) => void;
   crawlOptions: CrawlOptions;
   onOptionsChange: (options: CrawlOptions) => void;
   suggestedSelectors?: FollowPattern[];
@@ -38,7 +38,7 @@ interface CrawlModeSectionProps {
 }
 
 export function CrawlModeSection({
-  isCrawlMode,
+  extractionMode,
   onModeChange,
   crawlOptions,
   onOptionsChange,
@@ -61,6 +61,17 @@ export function CrawlModeSection({
     updateOption('followSelector', `${crawlOptions.followSelector}${separator}${selector}`);
   };
 
+  const handleModeChange = (mode: ExtractionMode) => {
+    if (mode !== 'single' && !canCrawl) return;
+    onModeChange(mode);
+    // Update useSitemap flag for API compatibility
+    if (mode === 'sitemap') {
+      onOptionsChange({ ...crawlOptions, useSitemap: true });
+    } else {
+      onOptionsChange({ ...crawlOptions, useSitemap: false });
+    }
+  };
+
   return (
     <TooltipProvider>
       <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm">
@@ -72,35 +83,52 @@ export function CrawlModeSection({
               <span className="text-sm font-medium">Extraction Mode</span>
             </div>
 
-            {/* Mode Toggle Buttons */}
+            {/* Three-Mode Toggle Buttons */}
             <div className="flex rounded-lg border border-zinc-200 dark:border-zinc-700 p-0.5 bg-zinc-100 dark:bg-zinc-800">
               <button
                 type="button"
-                onClick={() => onModeChange(false)}
+                onClick={() => handleModeChange('single')}
                 disabled={disabled}
                 className={cn(
-                  'px-4 py-1.5 text-sm font-medium rounded-md transition-all cursor-pointer',
-                  !isCrawlMode
+                  'px-3 py-1.5 text-sm font-medium rounded-md transition-all cursor-pointer',
+                  extractionMode === 'single'
                     ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 shadow-sm'
                     : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300',
                   disabled && 'opacity-50 cursor-not-allowed'
                 )}
               >
-                Single Page
+                Single
               </button>
               <button
                 type="button"
-                onClick={() => canCrawl && onModeChange(true)}
+                onClick={() => handleModeChange('crawl')}
                 disabled={disabled || !canCrawl}
                 className={cn(
-                  'px-4 py-1.5 text-sm font-medium rounded-md transition-all flex items-center gap-1.5',
-                  isCrawlMode
+                  'px-3 py-1.5 text-sm font-medium rounded-md transition-all flex items-center gap-1.5',
+                  extractionMode === 'crawl'
                     ? 'bg-amber-500 text-white shadow-sm'
                     : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300 cursor-pointer',
                   (!canCrawl || disabled) && 'opacity-50 cursor-not-allowed'
                 )}
               >
+                <Link2 className="h-3.5 w-3.5" />
                 Crawl
+                {!canCrawl && <Lock className="h-3 w-3" />}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleModeChange('sitemap')}
+                disabled={disabled || !canCrawl}
+                className={cn(
+                  'px-3 py-1.5 text-sm font-medium rounded-md transition-all flex items-center gap-1.5',
+                  extractionMode === 'sitemap'
+                    ? 'bg-emerald-500 text-white shadow-sm'
+                    : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300 cursor-pointer',
+                  (!canCrawl || disabled) && 'opacity-50 cursor-not-allowed'
+                )}
+              >
+                <FileText className="h-3.5 w-3.5" />
+                Sitemap
                 {!canCrawl && <Lock className="h-3 w-3" />}
               </button>
             </div>
@@ -108,51 +136,28 @@ export function CrawlModeSection({
 
           {!canCrawl && (
             <p className="mt-2 text-xs text-zinc-500">
-              Crawl mode requires a paid plan to extract from multiple pages.
+              Crawl and Sitemap modes require a paid plan to extract from multiple pages.
             </p>
           )}
         </div>
 
-        {/* Crawl Options - Only shown when in crawl mode */}
-        {isCrawlMode && canCrawl && (
+        {/* Crawl Mode Options */}
+        {extractionMode === 'crawl' && canCrawl && (
           <div className="p-4 bg-amber-50/50 dark:bg-amber-900/10 space-y-6">
-            {/* URL Discovery Section */}
+            {/* Link Discovery Section */}
             <div className="space-y-4">
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-medium text-amber-800 dark:text-amber-300">
-                  URL Discovery
+                  Link Discovery
                 </h3>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <HelpCircle className="h-3.5 w-3.5 text-amber-600/60 cursor-help" />
                   </TooltipTrigger>
                   <TooltipContent side="right" className="max-w-[280px]">
-                    <p>Choose how the crawler discovers URLs to extract from. You can use the site&apos;s sitemap, CSS selectors to find links, or URL patterns to filter.</p>
+                    <p>Configure how the crawler finds and follows links from the seed URL. Use CSS selectors to identify link elements and patterns to filter URLs.</p>
                   </TooltipContent>
                 </Tooltip>
-              </div>
-
-              {/* Sitemap Option */}
-              <div className="flex items-start gap-3 p-3 rounded-lg border border-amber-200 dark:border-amber-800/50 bg-white dark:bg-zinc-900">
-                <Checkbox
-                  id="use-sitemap"
-                  checked={crawlOptions.useSitemap}
-                  onCheckedChange={(checked) => updateOption('useSitemap', checked === true)}
-                  disabled={disabled}
-                  className="mt-0.5"
-                />
-                <div className="flex-1">
-                  <label
-                    htmlFor="use-sitemap"
-                    className="text-sm font-medium cursor-pointer flex items-center gap-2"
-                  >
-                    <FileText className="h-4 w-4 text-amber-600" />
-                    Discover from Sitemap
-                  </label>
-                  <p className="text-xs text-zinc-500 mt-1">
-                    Fetch sitemap.xml to discover all indexable URLs. Best for comprehensive site extraction.
-                  </p>
-                </div>
               </div>
 
               {/* CSS Selectors */}
@@ -173,40 +178,39 @@ export function CrawlModeSection({
                 </div>
                 <Textarea
                   id="follow-selector"
-                  placeholder={"a.product-link\na[href*='/product/']\na[href*='/item/']"}
+                  placeholder={"main a[href*='/blog/']\narticle a[href*='/post/']"}
                   value={crawlOptions.followSelector}
                   onChange={(e) => updateOption('followSelector', e.target.value)}
                   disabled={disabled}
                   className="min-h-[72px] text-sm font-mono resize-none"
                 />
-                <p className="text-xs text-zinc-500">One selector per line, or comma-separated</p>
+                <p className="text-xs text-zinc-500">CSS selectors for links to follow (one per line or comma-separated)</p>
               </div>
 
               {/* URL Pattern Filter */}
               <div className="space-y-2">
                 <div className="flex items-center gap-1.5">
                   <Label htmlFor="follow-pattern" className="text-sm text-zinc-700 dark:text-zinc-300">
-                    URL Filter (regex)
+                    URL Filter (optional)
                   </Label>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <HelpCircle className="h-3.5 w-3.5 text-zinc-400 cursor-help" />
                     </TooltipTrigger>
                     <TooltipContent side="right" className="max-w-[280px]">
-                      <p>Regex patterns to filter discovered URLs. Only matching URLs will be crawled.</p>
-                      <p className="mt-1 text-zinc-400">Leave empty to follow all discovered links.</p>
+                      <p>Only crawl URLs containing these patterns. Leave empty to follow all discovered links.</p>
                     </TooltipContent>
                   </Tooltip>
                 </div>
-                <Textarea
+                <Input
                   id="follow-pattern"
-                  placeholder={"/product/.*\n/item/.*\n/category/.*/.*"}
+                  placeholder="e.g., /blog/ or /article/"
                   value={crawlOptions.followPattern}
                   onChange={(e) => updateOption('followPattern', e.target.value)}
                   disabled={disabled}
-                  className="min-h-[72px] text-sm font-mono resize-none"
+                  className="text-sm font-mono"
                 />
-                <p className="text-xs text-zinc-500">One pattern per line (combined with |). Optional filter.</p>
+                <p className="text-xs text-zinc-500">Optional: Only follow URLs containing this pattern</p>
               </div>
 
               {/* Suggested Selectors */}
@@ -290,6 +294,72 @@ export function CrawlModeSection({
                   />
                 </div>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Sitemap Mode Options */}
+        {extractionMode === 'sitemap' && canCrawl && (
+          <div className="p-4 bg-emerald-50/50 dark:bg-emerald-900/10 space-y-4">
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-medium text-emerald-800 dark:text-emerald-300">
+                Sitemap Extraction
+              </h3>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <HelpCircle className="h-3.5 w-3.5 text-emerald-600/60 cursor-help" />
+                </TooltipTrigger>
+                <TooltipContent side="right" className="max-w-[280px]">
+                  <p>Extract from all URLs listed in the site&apos;s sitemap.xml. Each URL is processed independently without following links.</p>
+                </TooltipContent>
+              </Tooltip>
+            </div>
+
+            <p className="text-sm text-emerald-700 dark:text-emerald-400">
+              Discovers URLs from sitemap.xml and extracts from each page independently. No link following - only processes sitemap URLs.
+            </p>
+
+            {/* URL Pattern Filter */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="sitemap-pattern" className="text-sm text-zinc-700 dark:text-zinc-300">
+                  URL Filter (optional)
+                </Label>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <HelpCircle className="h-3.5 w-3.5 text-zinc-400 cursor-help" />
+                  </TooltipTrigger>
+                  <TooltipContent side="right" className="max-w-[280px]">
+                    <p>Only process sitemap URLs containing this pattern. Leave empty to extract from all sitemap URLs.</p>
+                    <p className="mt-1 text-zinc-400">Example: <code className="text-xs">/products/</code></p>
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+              <Input
+                id="sitemap-pattern"
+                placeholder="e.g., /blog/ or /article/"
+                value={crawlOptions.followPattern}
+                onChange={(e) => updateOption('followPattern', e.target.value)}
+                disabled={disabled}
+                className="text-sm font-mono"
+              />
+              <p className="text-xs text-zinc-500">Optional: Only extract from sitemap URLs containing this pattern</p>
+            </div>
+
+            {/* Max Pages Limit */}
+            <div className="space-y-1.5">
+              <Label htmlFor="sitemap-max-pages" className="text-xs text-zinc-600 dark:text-zinc-400">
+                Max Pages (0 = no limit)
+              </Label>
+              <Input
+                id="sitemap-max-pages"
+                type="number"
+                min={0}
+                value={crawlOptions.maxPages}
+                onChange={(e) => updateOption('maxPages', parseInt(e.target.value) || 0)}
+                disabled={disabled}
+                className="h-9 w-32"
+              />
             </div>
           </div>
         )}

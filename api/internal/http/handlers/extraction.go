@@ -16,11 +16,15 @@ import (
 // ExtractionHandler handles extraction endpoints.
 type ExtractionHandler struct {
 	extractionSvc *service.ExtractionService
+	jobSvc        *service.JobService
 }
 
 // NewExtractionHandler creates a new extraction handler.
-func NewExtractionHandler(extractionSvc *service.ExtractionService) *ExtractionHandler {
-	return &ExtractionHandler{extractionSvc: extractionSvc}
+func NewExtractionHandler(extractionSvc *service.ExtractionService, jobSvc *service.JobService) *ExtractionHandler {
+	return &ExtractionHandler{
+		extractionSvc: extractionSvc,
+		jobSvc:        jobSvc,
+	}
 }
 
 // ExtractInput represents extraction request.
@@ -44,6 +48,7 @@ type LLMConfigInput struct {
 // ExtractOutput represents extraction response.
 type ExtractOutput struct {
 	Body struct {
+		JobID     string           `json:"job_id" doc:"Job ID for this extraction (for history/tracking)"`
 		Data      any              `json:"data" doc:"Extracted data matching the schema"`
 		URL       string           `json:"url" doc:"URL that was extracted"`
 		FetchedAt string           `json:"fetched_at" doc:"Timestamp when the page was fetched"`
@@ -83,12 +88,32 @@ func (h *ExtractionHandler) Extract(ctx context.Context, input *ExtractInput) (*
 	}
 
 	var llmCfg *service.LLMConfigInput
+	isBYOK := false
 	if input.Body.LLMConfig != nil {
 		llmCfg = &service.LLMConfigInput{
 			Provider: input.Body.LLMConfig.Provider,
 			APIKey:   input.Body.LLMConfig.APIKey,
 			BaseURL:  input.Body.LLMConfig.BaseURL,
 			Model:    input.Body.LLMConfig.Model,
+		}
+		// If user provides their own API key, it's BYOK
+		isBYOK = input.Body.LLMConfig.APIKey != ""
+	}
+
+	// Create job record before extraction (for history/tracking)
+	var jobID string
+	if h.jobSvc != nil {
+		jobOutput, err := h.jobSvc.CreateExtractJob(ctx, userID, service.CreateExtractJobInput{
+			URL:       input.Body.URL,
+			Schema:    input.Body.Schema,
+			FetchMode: input.Body.FetchMode,
+			IsBYOK:    isBYOK,
+		})
+		if err != nil {
+			// Log but don't fail - job tracking is secondary to extraction
+			// Continue without job tracking
+		} else {
+			jobID = jobOutput.JobID
 		}
 	}
 
@@ -104,18 +129,47 @@ func (h *ExtractionHandler) Extract(ctx context.Context, input *ExtractInput) (*
 		FetchMode: input.Body.FetchMode,
 		LLMConfig: llmCfg,
 	}, ectx)
+
+	// Update job record with result or error
+	if h.jobSvc != nil && jobID != "" {
+		if err != nil {
+			// Record the failure in job record
+			errMsg, errDetails, errCategory, provider, model := extractErrorDetails(err)
+			_ = h.jobSvc.FailExtractJob(ctx, jobID, service.FailExtractJobInput{
+				ErrorMessage:  errMsg,
+				ErrorDetails:  errDetails,
+				ErrorCategory: errCategory,
+				LLMProvider:   provider,
+				LLMModel:      model,
+			})
+		} else {
+			// Record success in job record
+			resultJSON, _ := json.Marshal(result.Data)
+			_ = h.jobSvc.CompleteExtractJob(ctx, jobID, service.CompleteExtractJobInput{
+				ResultJSON:       string(resultJSON),
+				PageCount:        1,
+				TokenUsageInput:  result.Usage.InputTokens,
+				TokenUsageOutput: result.Usage.OutputTokens,
+				LLMProvider:      result.Metadata.Provider,
+				LLMModel:         result.Metadata.Model,
+			})
+		}
+	}
+
 	if err != nil {
-		return nil, handleExtractionError(err)
+		return nil, handleExtractionError(err, isBYOK)
 	}
 
 	return &ExtractOutput{
 		Body: struct {
+			JobID     string           `json:"job_id" doc:"Job ID for this extraction (for history/tracking)"`
 			Data      any              `json:"data" doc:"Extracted data matching the schema"`
 			URL       string           `json:"url" doc:"URL that was extracted"`
 			FetchedAt string           `json:"fetched_at" doc:"Timestamp when the page was fetched"`
 			Usage     UsageResponse    `json:"usage" doc:"Token usage information"`
 			Metadata  MetadataResponse `json:"metadata" doc:"Extraction metadata"`
 		}{
+			JobID:     jobID,
 			Data:      result.Data,
 			URL:       result.URL,
 			FetchedAt: result.FetchedAt.Format("2006-01-02T15:04:05Z07:00"),
@@ -136,49 +190,129 @@ func (h *ExtractionHandler) Extract(ctx context.Context, input *ExtractInput) (*
 	}, nil
 }
 
-// handleExtractionError converts extraction errors to appropriate HTTP errors.
-func handleExtractionError(err error) error {
+// extractErrorDetails extracts user message, details, category, provider and model from an error.
+func extractErrorDetails(err error) (userMsg, details, category, provider, model string) {
+	var llmErr *llm.LLMError
+	if errors.As(err, &llmErr) {
+		userMsg = llmErr.UserMessage
+		details = llmErr.Error()
+		provider = llmErr.Provider
+		model = llmErr.Model
+		category = categorizeError(llmErr)
+		return
+	}
+	// Generic error
+	userMsg = "Extraction failed"
+	details = err.Error()
+	category = "unknown"
+	return
+}
+
+// categorizeError returns an error category string based on the LLM error type.
+func categorizeError(llmErr *llm.LLMError) string {
+	switch {
+	case errors.Is(llmErr.Err, llm.ErrInvalidAPIKey):
+		return "invalid_api_key"
+	case errors.Is(llmErr.Err, llm.ErrInsufficientCredits):
+		return "insufficient_credits"
+	case errors.Is(llmErr.Err, llm.ErrTierQuotaExceeded):
+		return "quota_exceeded"
+	case errors.Is(llmErr.Err, llm.ErrTierFeatureDisabled):
+		return "feature_disabled"
+	case errors.Is(llmErr.Err, llm.ErrFreeTierRateLimited):
+		return "rate_limited"
+	case errors.Is(llmErr.Err, llm.ErrFreeTierQuotaExhausted):
+		return "quota_exhausted"
+	case errors.Is(llmErr.Err, llm.ErrFreeTierUnavailable):
+		return "provider_unavailable"
+	case errors.Is(llmErr.Err, llm.ErrModelUnavailable):
+		return "model_unavailable"
+	case llmErr.Retryable:
+		return "provider_error"
+	default:
+		return "extraction_error"
+	}
+}
+
+// ExtractionError is a custom error type that includes additional context for the frontend.
+// It implements huma.StatusError interface so it can be returned from handlers.
+type ExtractionError struct {
+	Status        int    `json:"-"`
+	Title         string `json:"title,omitempty"`
+	Detail        string `json:"detail,omitempty"`
+	ErrorCategory string `json:"error_category,omitempty"`
+	ErrorDetails  string `json:"error_details,omitempty"` // Only for BYOK users
+	IsBYOK        bool   `json:"is_byok,omitempty"`
+	Provider      string `json:"provider,omitempty"`
+	Model         string `json:"model,omitempty"`
+}
+
+func (e *ExtractionError) Error() string {
+	return e.Detail
+}
+
+func (e *ExtractionError) GetStatus() int {
+	return e.Status
+}
+
+// handleExtractionError converts extraction errors to appropriate HTTP errors with category.
+func handleExtractionError(err error, isBYOK bool) error {
 	// Check if it's an LLM error
 	var llmErr *llm.LLMError
 	if errors.As(err, &llmErr) {
-		// Map LLM errors to appropriate HTTP status codes
-		switch {
-		// Tier quota errors (subscription-based limits)
-		case errors.Is(llmErr.Err, llm.ErrTierQuotaExceeded):
-			return huma.NewError(http.StatusTooManyRequests, llmErr.UserMessage)
+		category := categorizeError(llmErr)
+		status := determineStatusCode(llmErr)
 
-		case errors.Is(llmErr.Err, llm.ErrTierFeatureDisabled):
-			return huma.NewError(http.StatusForbidden, llmErr.UserMessage)
-
-		case errors.Is(llmErr.Err, llm.ErrInsufficientCredits):
-			return huma.NewError(http.StatusPaymentRequired, llmErr.UserMessage)
-
-		// OpenRouter free model errors
-		case errors.Is(llmErr.Err, llm.ErrFreeTierRateLimited):
-			return huma.NewError(http.StatusTooManyRequests, llmErr.UserMessage)
-
-		case errors.Is(llmErr.Err, llm.ErrFreeTierQuotaExhausted):
-			return huma.NewError(http.StatusPaymentRequired, llmErr.UserMessage)
-
-		case errors.Is(llmErr.Err, llm.ErrFreeTierUnavailable):
-			return huma.NewError(http.StatusServiceUnavailable, llmErr.UserMessage)
-
-		// General LLM errors
-		case errors.Is(llmErr.Err, llm.ErrModelUnavailable):
-			return huma.NewError(http.StatusServiceUnavailable, llmErr.UserMessage)
-
-		case errors.Is(llmErr.Err, llm.ErrInvalidAPIKey):
-			return huma.NewError(http.StatusUnauthorized, llmErr.UserMessage)
-
-		default:
-			// For other LLM errors, use the user message
-			if llmErr.Retryable {
-				return huma.NewError(http.StatusServiceUnavailable, llmErr.UserMessage)
-			}
-			return huma.NewError(http.StatusBadRequest, llmErr.UserMessage)
+		extractionErr := &ExtractionError{
+			Status:        status,
+			Title:         http.StatusText(status),
+			Detail:        llmErr.UserMessage,
+			ErrorCategory: category,
+			IsBYOK:        isBYOK,
 		}
+
+		// Include sensitive details only for BYOK users
+		if isBYOK {
+			extractionErr.ErrorDetails = llmErr.Error()
+			extractionErr.Provider = llmErr.Provider
+			extractionErr.Model = llmErr.Model
+		}
+
+		return extractionErr
 	}
 
 	// For non-LLM errors, return a generic error
-	return huma.Error500InternalServerError("extraction failed: " + err.Error())
+	return &ExtractionError{
+		Status:        http.StatusInternalServerError,
+		Title:         "Internal Server Error",
+		Detail:        "Extraction failed. Please try again later.",
+		ErrorCategory: "unknown",
+		IsBYOK:        isBYOK,
+	}
+}
+
+// determineStatusCode maps LLM errors to appropriate HTTP status codes.
+func determineStatusCode(llmErr *llm.LLMError) int {
+	switch {
+	case errors.Is(llmErr.Err, llm.ErrTierQuotaExceeded):
+		return http.StatusTooManyRequests
+	case errors.Is(llmErr.Err, llm.ErrTierFeatureDisabled):
+		return http.StatusForbidden
+	case errors.Is(llmErr.Err, llm.ErrInsufficientCredits):
+		return http.StatusPaymentRequired
+	case errors.Is(llmErr.Err, llm.ErrFreeTierRateLimited):
+		return http.StatusTooManyRequests
+	case errors.Is(llmErr.Err, llm.ErrFreeTierQuotaExhausted):
+		return http.StatusPaymentRequired
+	case errors.Is(llmErr.Err, llm.ErrFreeTierUnavailable):
+		return http.StatusServiceUnavailable
+	case errors.Is(llmErr.Err, llm.ErrModelUnavailable):
+		return http.StatusServiceUnavailable
+	case errors.Is(llmErr.Err, llm.ErrInvalidAPIKey):
+		return http.StatusUnauthorized
+	case llmErr.Retryable:
+		return http.StatusServiceUnavailable
+	default:
+		return http.StatusBadRequest
+	}
 }

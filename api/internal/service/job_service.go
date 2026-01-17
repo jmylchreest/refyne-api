@@ -61,6 +61,40 @@ type CreateCrawlJobOutput struct {
 	StatusURL string `json:"status_url"`
 }
 
+// CreateExtractJobInput represents input for creating a single-page extract job.
+type CreateExtractJobInput struct {
+	URL       string          `json:"url"`
+	Schema    json.RawMessage `json:"schema"`
+	FetchMode string          `json:"fetch_mode,omitempty"`
+	IsBYOK    bool            `json:"is_byok"`
+}
+
+// CreateExtractJobOutput represents output from creating an extract job.
+type CreateExtractJobOutput struct {
+	JobID  string `json:"job_id"`
+	Status string `json:"status"`
+}
+
+// CompleteExtractJobInput represents input for completing a successful extract job.
+type CompleteExtractJobInput struct {
+	ResultJSON       string  `json:"result_json"`
+	PageCount        int     `json:"page_count"`
+	TokenUsageInput  int     `json:"token_usage_input"`
+	TokenUsageOutput int     `json:"token_usage_output"`
+	CostCredits      int     `json:"cost_credits"`
+	LLMProvider      string  `json:"llm_provider"`
+	LLMModel         string  `json:"llm_model"`
+}
+
+// FailExtractJobInput represents input for failing an extract job.
+type FailExtractJobInput struct {
+	ErrorMessage  string `json:"error_message"`   // User-visible error (sanitized for non-BYOK)
+	ErrorDetails  string `json:"error_details"`   // Full error details (admin/BYOK only)
+	ErrorCategory string `json:"error_category"`  // Error classification (provider_error, rate_limit, invalid_key, parsing_error, fetch_error, etc.)
+	LLMProvider   string `json:"llm_provider,omitempty"`
+	LLMModel      string `json:"llm_model,omitempty"`
+}
+
 // CreateCrawlJob creates a new crawl job.
 func (s *JobService) CreateCrawlJob(ctx context.Context, userID string, input CreateCrawlJobInput) (*CreateCrawlJobOutput, error) {
 	// Serialize options
@@ -135,15 +169,17 @@ func (s *JobService) GetJobResults(ctx context.Context, userID, jobID string) ([
 	return s.repos.JobResult.GetByJobID(ctx, jobID)
 }
 
-// GetJobResultsAfter retrieves results after a given ID (for SSE streaming).
-func (s *JobService) GetJobResultsAfter(ctx context.Context, userID, jobID, afterID string) ([]*models.JobResult, error) {
+// GetJobResultsAfterID retrieves results with ID greater than afterID (for SSE streaming).
+// Pass empty string for afterID to get all results.
+// This works correctly because IDs are ULIDs which are lexicographically time-ordered.
+func (s *JobService) GetJobResultsAfterID(ctx context.Context, userID, jobID, afterID string) ([]*models.JobResult, error) {
 	// Verify job belongs to user
 	job, err := s.GetJob(ctx, userID, jobID)
 	if err != nil || job == nil {
 		return nil, err
 	}
 
-	return s.repos.JobResult.GetAfter(ctx, jobID, afterID)
+	return s.repos.JobResult.GetAfterID(ctx, jobID, afterID)
 }
 
 // GetCrawlMap retrieves the crawl map for a job (results ordered by depth).
@@ -163,7 +199,126 @@ func (s *JobService) GetCrawlMap(ctx context.Context, userID, jobID string) ([]*
 	return s.repos.JobResult.GetCrawlMap(ctx, jobID)
 }
 
+// CountJobResults returns the total number of results for a job.
+// This is useful for progress tracking (total discovered URLs).
+func (s *JobService) CountJobResults(ctx context.Context, userID, jobID string) (int, error) {
+	// Verify job belongs to user
+	job, err := s.GetJob(ctx, userID, jobID)
+	if err != nil || job == nil {
+		return 0, err
+	}
+
+	return s.repos.JobResult.CountByJobID(ctx, jobID)
+}
+
 // CountActiveJobsByUser counts jobs that are pending or running for a user.
 func (s *JobService) CountActiveJobsByUser(ctx context.Context, userID string) (int, error) {
 	return s.repos.Job.CountActiveByUserID(ctx, userID)
+}
+
+// CreateExtractJob creates a new single-page extract job with running status.
+// This should be called before starting extraction so we have a job record for history.
+func (s *JobService) CreateExtractJob(ctx context.Context, userID string, input CreateExtractJobInput) (*CreateExtractJobOutput, error) {
+	now := time.Now()
+	job := &models.Job{
+		ID:         ulid.Make().String(),
+		UserID:     userID,
+		Type:       models.JobTypeExtract,
+		Status:     models.JobStatusRunning,
+		URL:        input.URL,
+		SchemaJSON: string(input.Schema),
+		IsBYOK:     input.IsBYOK,
+		PageCount:  1, // Single-page extract always processes 1 page
+		StartedAt:  &now,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+
+	if err := s.repos.Job.Create(ctx, job); err != nil {
+		return nil, fmt.Errorf("failed to create extract job: %w", err)
+	}
+
+	s.logger.Info("created extract job",
+		"job_id", job.ID,
+		"user_id", userID,
+		"url", input.URL,
+		"is_byok", input.IsBYOK,
+	)
+
+	return &CreateExtractJobOutput{
+		JobID:  job.ID,
+		Status: string(job.Status),
+	}, nil
+}
+
+// CompleteExtractJob marks an extract job as completed with results.
+func (s *JobService) CompleteExtractJob(ctx context.Context, jobID string, input CompleteExtractJobInput) error {
+	job, err := s.repos.Job.GetByID(ctx, jobID)
+	if err != nil {
+		return fmt.Errorf("failed to get job: %w", err)
+	}
+	if job == nil {
+		return fmt.Errorf("job not found: %s", jobID)
+	}
+
+	now := time.Now()
+	job.Status = models.JobStatusCompleted
+	job.ResultJSON = input.ResultJSON
+	job.PageCount = input.PageCount
+	job.TokenUsageInput = input.TokenUsageInput
+	job.TokenUsageOutput = input.TokenUsageOutput
+	job.CostCredits = input.CostCredits
+	job.LLMProvider = input.LLMProvider
+	job.LLMModel = input.LLMModel
+	job.CompletedAt = &now
+	job.UpdatedAt = now
+
+	if err := s.repos.Job.Update(ctx, job); err != nil {
+		return fmt.Errorf("failed to update job: %w", err)
+	}
+
+	s.logger.Info("completed extract job",
+		"job_id", jobID,
+		"provider", input.LLMProvider,
+		"model", input.LLMModel,
+		"input_tokens", input.TokenUsageInput,
+		"output_tokens", input.TokenUsageOutput,
+	)
+
+	return nil
+}
+
+// FailExtractJob marks an extract job as failed with error details.
+func (s *JobService) FailExtractJob(ctx context.Context, jobID string, input FailExtractJobInput) error {
+	job, err := s.repos.Job.GetByID(ctx, jobID)
+	if err != nil {
+		return fmt.Errorf("failed to get job: %w", err)
+	}
+	if job == nil {
+		return fmt.Errorf("job not found: %s", jobID)
+	}
+
+	now := time.Now()
+	job.Status = models.JobStatusFailed
+	job.ErrorMessage = input.ErrorMessage
+	job.ErrorDetails = input.ErrorDetails
+	job.ErrorCategory = input.ErrorCategory
+	job.LLMProvider = input.LLMProvider
+	job.LLMModel = input.LLMModel
+	job.CompletedAt = &now
+	job.UpdatedAt = now
+
+	if err := s.repos.Job.Update(ctx, job); err != nil {
+		return fmt.Errorf("failed to update job: %w", err)
+	}
+
+	s.logger.Warn("extract job failed",
+		"job_id", jobID,
+		"error_category", input.ErrorCategory,
+		"error_message", input.ErrorMessage,
+		"provider", input.LLMProvider,
+		"model", input.LLMModel,
+	)
+
+	return nil
 }

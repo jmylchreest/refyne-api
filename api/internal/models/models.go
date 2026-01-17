@@ -69,6 +69,7 @@ type Job struct {
 	IsBYOK           bool       `json:"is_byok"`                  // True if user's own API key was used
 	LLMProvider      string     `json:"llm_provider,omitempty"`   // Last provider attempted
 	LLMModel         string     `json:"llm_model,omitempty"`      // Last model attempted
+	URLsQueued       int        `json:"urls_queued"`              // Total URLs queued for processing (for progress tracking)
 	PageCount        int        `json:"page_count"`
 	TokenUsageInput  int        `json:"token_usage_input"`
 	TokenUsageOutput int        `json:"token_usage_output"`

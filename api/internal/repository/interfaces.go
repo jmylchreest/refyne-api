@@ -49,11 +49,15 @@ type JobRepository interface {
 type JobResultRepository interface {
 	Create(ctx context.Context, result *models.JobResult) error
 	GetByJobID(ctx context.Context, jobID string) ([]*models.JobResult, error)
-	GetAfter(ctx context.Context, jobID, afterID string) ([]*models.JobResult, error)
+	// GetAfterID returns results with ID greater than afterID (works with ULIDs which are time-ordered).
+	// Pass empty string to get all results.
+	GetAfterID(ctx context.Context, jobID, afterID string) ([]*models.JobResult, error)
 	// GetCrawlMap returns results ordered by depth for crawl map visualization
 	GetCrawlMap(ctx context.Context, jobID string) ([]*models.JobResult, error)
 	// DeleteByJobIDs deletes all results for the specified job IDs
 	DeleteByJobIDs(ctx context.Context, jobIDs []string) error
+	// CountByJobID returns the total number of results (all statuses) for a job
+	CountByJobID(ctx context.Context, jobID string) (int, error)
 }
 
 // UsageRepository defines methods for usage data access (lean billing table).

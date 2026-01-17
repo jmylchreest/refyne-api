@@ -21,6 +21,7 @@ import (
 
 	"github.com/jmylchreest/refyne-api/internal/auth"
 	"github.com/jmylchreest/refyne-api/internal/config"
+	"github.com/jmylchreest/refyne-api/internal/constants"
 	"github.com/jmylchreest/refyne-api/internal/database"
 	"github.com/jmylchreest/refyne-api/internal/http/handlers"
 	"github.com/jmylchreest/refyne-api/internal/http/mw"
@@ -174,17 +175,32 @@ func main() {
 			Logger:   logger,
 		})
 
+		// Tier settings (override hardcoded tier limits from S3)
+		constants.InitTierLoader(constants.TierSettingsConfig{
+			S3Client: services.Storage.Client(),
+			Bucket:   bucket,
+			Key:      "config/tier_settings.json",
+			Logger:   logger,
+		})
+
 		logger.Info("S3 config loaders enabled",
 			"bucket", bucket,
 			"cache_ttl", "5m",
-			"configs", []string{"blocklist.json", "logfilters.json", "model_defaults.json"},
+			"configs", []string{"blocklist.json", "logfilters.json", "model_defaults.json", "tier_settings.json"},
 		)
 	}
 
 	router.Use(middleware.Logger)
 	router.Use(middleware.Recoverer)
-	// Custom timeout that skips SSE streaming endpoints
-	router.Use(mw.TimeoutWithSkip(60*time.Second, "/stream"))
+	// Request timeout middleware with different timeouts per endpoint type
+	router.Use(mw.Timeout(mw.TimeoutConfig{
+		Default:  constants.DefaultRequestTimeout,
+		Extended: constants.LLMRequestTimeout,
+		// LLM operations get extended timeout (page fetch + inference)
+		ExtendedPatterns: []string{"/analyze", "/extract"},
+		// SSE streaming has no timeout (managed by client disconnect)
+		SkipPatterns: []string{"/stream"},
+	}))
 
 	// CORS configuration
 	router.Use(cors.Handler(cors.Options{
@@ -371,7 +387,7 @@ func main() {
 		quotaAPI := humachi.New(r, protectedConfig)
 
 		// Extraction routes
-		huma.Post(quotaAPI, "/api/v1/extract", handlers.NewExtractionHandler(services.Extraction).Extract)
+		huma.Post(quotaAPI, "/api/v1/extract", handlers.NewExtractionHandler(services.Extraction, services.Job).Extract)
 
 		// Job creation routes
 		huma.Post(quotaAPI, "/api/v1/crawl", handlers.NewJobHandler(services.Job, services.Storage).CreateCrawlJob)

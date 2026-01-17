@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"math"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -144,132 +143,103 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 	llmConfigs, isBYOK := s.resolveLLMConfigsWithFallback(ctx, userID, input.LLMConfig, ectx.Tier)
 	ectx.IsBYOK = isBYOK
 
-	// Check balance for non-BYOK users (if billing is enabled)
-	if s.billing != nil && !isBYOK && len(llmConfigs) > 0 {
-		estimatedCost := s.billing.EstimateCost(1, llmConfigs[0].Model)
-		if err := s.billing.CheckSufficientBalance(ctx, userID, estimatedCost); err != nil {
-			return nil, err
+	// Estimate cost (triggers pricing cache refresh if needed) and check balance for non-BYOK
+	if s.billing != nil && len(llmConfigs) > 0 {
+		estimatedCost := s.billing.EstimateCost(1, llmConfigs[0].Model, llmConfigs[0].Provider)
+		s.logger.Debug("pre-flight cost estimate",
+			"user_id", userID,
+			"provider", llmConfigs[0].Provider,
+			"model", llmConfigs[0].Model,
+			"estimated_cost_usd", estimatedCost,
+			"is_byok", isBYOK,
+		)
+		// Only check balance for non-BYOK users
+		if !isBYOK {
+			if err := s.billing.CheckSufficientBalance(ctx, userID, estimatedCost); err != nil {
+				return nil, err
+			}
 		}
 	}
 
-	// Try each config in the chain until one succeeds, with retry and backoff
+	// Try each config in the chain until one succeeds (no retries on same model)
 	var lastErr error
 	var lastLLMErr *llm.LLMError
 	var lastCfg *LLMConfigInput
-	totalRetries := 0
 
 	for providerIdx, llmCfg := range llmConfigs {
 		lastCfg = llmCfg
 
-		// Retry loop for this provider with exponential backoff
-		for attempt := 0; attempt < constants.MaxRetryAttempts; attempt++ {
-			totalRetries++
+		s.logger.Info("extraction attempt",
+			"user_id", userID,
+			"url", input.URL,
+			"provider", llmCfg.Provider,
+			"model", llmCfg.Model,
+			"provider_idx", providerIdx+1,
+			"of_providers", len(llmConfigs),
+			"is_byok", isBYOK,
+		)
 
-			s.logger.Info("extraction attempt",
-				"user_id", userID,
-				"url", input.URL,
+		// Create refyne instance
+		r, _, err := s.createRefyneInstance(llmCfg)
+		if err != nil {
+			s.logger.Warn("failed to create LLM instance",
 				"provider", llmCfg.Provider,
 				"model", llmCfg.Model,
-				"provider_idx", providerIdx+1,
-				"of_providers", len(llmConfigs),
-				"attempt", attempt+1,
-				"max_attempts", constants.MaxRetryAttempts,
-				"is_byok", isBYOK,
+				"error", err,
 			)
-
-			// Create refyne instance
-			r, err := s.createRefyneInstance(llmCfg)
-			if err != nil {
-				s.logger.Warn("failed to create LLM instance",
-					"provider", llmCfg.Provider,
-					"model", llmCfg.Model,
-					"error", err,
-				)
-				lastErr = err
-				lastLLMErr = llm.WrapError(err, llmCfg.Provider, llmCfg.Model)
-				break // Can't retry instance creation, try next provider
-			}
-
-			// Perform extraction
-			result, err := r.Extract(ctx, input.URL, sch)
-			r.Close()
-
-			// Check for success
-			if err == nil && result != nil && result.Error == nil {
-				// Success! Handle billing and return
-				return s.handleSuccessfulExtraction(ctx, userID, input, ectx, llmCfg, result, isBYOK, startTime)
-			}
-
-			// Extraction failed - classify the error
-			if err != nil {
-				lastErr = err
-			} else if result != nil && result.Error != nil {
-				lastErr = result.Error
-			}
-
-			lastLLMErr = llm.WrapError(lastErr, llmCfg.Provider, llmCfg.Model)
-
-			s.logger.Warn("extraction failed",
-				"provider", llmCfg.Provider,
-				"model", llmCfg.Model,
-				"error", lastErr,
-				"category", lastLLMErr.Category,
-				"retryable", lastLLMErr.Retryable,
-				"should_fallback", lastLLMErr.ShouldFallback,
-				"attempt", attempt+1,
-			)
-
-			// Decide whether to retry with this provider or move to next
-			if !lastLLMErr.Retryable {
-				// Not retryable with same provider - check if we should fall back
-				if lastLLMErr.ShouldFallback {
-					s.logger.Info("error not retryable, falling back to next provider",
-						"provider", llmCfg.Provider,
-						"category", lastLLMErr.Category,
-					)
-					// Brief delay before trying next provider
-					time.Sleep(constants.ProviderFallbackDelay)
-				}
-				break // Exit retry loop for this provider
-			}
-
-			// Calculate backoff delay
-			backoff := s.calculateBackoff(attempt, lastLLMErr.Category)
-
-			// Check if context is still valid before sleeping
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
-			}
-
-			s.logger.Info("backing off before retry",
-				"provider", llmCfg.Provider,
-				"backoff", backoff.String(),
-				"attempt", attempt+1,
-			)
-
-			// Sleep with context awareness
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(backoff):
-				// Continue to next retry
-			}
+			lastErr = err
+			lastLLMErr = llm.WrapError(err, llmCfg.Provider, llmCfg.Model, isBYOK)
+			continue // Try next provider in chain
 		}
 
+		// Perform extraction
+		result, err := r.Extract(ctx, input.URL, sch)
+		r.Close()
+
+		// Check for success
+		if err == nil && result != nil && result.Error == nil {
+			// Success! Handle billing and return
+			return s.handleSuccessfulExtraction(ctx, userID, input, ectx, llmCfg, result, isBYOK, startTime)
+		}
+
+		// Extraction failed - classify the error
+		if err != nil {
+			lastErr = err
+		} else if result != nil && result.Error != nil {
+			lastErr = result.Error
+		}
+
+		lastLLMErr = llm.WrapError(lastErr, llmCfg.Provider, llmCfg.Model, isBYOK)
+
+		s.logger.Warn("extraction failed",
+			"provider", llmCfg.Provider,
+			"model", llmCfg.Model,
+			"error", lastErr,
+			"category", lastLLMErr.Category,
+			"should_fallback", lastLLMErr.ShouldFallback,
+		)
+
 		// If the error suggests we shouldn't try other providers, stop the chain
-		if lastLLMErr != nil && !lastLLMErr.ShouldFallback {
+		if !lastLLMErr.ShouldFallback {
 			s.logger.Info("error does not suggest fallback, stopping provider chain",
 				"provider", llmCfg.Provider,
 				"category", lastLLMErr.Category,
 			)
 			break
 		}
+
+		// Brief delay before trying next provider
+		s.logger.Info("falling back to next provider",
+			"provider", llmCfg.Provider,
+			"category", lastLLMErr.Category,
+		)
+		time.Sleep(constants.ProviderFallbackDelay)
 	}
 
 	// All attempts failed - record the failure with detailed error info
 	if lastErr != nil {
-		s.recordFailedExtractionWithDetails(ctx, userID, input, ectx, lastCfg, isBYOK, lastErr, lastLLMErr, totalRetries, startTime)
-		return nil, s.handleLLMError(lastErr, lastCfg)
+		s.recordFailedExtractionWithDetails(ctx, userID, input, ectx, lastCfg, isBYOK, lastErr, lastLLMErr, len(llmConfigs), startTime)
+		return nil, s.handleLLMError(lastErr, lastCfg, isBYOK)
 	}
 
 	return nil, fmt.Errorf("extraction failed: no LLM providers configured")
@@ -352,29 +322,6 @@ func (s *ExtractionService) recordFailedExtractionWithDetails(
 	}
 }
 
-// calculateBackoff calculates the backoff duration for a retry attempt.
-// Uses exponential backoff with longer initial delay for rate limits.
-func (s *ExtractionService) calculateBackoff(attempt int, category string) time.Duration {
-	var initial time.Duration
-
-	// Rate limits get longer initial backoff
-	if category == "rate_limit" {
-		initial = constants.RateLimitBackoff
-	} else {
-		initial = constants.InitialBackoff
-	}
-
-	// Exponential backoff: initial * (multiplier ^ attempt)
-	backoff := float64(initial) * math.Pow(constants.BackoffMultiplier, float64(attempt))
-
-	// Cap at maximum
-	if backoff > float64(constants.MaxBackoff) {
-		backoff = float64(constants.MaxBackoff)
-	}
-
-	return time.Duration(backoff)
-}
-
 // handleSuccessfulExtraction processes a successful extraction result.
 func (s *ExtractionService) handleSuccessfulExtraction(
 	ctx context.Context,
@@ -398,6 +345,8 @@ func (s *ExtractionService) handleSuccessfulExtraction(
 			TokensOutput:      result.TokenUsage.OutputTokens,
 			Model:             llmCfg.Model,
 			Provider:          llmCfg.Provider,
+			APIKey:            llmCfg.APIKey,
+			GenerationID:      result.GenerationID,
 			TargetURL:         input.URL,
 			SchemaID:          ectx.SchemaID,
 			PagesAttempted:    1,
@@ -426,7 +375,8 @@ func (s *ExtractionService) handleSuccessfulExtraction(
 		"model", llmCfg.Model,
 		"input_tokens", result.TokenUsage.InputTokens,
 		"output_tokens", result.TokenUsage.OutputTokens,
-		"cost_usd", usageInfo.CostUSD,
+		"llm_cost_usd", usageInfo.LLMCostUSD,
+		"user_cost_usd", usageInfo.CostUSD,
 		"is_byok", isBYOK,
 	)
 
@@ -612,6 +562,7 @@ func boolToInt(b bool) int {
 
 // CrawlInput represents crawl input.
 type CrawlInput struct {
+	JobID    string          `json:"job_id,omitempty"`    // Job ID for logging/tracking
 	URL      string          `json:"url"`
 	SeedURLs []string        `json:"seed_urls,omitempty"` // Additional seed URLs (from sitemap discovery)
 	Schema   json.RawMessage `json:"schema"`
@@ -631,6 +582,7 @@ type PageResult struct {
 	ErrorCategory     string  `json:"error_category,omitempty"`  // Error classification
 	LLMProvider       string  `json:"llm_provider,omitempty"`    // Provider used
 	LLMModel          string  `json:"llm_model,omitempty"`       // Model used
+	GenerationID      string  `json:"generation_id,omitempty"`   // Provider generation ID for cost tracking
 	IsBYOK            bool    `json:"is_byok"`                   // True if user's own key
 	RetryCount        int     `json:"retry_count"`               // Number of retries
 	TokenUsageInput   int     `json:"token_usage_input"`
@@ -652,17 +604,10 @@ type CrawlResult struct {
 // Crawl performs a multi-page crawl extraction.
 func (s *ExtractionService) Crawl(ctx context.Context, userID string, input CrawlInput) (*CrawlResult, error) {
 	// Resolve LLM configuration
-	llmCfg, err := s.resolveLLMConfig(ctx, userID, nil)
+	llmCfg, isBYOK, err := s.resolveLLMConfig(ctx, userID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve LLM config: %w", err)
 	}
-
-	s.logger.Info("crawl starting",
-		"user_id", userID,
-		"url", input.URL,
-		"provider", llmCfg.Provider,
-		"model", llmCfg.Model,
-	)
 
 	// Parse schema (supports both JSON and YAML)
 	sch, err := parseSchema(input.Schema)
@@ -671,11 +616,20 @@ func (s *ExtractionService) Crawl(ctx context.Context, userID string, input Craw
 	}
 
 	// Create refyne instance
-	r, err := s.createRefyneInstance(llmCfg)
+	r, cleanerName, err := s.createRefyneInstance(llmCfg)
 	if err != nil {
-		return nil, s.handleLLMError(err, llmCfg)
+		return nil, s.handleLLMError(err, llmCfg, isBYOK)
 	}
 	defer r.Close()
+
+	s.logger.Info("crawl starting",
+		"job_id", input.JobID,
+		"user_id", userID,
+		"url", input.URL,
+		"cleaner", cleanerName,
+		"provider", llmCfg.Provider,
+		"model", llmCfg.Model,
+	)
 
 	// Build crawl options
 	crawlOpts := s.buildCrawlOptions(input.Options)
@@ -717,9 +671,12 @@ func (s *ExtractionService) Crawl(ctx context.Context, userID string, input Craw
 		}
 
 		if result.Error != nil {
-			// Log with model/provider info for debugging
+			// Log with job/user/model/provider/cleaner info for debugging
 			s.logger.Warn("crawl page error",
+				"job_id", input.JobID,
+				"user_id", userID,
 				"url", result.URL,
+				"cleaner", cleanerName,
 				"provider", llmCfg.Provider,
 				"model", llmCfg.Model,
 				"error", result.Error,
@@ -727,7 +684,7 @@ func (s *ExtractionService) Crawl(ctx context.Context, userID string, input Craw
 			lastError = result.Error
 
 			// Wrap error for user-friendly messaging
-			llmErr := llm.WrapError(result.Error, llmCfg.Provider, llmCfg.Model)
+			llmErr := llm.WrapError(result.Error, llmCfg.Provider, llmCfg.Model, isBYOK)
 			userMsg := result.Error.Error()
 			category := "unknown"
 			if llmErr != nil {
@@ -744,9 +701,34 @@ func (s *ExtractionService) Crawl(ctx context.Context, userID string, input Craw
 				ErrorCategory: category,
 				LLMProvider:   llmCfg.Provider,
 				LLMModel:      llmCfg.Model,
+				IsBYOK:        isBYOK,
 			})
 			continue
 		}
+
+		// Calculate per-page cost for logging - use actual cost from provider when available
+		var pageLLMCost, pageUserCost float64
+		if s.billing != nil {
+			pageLLMCost = s.billing.GetActualCostFromProvider(ctx, llmCfg.Provider, result.GenerationID, llmCfg.APIKey, result.TokenUsage.InputTokens, result.TokenUsage.OutputTokens, llmCfg.Model)
+			pageUserCost, _, _ = s.billing.CalculateTotalCost(pageLLMCost, "")
+		}
+
+		// Log successful extraction
+		s.logger.Info("extracted",
+			"job_id", input.JobID,
+			"user_id", userID,
+			"url", result.URL,
+			"cleaner", cleanerName,
+			"provider", llmCfg.Provider,
+			"model", llmCfg.Model,
+			"fetch_ms", result.FetchDuration.Milliseconds(),
+			"extract_ms", result.ExtractDuration.Milliseconds(),
+			"input_tokens", result.TokenUsage.InputTokens,
+			"output_tokens", result.TokenUsage.OutputTokens,
+			"llm_cost_usd", pageLLMCost,
+			"user_cost_usd", pageUserCost,
+			"is_byok", isBYOK,
+		)
 
 		data = append(data, result.Data)
 		pageResults = append(pageResults, PageResult{
@@ -768,12 +750,19 @@ func (s *ExtractionService) Crawl(ctx context.Context, userID string, input Craw
 
 	// If no results and we have an error, return the error
 	if pageCount == 0 && lastError != nil {
-		return nil, s.handleLLMError(lastError, llmCfg)
+		return nil, s.handleLLMError(lastError, llmCfg, isBYOK)
 	}
 
 	// Calculate cost
 	totalTokens := totalTokensInput + totalTokensOutput
 	totalCredits := (totalTokens + 999) / 1000
+
+	// Calculate actual costs for logging
+	var llmCostUSD, userCostUSD float64
+	if s.billing != nil {
+		llmCostUSD = s.billing.GetActualCost(ctx, totalTokensInput, totalTokensOutput, llmCfg.Model, llmCfg.Provider)
+		userCostUSD, _, _ = s.billing.CalculateTotalCost(llmCostUSD, "")
+	}
 
 	// Record usage
 	s.recordUsageLegacy(ctx, userID, "", models.JobTypeCrawl, pageCount,
@@ -781,11 +770,17 @@ func (s *ExtractionService) Crawl(ctx context.Context, userID string, input Craw
 		llmCfg.Provider, llmCfg.Model)
 
 	s.logger.Info("crawl completed",
+		"job_id", input.JobID,
 		"user_id", userID,
 		"url", input.URL,
+		"cleaner", cleanerName,
+		"provider", llmCfg.Provider,
+		"model", llmCfg.Model,
 		"page_count", pageCount,
 		"total_input_tokens", totalTokensInput,
 		"total_output_tokens", totalTokensOutput,
+		"llm_cost_usd", llmCostUSD,
+		"user_cost_usd", userCostUSD,
 	)
 
 	return &CrawlResult{
@@ -802,11 +797,27 @@ func (s *ExtractionService) Crawl(ctx context.Context, userID string, input Craw
 // Return an error to stop the crawl early.
 type CrawlResultCallback func(result PageResult) error
 
-// CrawlWithCallback performs a multi-page crawl extraction with a callback for each result.
-// This allows incremental processing of results (e.g., saving to database as they come in).
-func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string, input CrawlInput, callback CrawlResultCallback) (*CrawlResult, error) {
+// URLsQueuedCallback is called when URLs are discovered and queued for processing.
+// The count parameter is the total number of URLs currently queued.
+type URLsQueuedCallback func(queuedCount int)
+
+// CrawlCallbacks holds callbacks for crawl events.
+type CrawlCallbacks struct {
+	// OnResult is called for each page result (success or failure).
+	// Return an error to stop the crawl early.
+	OnResult CrawlResultCallback
+
+	// OnURLsQueued is called when URLs are discovered and queued.
+	// This is useful for progress tracking when the total is not known upfront.
+	OnURLsQueued URLsQueuedCallback
+}
+
+// CrawlWithCallback performs a multi-page crawl extraction with callbacks for events.
+// This allows incremental processing of results (e.g., saving to database as they come in)
+// and tracking of URL discovery for progress reporting.
+func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string, input CrawlInput, callbacks CrawlCallbacks) (*CrawlResult, error) {
 	// Resolve LLM configuration
-	llmCfg, err := s.resolveLLMConfig(ctx, userID, nil)
+	llmCfg, isBYOK, err := s.resolveLLMConfig(ctx, userID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve LLM config: %w", err)
 	}
@@ -817,14 +828,6 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 		seedURLs = []string{input.URL}
 	}
 
-	s.logger.Info("crawl starting",
-		"user_id", userID,
-		"url", input.URL,
-		"seed_count", len(seedURLs),
-		"provider", llmCfg.Provider,
-		"model", llmCfg.Model,
-	)
-
 	// Parse schema (supports both JSON and YAML)
 	sch, err := parseSchema(input.Schema)
 	if err != nil {
@@ -832,14 +835,31 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 	}
 
 	// Create refyne instance
-	r, err := s.createRefyneInstance(llmCfg)
+	r, cleanerName, err := s.createRefyneInstance(llmCfg)
 	if err != nil {
-		return nil, s.handleLLMError(err, llmCfg)
+		return nil, s.handleLLMError(err, llmCfg, isBYOK)
 	}
 	defer r.Close()
 
+	s.logger.Info("crawl starting",
+		"job_id", input.JobID,
+		"user_id", userID,
+		"url", input.URL,
+		"seed_count", len(seedURLs),
+		"cleaner", cleanerName,
+		"provider", llmCfg.Provider,
+		"model", llmCfg.Model,
+	)
+
 	// Build crawl options
 	crawlOpts := s.buildCrawlOptions(input.Options)
+	crawlOpts = s.addURLsQueuedCallback(crawlOpts, callbacks.OnURLsQueued)
+
+	s.logger.Debug("initiating crawler",
+		"job_id", input.JobID,
+		"seed_count", len(seedURLs),
+		"options", fmt.Sprintf("%+v", input.Options),
+	)
 
 	// Perform crawl - use CrawlMany for multiple seeds (from sitemap), single Crawl otherwise
 	var results <-chan *refyne.Result
@@ -848,6 +868,10 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 	} else {
 		results = r.Crawl(ctx, input.URL, sch, crawlOpts...)
 	}
+
+	s.logger.Debug("crawler channel ready, waiting for results",
+		"job_id", input.JobID,
+	)
 
 	// Aggregate results while calling callback for each
 	seedURL := input.URL
@@ -881,9 +905,12 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 
 		var pageResult PageResult
 		if result.Error != nil {
-			// Log with model/provider info for debugging
+			// Log with job/user/model/provider/cleaner info for debugging
 			s.logger.Warn("crawl page error",
+				"job_id", input.JobID,
+				"user_id", userID,
 				"url", result.URL,
+				"cleaner", cleanerName,
 				"provider", llmCfg.Provider,
 				"model", llmCfg.Model,
 				"error", result.Error,
@@ -891,7 +918,7 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 			lastError = result.Error
 
 			// Wrap error for user-friendly messaging
-			llmErr := llm.WrapError(result.Error, llmCfg.Provider, llmCfg.Model)
+			llmErr := llm.WrapError(result.Error, llmCfg.Provider, llmCfg.Model, isBYOK)
 			userMsg := result.Error.Error()
 			category := "unknown"
 			if llmErr != nil {
@@ -907,8 +934,33 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 				ErrorCategory: category,
 				LLMProvider:   llmCfg.Provider,
 				LLMModel:      llmCfg.Model,
+				IsBYOK:        isBYOK,
 			}
 		} else {
+			// Calculate per-page cost for logging - use actual cost from provider when available
+			var pageLLMCost, pageUserCost float64
+			if s.billing != nil {
+				pageLLMCost = s.billing.GetActualCostFromProvider(ctx, llmCfg.Provider, result.GenerationID, llmCfg.APIKey, result.TokenUsage.InputTokens, result.TokenUsage.OutputTokens, llmCfg.Model)
+				pageUserCost, _, _ = s.billing.CalculateTotalCost(pageLLMCost, "")
+			}
+
+			// Log successful extraction
+			s.logger.Info("extracted",
+				"job_id", input.JobID,
+				"user_id", userID,
+				"url", result.URL,
+				"cleaner", cleanerName,
+				"provider", llmCfg.Provider,
+				"model", llmCfg.Model,
+				"fetch_ms", result.FetchDuration.Milliseconds(),
+				"extract_ms", result.ExtractDuration.Milliseconds(),
+				"input_tokens", result.TokenUsage.InputTokens,
+				"output_tokens", result.TokenUsage.OutputTokens,
+				"llm_cost_usd", pageLLMCost,
+				"user_cost_usd", pageUserCost,
+				"is_byok", isBYOK,
+			)
+
 			data = append(data, result.Data)
 			pageResult = PageResult{
 				URL:               result.URL,
@@ -921,6 +973,7 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 				ExtractDurationMs: int(result.ExtractDuration.Milliseconds()),
 				LLMProvider:       result.Provider,
 				LLMModel:          result.Model,
+				GenerationID:      result.GenerationID,
 			}
 			totalTokensInput += result.TokenUsage.InputTokens
 			totalTokensOutput += result.TokenUsage.OutputTokens
@@ -929,9 +982,9 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 
 		pageResults = append(pageResults, pageResult)
 
-		// Call the callback for this result
-		if callback != nil {
-			if err := callback(pageResult); err != nil {
+		// Call the result callback
+		if callbacks.OnResult != nil {
+			if err := callbacks.OnResult(pageResult); err != nil {
 				s.logger.Error("callback error, stopping crawl", "error", err)
 				break
 			}
@@ -940,12 +993,19 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 
 	// If no results and we have an error, return the error
 	if pageCount == 0 && lastError != nil {
-		return nil, s.handleLLMError(lastError, llmCfg)
+		return nil, s.handleLLMError(lastError, llmCfg, isBYOK)
 	}
 
 	// Calculate cost
 	totalTokens := totalTokensInput + totalTokensOutput
 	totalCredits := (totalTokens + 999) / 1000
+
+	// Calculate actual costs for logging
+	var llmCostUSD, userCostUSD float64
+	if s.billing != nil {
+		llmCostUSD = s.billing.GetActualCost(ctx, totalTokensInput, totalTokensOutput, llmCfg.Model, llmCfg.Provider)
+		userCostUSD, _, _ = s.billing.CalculateTotalCost(llmCostUSD, "")
+	}
 
 	// Record usage
 	s.recordUsageLegacy(ctx, userID, "", models.JobTypeCrawl, pageCount,
@@ -953,11 +1013,17 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 		llmCfg.Provider, llmCfg.Model)
 
 	s.logger.Info("crawl completed",
+		"job_id", input.JobID,
 		"user_id", userID,
 		"url", input.URL,
+		"cleaner", cleanerName,
+		"provider", llmCfg.Provider,
+		"model", llmCfg.Model,
 		"page_count", pageCount,
 		"total_input_tokens", totalTokensInput,
 		"total_output_tokens", totalTokensOutput,
+		"llm_cost_usd", llmCostUSD,
+		"user_cost_usd", userCostUSD,
 	)
 
 	return &CrawlResult{
@@ -971,21 +1037,25 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 }
 
 // createRefyneInstance creates a new refyne instance with the given LLM config.
-// Uses Trafilatura (text output) -> Markdown cleaner chain and a 120s timeout.
-func (s *ExtractionService) createRefyneInstance(llmCfg *LLMConfigInput) (*refyne.Refyne, error) {
-	// Create cleaner chain: Trafilatura (text output) -> Markdown
-	// This extracts main content and converts to clean markdown for the LLM
-	trafilaturaCleaner := cleaner.NewTrafilatura(&cleaner.TrafilaturaConfig{
-		Output: cleaner.OutputText, // Text output for cleaner result
-	})
-	markdownCleaner := cleaner.NewMarkdown()
-	cleanerChain := cleaner.NewChain(trafilaturaCleaner, markdownCleaner)
+// Returns the refyne instance and the cleaner name for logging.
+func (s *ExtractionService) createRefyneInstance(llmCfg *LLMConfigInput) (*refyne.Refyne, string, error) {
+	// Use Readability -> Markdown chain
+	// 1. Readability extracts main content (or falls back to original if not article-like)
+	// 2. Markdown converts HTML to markdown (strips tags, preserves structure)
+	// This ensures we always get markdown output even if Readability can't extract.
+	contentCleaner := cleaner.NewChain(
+		cleaner.NewReadability(&cleaner.ReadabilityConfig{
+			Output: cleaner.OutputHTML,
+		}),
+		cleaner.NewMarkdown(),
+	)
 
 	opts := []refyne.Option{
 		refyne.WithProvider(llmCfg.Provider),
-		refyne.WithCleaner(cleanerChain),
+		refyne.WithCleaner(contentCleaner),
 		refyne.WithTimeout(llm.LLMTimeout), // 120s timeout for LLM requests
 		refyne.WithStrictMode(llmCfg.StrictMode),
+		refyne.WithLogger(s.logger), // Inject our logger into refyne
 	}
 
 	if llmCfg.APIKey != "" {
@@ -998,7 +1068,19 @@ func (s *ExtractionService) createRefyneInstance(llmCfg *LLMConfigInput) (*refyn
 		opts = append(opts, refyne.WithModel(llmCfg.Model))
 	}
 
-	return refyne.New(opts...)
+	r, err := refyne.New(opts...)
+	if err != nil {
+		return nil, "", err
+	}
+	return r, contentCleaner.Name(), nil
+}
+
+// addURLsQueuedCallback adds the OnURLsQueued callback to crawl options.
+func (s *ExtractionService) addURLsQueuedCallback(opts []refyne.CrawlOption, callback URLsQueuedCallback) []refyne.CrawlOption {
+	if callback == nil {
+		return opts
+	}
+	return append(opts, refyne.WithOnURLsQueued(callback))
 }
 
 // buildCrawlOptions converts CrawlOptions to refyne.CrawlOption slice.
@@ -1042,8 +1124,9 @@ func (s *ExtractionService) buildCrawlOptions(opts CrawlOptions) []refyne.CrawlO
 }
 
 // handleLLMError wraps an LLM error with user-friendly messaging.
-func (s *ExtractionService) handleLLMError(err error, llmCfg *LLMConfigInput) error {
-	llmErr := llm.WrapError(err, llmCfg.Provider, llmCfg.Model)
+// The isBYOK parameter indicates whether the user is using their own API key.
+func (s *ExtractionService) handleLLMError(err error, llmCfg *LLMConfigInput, isBYOK bool) error {
+	llmErr := llm.WrapError(err, llmCfg.Provider, llmCfg.Model, isBYOK)
 
 	// Log the detailed error
 	s.logger.Error("LLM error",
@@ -1053,6 +1136,7 @@ func (s *ExtractionService) handleLLMError(err error, llmCfg *LLMConfigInput) er
 		"user_message", llmErr.UserMessage,
 		"retryable", llmErr.Retryable,
 		"suggest_upgrade", llmErr.SuggestUpgrade,
+		"is_byok", isBYOK,
 	)
 
 	return llmErr
@@ -1060,10 +1144,11 @@ func (s *ExtractionService) handleLLMError(err error, llmCfg *LLMConfigInput) er
 
 // resolveLLMConfig determines which LLM configuration to use.
 // This is a simpler version that returns a single config (for Crawl operations).
-func (s *ExtractionService) resolveLLMConfig(ctx context.Context, userID string, override *LLMConfigInput) (*LLMConfigInput, error) {
-	// If override provided with provider, use it
+// Returns (config, isBYOK, error) where isBYOK is true if the user is using their own API key.
+func (s *ExtractionService) resolveLLMConfig(ctx context.Context, userID string, override *LLMConfigInput) (*LLMConfigInput, bool, error) {
+	// If override provided with provider, use it (assume BYOK since user provided it)
 	if override != nil && override.Provider != "" {
-		return override, nil
+		return override, true, nil
 	}
 
 	// 1. Check user's fallback chain first (new system)
@@ -1074,7 +1159,7 @@ func (s *ExtractionService) resolveLLMConfig(ctx context.Context, userID string,
 			"provider", configs[0].Provider,
 			"model", configs[0].Model,
 		)
-		return configs[0], nil
+		return configs[0], true, nil
 	}
 
 	// 2. Check user's legacy saved config
@@ -1106,14 +1191,14 @@ func (s *ExtractionService) resolveLLMConfig(ctx context.Context, userID string,
 			APIKey:   apiKey,
 			BaseURL:  savedCfg.BaseURL,
 			Model:    savedCfg.Model,
-		}, nil
+		}, true, nil // BYOK = true for user's legacy config
 	}
 
 	// 3. Default to service keys or free tier
 	s.logger.Info("using system config for crawl",
 		"user_id", userID,
 	)
-	return s.getDefaultLLMConfig(), nil
+	return s.getDefaultLLMConfig(), false, nil // BYOK = false for system config
 }
 
 // getDefaultLLMConfigs returns the fallback chain of LLM configurations for users without custom config.

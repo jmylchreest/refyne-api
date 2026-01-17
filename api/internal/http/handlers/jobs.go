@@ -237,22 +237,11 @@ func (h *JobHandler) CreateCrawlJob(ctx context.Context, input *CreateCrawlJobIn
 		},
 	}
 
-	// For completed jobs, get and merge results
+	// For completed jobs, collect results into { items: [...] }
 	if job.Status == models.JobStatusCompleted {
 		results, err := h.jobSvc.GetJobResults(ctx, userID, job.ID)
 		if err == nil && len(results) > 0 {
-			merged := make(map[string]any)
-			for _, r := range results {
-				if r.DataJSON == "" {
-					continue
-				}
-				var data map[string]any
-				if err := json.Unmarshal([]byte(r.DataJSON), &data); err != nil {
-					continue
-				}
-				deepMergeResults(merged, data)
-			}
-			output.Body.Data = merged
+			output.Body.Data = collectAllResults(results)
 		}
 	}
 
@@ -278,11 +267,13 @@ type JobResponse struct {
 	Type             string `json:"type"`
 	Status           string `json:"status"`
 	URL              string `json:"url"`
-	PageCount        int    `json:"page_count"`
+	URLsQueued       int    `json:"urls_queued"`  // Total URLs queued for processing (for progress tracking)
+	PageCount        int    `json:"page_count"`   // Pages processed so far
 	TokenUsageInput  int    `json:"token_usage_input"`
 	TokenUsageOutput int    `json:"token_usage_output"`
 	CostCredits      int    `json:"cost_credits"`
 	ErrorMessage     string `json:"error_message,omitempty"`
+	ErrorCategory    string `json:"error_category,omitempty"`
 	StartedAt        string `json:"started_at,omitempty"`
 	CompletedAt      string `json:"completed_at,omitempty"`
 	CreatedAt        string `json:"created_at"`
@@ -307,11 +298,13 @@ func (h *JobHandler) ListJobs(ctx context.Context, input *ListJobsInput) (*ListJ
 			Type:             string(job.Type),
 			Status:           string(job.Status),
 			URL:              job.URL,
+			URLsQueued:       job.URLsQueued,
 			PageCount:        job.PageCount,
 			TokenUsageInput:  job.TokenUsageInput,
 			TokenUsageOutput: job.TokenUsageOutput,
 			CostCredits:      job.CostCredits,
 			ErrorMessage:     job.ErrorMessage,
+			ErrorCategory:    job.ErrorCategory,
 			CreatedAt:        job.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		}
 		if job.StartedAt != nil {
@@ -362,11 +355,13 @@ func (h *JobHandler) GetJob(ctx context.Context, input *GetJobInput) (*GetJobOut
 		Type:             string(job.Type),
 		Status:           string(job.Status),
 		URL:              job.URL,
+		URLsQueued:       job.URLsQueued,
 		PageCount:        job.PageCount,
 		TokenUsageInput:  job.TokenUsageInput,
 		TokenUsageOutput: job.TokenUsageOutput,
 		CostCredits:      job.CostCredits,
 		ErrorMessage:     job.ErrorMessage,
+		ErrorCategory:    job.ErrorCategory,
 		CreatedAt:        job.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 	if job.StartedAt != nil {
@@ -429,34 +424,50 @@ func (h *JobHandler) StreamResults(w http.ResponseWriter, r *http.Request) {
 		// The connection will just close after the server's WriteTimeout
 	}
 
-	// Send initial status
+	// Send initial status with urls_queued for progress tracking
 	sendSSEEvent(w, flusher, "status", map[string]any{
-		"job_id": job.ID,
-		"status": string(job.Status),
+		"job_id":      job.ID,
+		"status":      string(job.Status),
+		"urls_queued": job.URLsQueued,
+		"page_count":  job.PageCount,
 	})
 
 	// If job is already completed, send results and close
 	if job.Status == models.JobStatusCompleted || job.Status == models.JobStatusFailed {
-		if job.Status == models.JobStatusCompleted {
-			// Send final results
-			results, _ := h.jobSvc.GetJobResults(r.Context(), userID, jobID)
-			for _, result := range results {
-				sendSSEEvent(w, flusher, "result", map[string]any{
-					"id":   result.ID,
-					"url":  result.URL,
-					"data": json.RawMessage(result.DataJSON),
-				})
+		// Send final results (including failed pages for error visibility)
+		results, _ := h.jobSvc.GetJobResults(r.Context(), userID, jobID)
+		for _, result := range results {
+			event := map[string]any{
+				"id":     result.ID,
+				"url":    result.URL,
+				"status": string(result.CrawlStatus),
 			}
+			if result.DataJSON != "" {
+				event["data"] = json.RawMessage(result.DataJSON)
+			}
+			// Add result info with BYOK-aware sanitization
+			ResultInfo{
+				ErrorMessage:  result.ErrorMessage,
+				ErrorCategory: result.ErrorCategory,
+				ErrorDetails:  result.ErrorDetails,
+				LLMProvider:   result.LLMProvider,
+				LLMModel:      result.LLMModel,
+				IsBYOK:        result.IsBYOK,
+			}.ApplyToMap(event)
+			sendSSEEvent(w, flusher, "result", event)
 		}
 		sendSSEEvent(w, flusher, "complete", map[string]any{
-			"job_id":     job.ID,
-			"status":     string(job.Status),
-			"page_count": job.PageCount,
+			"job_id":         job.ID,
+			"status":         string(job.Status),
+			"page_count":     job.PageCount,
+			"error_message":  job.ErrorMessage,
+			"error_category": job.ErrorCategory,
 		})
 		return
 	}
 
 	// Poll for results with heartbeat to prevent proxy timeouts
+	// Track by ULID which is lexicographically time-ordered
 	var lastResultID string
 	pollTicker := time.NewTicker(1 * time.Second)
 	defer pollTicker.Stop()
@@ -474,8 +485,8 @@ func (h *JobHandler) StreamResults(w http.ResponseWriter, r *http.Request) {
 			// Send heartbeat to keep connection alive
 			sendSSEHeartbeat(w, flusher)
 		case <-pollTicker.C:
-			// Check for new results
-			results, err := h.jobSvc.GetJobResultsAfter(ctx, userID, jobID, lastResultID)
+			// Check for new results (ULIDs are time-ordered so id > lastID works correctly)
+			results, err := h.jobSvc.GetJobResultsAfterID(ctx, userID, jobID, lastResultID)
 			if err != nil {
 				sendSSEEvent(w, flusher, "error", map[string]any{
 					"message": "failed to fetch results",
@@ -485,11 +496,24 @@ func (h *JobHandler) StreamResults(w http.ResponseWriter, r *http.Request) {
 
 			// Send new results
 			for _, result := range results {
-				sendSSEEvent(w, flusher, "result", map[string]any{
-					"id":   result.ID,
-					"url":  result.URL,
-					"data": json.RawMessage(result.DataJSON),
-				})
+				event := map[string]any{
+					"id":     result.ID,
+					"url":    result.URL,
+					"status": string(result.CrawlStatus),
+				}
+				if result.DataJSON != "" {
+					event["data"] = json.RawMessage(result.DataJSON)
+				}
+				// Add result info with BYOK-aware sanitization
+				ResultInfo{
+					ErrorMessage:  result.ErrorMessage,
+					ErrorCategory: result.ErrorCategory,
+					ErrorDetails:  result.ErrorDetails,
+					LLMProvider:   result.LLMProvider,
+					LLMModel:      result.LLMModel,
+					IsBYOK:        result.IsBYOK,
+				}.ApplyToMap(event)
+				sendSSEEvent(w, flusher, "result", event)
 				lastResultID = result.ID
 			}
 
@@ -499,21 +523,23 @@ func (h *JobHandler) StreamResults(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			// Send status update
+			// Send status update with urls_queued for progress tracking
 			sendSSEEvent(w, flusher, "status", map[string]any{
-				"job_id":     job.ID,
-				"status":     string(job.Status),
-				"page_count": job.PageCount,
+				"job_id":      job.ID,
+				"status":      string(job.Status),
+				"urls_queued": job.URLsQueued,
+				"page_count":  job.PageCount,
 			})
 
 			// If job is done, send complete event and close
 			if job.Status == models.JobStatusCompleted || job.Status == models.JobStatusFailed {
 				sendSSEEvent(w, flusher, "complete", map[string]any{
-					"job_id":       job.ID,
-					"status":       string(job.Status),
-					"page_count":   job.PageCount,
-					"error":        job.ErrorMessage,
-					"cost_credits": job.CostCredits,
+					"job_id":         job.ID,
+					"status":         string(job.Status),
+					"page_count":     job.PageCount,
+					"error_message":  job.ErrorMessage,
+					"error_category": job.ErrorCategory,
+					"cost_credits":   job.CostCredits,
 				})
 				return
 			}
@@ -552,6 +578,10 @@ type CrawlMapEntry struct {
 	Depth             int     `json:"depth" doc:"Crawl depth (0 for seed URL)"`
 	Status            string  `json:"status" doc:"Crawl status: pending, crawling, completed, failed, skipped"`
 	ErrorMessage      string  `json:"error_message,omitempty" doc:"Error message if failed"`
+	ErrorCategory     string  `json:"error_category,omitempty" doc:"Error classification: rate_limit, quota_exceeded, provider_error, invalid_key, context_length, invalid_response, network_error, unknown"`
+	ErrorDetails      string  `json:"error_details,omitempty" doc:"Full error details (BYOK users only)"`
+	LLMProvider       string  `json:"llm_provider,omitempty" doc:"LLM provider used (BYOK users only)"`
+	LLMModel          string  `json:"llm_model,omitempty" doc:"LLM model used (BYOK users only)"`
 	TokenUsageInput   int     `json:"token_usage_input" doc:"Input tokens used"`
 	TokenUsageOutput  int     `json:"token_usage_output" doc:"Output tokens used"`
 	FetchDurationMs   int     `json:"fetch_duration_ms" doc:"Time to fetch page in ms"`
@@ -560,14 +590,24 @@ type CrawlMapEntry struct {
 	CompletedAt       string  `json:"completed_at,omitempty" doc:"When processing completed"`
 }
 
+// ErrorSummary provides a breakdown of errors by category.
+type ErrorSummary struct {
+	Total        int            `json:"total" doc:"Total number of failed pages"`
+	ByCategory   map[string]int `json:"by_category" doc:"Count of errors by category (rate_limit, quota_exceeded, etc.)"`
+	HasRateLimit bool           `json:"has_rate_limit" doc:"True if any rate_limit errors occurred"`
+}
+
 // GetCrawlMapOutput represents crawl map response.
 type GetCrawlMapOutput struct {
 	Body struct {
-		JobID    string          `json:"job_id" doc:"Job ID"`
-		SeedURL  string          `json:"seed_url" doc:"Initial seed URL"`
-		Total    int             `json:"total" doc:"Total pages in crawl map"`
-		MaxDepth int             `json:"max_depth" doc:"Maximum depth reached"`
-		Entries  []CrawlMapEntry `json:"entries" doc:"Crawl map entries ordered by depth"`
+		JobID        string          `json:"job_id" doc:"Job ID"`
+		SeedURL      string          `json:"seed_url" doc:"Initial seed URL"`
+		Total        int             `json:"total" doc:"Total pages in crawl map"`
+		MaxDepth     int             `json:"max_depth" doc:"Maximum depth reached"`
+		Completed    int             `json:"completed" doc:"Number of successfully completed pages"`
+		Failed       int             `json:"failed" doc:"Number of failed pages"`
+		ErrorSummary *ErrorSummary   `json:"error_summary,omitempty" doc:"Summary of errors if any pages failed"`
+		Entries      []CrawlMapEntry `json:"entries" doc:"Crawl map entries ordered by depth"`
 	}
 }
 
@@ -593,6 +633,8 @@ func (h *JobHandler) GetCrawlMap(ctx context.Context, input *GetCrawlMapInput) (
 	var entries []CrawlMapEntry
 	var seedURL string
 	var maxDepth int
+	var completed, failed int
+	errorCounts := make(map[string]int)
 
 	for _, r := range results {
 		// Track seed URL and max depth
@@ -603,13 +645,39 @@ func (h *JobHandler) GetCrawlMap(ctx context.Context, input *GetCrawlMapInput) (
 			maxDepth = r.Depth
 		}
 
+		// Track completion/error stats
+		if r.CrawlStatus == models.CrawlStatusCompleted {
+			completed++
+		} else if r.CrawlStatus == models.CrawlStatusFailed {
+			failed++
+			if r.ErrorCategory != "" {
+				errorCounts[r.ErrorCategory]++
+			} else {
+				errorCounts["unknown"]++
+			}
+		}
+
+		// Build client-safe result representation (BYOK sees details, others don't)
+		clientResult := BuildClientResult(ResultInfo{
+			ErrorMessage:  r.ErrorMessage,
+			ErrorCategory: r.ErrorCategory,
+			ErrorDetails:  r.ErrorDetails,
+			LLMProvider:   r.LLMProvider,
+			LLMModel:      r.LLMModel,
+			IsBYOK:        r.IsBYOK,
+		})
+
 		entry := CrawlMapEntry{
 			ID:                r.ID,
 			URL:               r.URL,
 			ParentURL:         r.ParentURL,
 			Depth:             r.Depth,
 			Status:            string(r.CrawlStatus),
-			ErrorMessage:      r.ErrorMessage,
+			ErrorMessage:      clientResult.ErrorMessage,
+			ErrorCategory:     clientResult.ErrorCategory,
+			ErrorDetails:      clientResult.ErrorDetails,
+			LLMProvider:       clientResult.LLMProvider,
+			LLMModel:          clientResult.LLMModel,
 			TokenUsageInput:   r.TokenUsageInput,
 			TokenUsageOutput:  r.TokenUsageOutput,
 			FetchDurationMs:   r.FetchDurationMs,
@@ -624,19 +692,35 @@ func (h *JobHandler) GetCrawlMap(ctx context.Context, input *GetCrawlMapInput) (
 		entries = append(entries, entry)
 	}
 
+	// Build error summary if there were failures
+	var errSummary *ErrorSummary
+	if failed > 0 {
+		errSummary = &ErrorSummary{
+			Total:        failed,
+			ByCategory:   errorCounts,
+			HasRateLimit: errorCounts["rate_limit"] > 0,
+		}
+	}
+
 	return &GetCrawlMapOutput{
 		Body: struct {
-			JobID    string          `json:"job_id" doc:"Job ID"`
-			SeedURL  string          `json:"seed_url" doc:"Initial seed URL"`
-			Total    int             `json:"total" doc:"Total pages in crawl map"`
-			MaxDepth int             `json:"max_depth" doc:"Maximum depth reached"`
-			Entries  []CrawlMapEntry `json:"entries" doc:"Crawl map entries ordered by depth"`
+			JobID        string          `json:"job_id" doc:"Job ID"`
+			SeedURL      string          `json:"seed_url" doc:"Initial seed URL"`
+			Total        int             `json:"total" doc:"Total pages in crawl map"`
+			MaxDepth     int             `json:"max_depth" doc:"Maximum depth reached"`
+			Completed    int             `json:"completed" doc:"Number of successfully completed pages"`
+			Failed       int             `json:"failed" doc:"Number of failed pages"`
+			ErrorSummary *ErrorSummary   `json:"error_summary,omitempty" doc:"Summary of errors if any pages failed"`
+			Entries      []CrawlMapEntry `json:"entries" doc:"Crawl map entries ordered by depth"`
 		}{
-			JobID:    input.ID,
-			SeedURL:  seedURL,
-			Total:    len(entries),
-			MaxDepth: maxDepth,
-			Entries:  entries,
+			JobID:        input.ID,
+			SeedURL:      seedURL,
+			Total:        len(entries),
+			MaxDepth:     maxDepth,
+			Completed:    completed,
+			Failed:       failed,
+			ErrorSummary: errSummary,
+			Entries:      entries,
 		},
 	}, nil
 }
@@ -702,19 +786,8 @@ func (h *JobHandler) GetJobResults(ctx context.Context, input *GetJobResultsInpu
 	}
 
 	if input.Merge {
-		// Merge all results into a single object
-		merged := make(map[string]any)
-		for _, r := range results {
-			if r.DataJSON == "" {
-				continue
-			}
-			var data map[string]any
-			if err := json.Unmarshal([]byte(r.DataJSON), &data); err != nil {
-				continue // Skip malformed data
-			}
-			deepMergeResults(merged, data)
-		}
-		output.Body.Merged = merged
+		// Collect all results into { items: [...] }
+		output.Body.Merged = collectAllResults(results)
 	} else {
 		// Return individual results
 		var entries []JobResultEntry
@@ -731,62 +804,218 @@ func (h *JobHandler) GetJobResults(ctx context.Context, input *GetJobResultsInpu
 	return output, nil
 }
 
-// deepMergeResults merges src into dst.
-// Arrays are concatenated and deduplicated, primitives use first non-nil value.
-func deepMergeResults(dst, src map[string]any) {
-	for key, srcVal := range src {
-		if srcVal == nil {
+// collectAllResults merges all extraction results intelligently.
+//
+// Strategy:
+// 1. If all results are objects with the same structure, detect array fields and merge them
+// 2. Arrays are merged and deduplicated (preferring items with `url` field as the key)
+// 3. Scalar/object fields take the first non-null value
+//
+// This handles product listing crawls where each page returns:
+//
+//	{"page_info": {...}, "products": [...], "site_name": "..."}
+//
+// Output becomes:
+//
+//	{"products": [all products merged and deduplicated], "site_name": "..."}
+func collectAllResults(results []*models.JobResult) map[string]any {
+	// First pass: collect all parsed results as objects
+	var objects []map[string]any
+	var arrays [][]any
+
+	for _, r := range results {
+		if r.DataJSON == "" {
 			continue
 		}
 
-		dstVal, exists := dst[key]
-		if !exists || dstVal == nil {
-			dst[key] = srcVal
+		// Try as object first (most common case for structured extraction)
+		var objData map[string]any
+		if err := json.Unmarshal([]byte(r.DataJSON), &objData); err == nil {
+			objects = append(objects, objData)
 			continue
 		}
 
-		// Both exist and non-nil
-		switch srcTyped := srcVal.(type) {
-		case []any:
-			if dstArr, ok := dstVal.([]any); ok {
-				// Concatenate arrays and deduplicate
-				dst[key] = dedupeArray(append(dstArr, srcTyped...))
-			}
-		case map[string]any:
-			if dstMap, ok := dstVal.(map[string]any); ok {
-				// Recursively merge nested objects
-				deepMergeResults(dstMap, srcTyped)
-			}
-		// Primitives: keep first value (already set)
+		// Try as array
+		var arrData []any
+		if err := json.Unmarshal([]byte(r.DataJSON), &arrData); err == nil {
+			arrays = append(arrays, arrData)
+			continue
 		}
 	}
+
+	// If we have objects with consistent structure, merge them intelligently
+	if len(objects) > 0 {
+		merged := smartMergeObjects(objects)
+		// If there are also top-level arrays, add them as an "items" field
+		if len(arrays) > 0 {
+			var allItems []any
+			for _, arr := range arrays {
+				allItems = append(allItems, arr...)
+			}
+			if existing, ok := merged["items"].([]any); ok {
+				merged["items"] = dedupeArrayByURL(append(existing, allItems...))
+			} else if len(allItems) > 0 {
+				merged["items"] = dedupeArrayByURL(allItems)
+			}
+		}
+		return merged
+	}
+
+	// If only arrays, merge them into items
+	if len(arrays) > 0 {
+		var allItems []any
+		for _, arr := range arrays {
+			allItems = append(allItems, arr...)
+		}
+		return map[string]any{"items": dedupeArrayByURL(allItems)}
+	}
+
+	return map[string]any{"items": []any{}}
 }
 
-// dedupeArray removes duplicate elements from an array.
-// Uses JSON serialization for comparison to handle complex objects.
-func dedupeArray(arr []any) []any {
+// smartMergeObjects merges multiple objects with the same structure.
+// Arrays are concatenated and deduplicated, scalars take first non-null value.
+func smartMergeObjects(objects []map[string]any) map[string]any {
+	if len(objects) == 0 {
+		return map[string]any{}
+	}
+	if len(objects) == 1 {
+		return objects[0]
+	}
+
+	result := make(map[string]any)
+
+	// Collect all keys across all objects
+	allKeys := make(map[string]bool)
+	for _, obj := range objects {
+		for key := range obj {
+			allKeys[key] = true
+		}
+	}
+
+	// Process each key
+	for key := range allKeys {
+		var arrays [][]any
+		var firstScalar any
+		var firstObject map[string]any
+		hasArray := false
+
+		for _, obj := range objects {
+			val, exists := obj[key]
+			if !exists || val == nil {
+				continue
+			}
+
+			switch v := val.(type) {
+			case []any:
+				hasArray = true
+				arrays = append(arrays, v)
+			case map[string]any:
+				if firstObject == nil {
+					firstObject = v
+				}
+			default:
+				if firstScalar == nil {
+					firstScalar = v
+				}
+			}
+		}
+
+		// Determine what to store for this key
+		if hasArray {
+			// Merge all arrays
+			var merged []any
+			for _, arr := range arrays {
+				merged = append(merged, arr...)
+			}
+			result[key] = dedupeArrayByURL(merged)
+		} else if firstObject != nil {
+			result[key] = firstObject
+		} else if firstScalar != nil {
+			result[key] = firstScalar
+		}
+	}
+
+	return result
+}
+
+// countNonNullFields counts non-null fields in a map (used to determine data richness).
+func countNonNullFields(obj map[string]any) int {
+	count := 0
+	for _, val := range obj {
+		if val == nil {
+			continue
+		}
+		switch v := val.(type) {
+		case []any:
+			if len(v) > 0 {
+				count++
+			}
+		case string:
+			if v != "" {
+				count++
+			}
+		default:
+			count++
+		}
+	}
+	return count
+}
+
+// dedupeArrayByURL removes duplicate items from an array, preferring items with MORE data.
+// For objects with a "url" field, uses URL as the key for deduplication.
+// When duplicates are found, keeps the version with more non-null fields.
+// This ensures that when a product appears on multiple pages (e.g., homepage with minimal
+// data, then collection page with full data), we keep the richer version.
+func dedupeArrayByURL(arr []any) []any {
 	if len(arr) == 0 {
 		return arr
 	}
 
-	seen := make(map[string]bool)
-	result := make([]any, 0, len(arr))
+	// Track best version of each URL-keyed item (most non-null fields wins)
+	type urlEntry struct {
+		item       any
+		fieldCount int
+	}
+	bestByURL := make(map[string]urlEntry)
+	seenByJSON := make(map[string]bool)
+	nonURLItems := make([]any, 0)
 
 	for _, item := range arr {
-		// Serialize to JSON for comparison
+		// Try to dedupe by URL if it's an object with a url field
+		if obj, ok := item.(map[string]any); ok {
+			if url, urlOk := obj["url"].(string); urlOk && url != "" {
+				fieldCount := countNonNullFields(obj)
+				existing, exists := bestByURL[url]
+
+				// Keep the version with more non-null fields
+				if !exists || fieldCount > existing.fieldCount {
+					bestByURL[url] = urlEntry{item: item, fieldCount: fieldCount}
+				}
+				continue
+			}
+		}
+
+		// Fall back to JSON serialization for deduplication
 		key, err := json.Marshal(item)
 		if err != nil {
-			// If serialization fails, include the item anyway
-			result = append(result, item)
+			nonURLItems = append(nonURLItems, item)
 			continue
 		}
 
 		keyStr := string(key)
-		if !seen[keyStr] {
-			seen[keyStr] = true
-			result = append(result, item)
+		if !seenByJSON[keyStr] {
+			seenByJSON[keyStr] = true
+			nonURLItems = append(nonURLItems, item)
 		}
 	}
+
+	// Combine URL-deduped items with non-URL items
+	result := make([]any, 0, len(bestByURL)+len(nonURLItems))
+	for _, entry := range bestByURL {
+		result = append(result, entry.item)
+	}
+	result = append(result, nonURLItems...)
 
 	return result
 }

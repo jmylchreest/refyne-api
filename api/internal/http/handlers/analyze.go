@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/google/uuid"
+	"github.com/oklog/ulid/v2"
 
 	"github.com/jmylchreest/refyne-api/internal/http/mw"
 	"github.com/jmylchreest/refyne-api/internal/models"
@@ -87,7 +87,7 @@ func (h *AnalyzeHandler) Analyze(ctx context.Context, input *AnalyzeInput) (*Ana
 	now := time.Now()
 	startedAt := now
 	job := &models.Job{
-		ID:        uuid.NewString(),
+		ID:        ulid.Make().String(),
 		UserID:    userID,
 		Type:      models.JobTypeAnalyze,
 		Status:    models.JobStatusRunning,

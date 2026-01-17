@@ -8,7 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/oklog/ulid/v2"
+
 	"github.com/jmylchreest/refyne-api/internal/models"
 	"github.com/jmylchreest/refyne-api/internal/repository"
 	"github.com/jmylchreest/refyne-api/internal/service"
@@ -199,6 +200,22 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 				"job_id", job.ID,
 				"url_count", len(urls),
 			)
+
+			// Update job with total URLs queued for progress tracking
+			job.URLsQueued = len(urls)
+			if err := w.jobRepo.Update(ctx, job); err != nil {
+				w.logger.Error("failed to update job with urls_queued", "job_id", job.ID, "error", err)
+			}
+
+			// Sitemap mode is "batch single-page extraction" - disable link following
+			// We only extract from sitemap URLs, not from discovered links
+			options.MaxDepth = 0
+			options.FollowSelector = ""
+			options.ExtractFromSeeds = true // Extract from all sitemap URLs
+			w.logger.Debug("sitemap mode: disabled link following",
+				"job_id", job.ID,
+				"max_depth", options.MaxDepth,
+			)
 		} else {
 			w.logger.Warn("sitemap discovery returned no URLs, falling back to CSS selector discovery",
 				"job_id", job.ID,
@@ -206,8 +223,8 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 		}
 	}
 
-	// Set defaults
-	if options.MaxDepth == 0 {
+	// Set defaults for crawl mode (only if not using sitemap)
+	if options.MaxDepth == 0 && len(sitemapURLs) == 0 {
 		options.MaxDepth = 2 // Default to following links one level from seed
 	}
 	// Note: MaxPages == 0 means no limit, don't override it
@@ -257,7 +274,7 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 		}
 
 		jobResult := &models.JobResult{
-			ID:                uuid.NewString(),
+			ID:                ulid.Make().String(),
 			JobID:             job.ID,
 			URL:               pageResult.URL,
 			ParentURL:         pageResult.ParentURL,
@@ -287,7 +304,17 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 		return nil
 	}
 
+	// Callback for when URLs are queued (for progress tracking)
+	urlsQueuedCallback := func(queuedCount int) {
+		job.URLsQueued = queuedCount
+		if err := w.jobRepo.Update(ctx, job); err != nil {
+			w.logger.Error("failed to update urls_queued", "job_id", job.ID, "error", err)
+		}
+		w.logger.Debug("urls queued updated", "job_id", job.ID, "urls_queued", queuedCount)
+	}
+
 	result, err := w.extractionSvc.CrawlWithCallback(ctx, job.UserID, service.CrawlInput{
+		JobID:    job.ID,
 		URL:      job.URL,
 		SeedURLs: sitemapURLs, // URLs from sitemap discovery (empty if not using sitemap)
 		Schema:   json.RawMessage(job.SchemaJSON),
@@ -304,7 +331,10 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 			ExtractFromSeeds: options.ExtractFromSeeds,
 			UseSitemap:       options.UseSitemap,
 		},
-	}, resultCallback)
+	}, service.CrawlCallbacks{
+		OnResult:     resultCallback,
+		OnURLsQueued: urlsQueuedCallback,
+	})
 	if err != nil {
 		w.failJob(ctx, job, err.Error())
 		return
