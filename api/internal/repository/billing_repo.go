@@ -100,7 +100,7 @@ func (r *SQLiteCreditTransactionRepository) GetByUserID(ctx context.Context, use
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var transactions []*models.CreditTransaction
 	for rows.Next() {
@@ -169,7 +169,7 @@ func (r *SQLiteCreditTransactionRepository) GetNonExpiredSubscriptionCredits(ctx
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var transactions []*models.CreditTransaction
 	for rows.Next() {
@@ -300,7 +300,7 @@ func (r *SQLiteSchemaSnapshotRepository) GetByUserID(ctx context.Context, userID
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var snapshots []*models.SchemaSnapshot
 	for rows.Next() {
@@ -423,7 +423,7 @@ func (r *SQLiteUsageInsightRepository) GetByUserID(ctx context.Context, userID s
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var insights []*models.UsageInsight
 	for rows.Next() {

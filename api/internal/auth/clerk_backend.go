@@ -64,11 +64,11 @@ func (c *ClerkBackendClient) ListSubscriptionProducts(ctx context.Context) ([]Su
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch plans: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("Clerk API returned status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("clerk API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var result ListPlansResponse
@@ -97,7 +97,7 @@ func (c *ClerkBackendClient) GetSubscriptionProduct(ctx context.Context, planID 
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch plan: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, nil // Plan not found
@@ -105,7 +105,7 @@ func (c *ClerkBackendClient) GetSubscriptionProduct(ctx context.Context, planID 
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("Clerk API returned status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("clerk API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var plan SubscriptionProduct

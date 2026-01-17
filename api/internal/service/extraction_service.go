@@ -9,8 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/oklog/ulid/v2"
-
 	"github.com/refyne/refyne/pkg/cleaner"
 	"github.com/refyne/refyne/pkg/refyne"
 	"github.com/refyne/refyne/pkg/schema"
@@ -196,7 +194,7 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 
 		// Perform extraction
 		result, err := r.Extract(ctx, input.URL, sch)
-		r.Close()
+		_ = r.Close()
 
 		// Check for success
 		if err == nil && result != nil && result.Error == nil {
@@ -245,21 +243,6 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 	}
 
 	return nil, fmt.Errorf("extraction failed: no LLM providers configured")
-}
-
-// recordFailedExtraction records usage for a failed extraction attempt.
-func (s *ExtractionService) recordFailedExtraction(
-	ctx context.Context,
-	userID string,
-	input ExtractInput,
-	ectx *ExtractContext,
-	llmCfg *LLMConfigInput,
-	isBYOK bool,
-	err error,
-	startTime time.Time,
-) {
-	// Delegate to the new method with nil LLMError
-	s.recordFailedExtractionWithDetails(ctx, userID, input, ectx, llmCfg, isBYOK, err, nil, 1, startTime)
 }
 
 // recordFailedExtractionWithDetails records usage for a failed extraction with detailed error info.
@@ -554,14 +537,6 @@ func (s *ExtractionService) buildUserFallbackChain(ctx context.Context, userID s
 	return configs
 }
 
-// boolToInt converts a bool to 1 or 0.
-func boolToInt(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
-}
-
 // CrawlInput represents crawl input.
 type CrawlInput struct {
 	JobID    string          `json:"job_id,omitempty"`    // Job ID for logging/tracking
@@ -624,7 +599,7 @@ func (s *ExtractionService) Crawl(ctx context.Context, userID string, input Craw
 	if err != nil {
 		return nil, s.handleLLMError(err, llmCfg, isBYOK)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 
 	s.logger.Info("crawl starting",
 		"job_id", input.JobID,
@@ -855,7 +830,7 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 	if err != nil {
 		return nil, s.handleLLMError(err, llmCfg, isBYOK)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 
 	s.logger.Info("crawl starting",
 		"job_id", input.JobID,
@@ -1434,117 +1409,6 @@ func (s *ExtractionService) getServiceKeys() ServiceKeys {
 	return keys
 }
 
-// UsageInput holds all data needed to record usage.
-type UsageInput struct {
-	UserID          string
-	JobID           string
-	JobType         models.JobType
-	Status          string // success, failed, partial
-	TotalChargedUSD float64
-	IsBYOK          bool
-
-	// For insights table
-	TargetURL         string
-	SchemaID          string
-	CrawlConfigJSON   string
-	ErrorMessage      string
-	ErrorCode         string
-	TokensInput       int
-	TokensOutput      int
-	LLMCostUSD        float64
-	MarkupRate        float64
-	MarkupUSD         float64
-	LLMProvider       string
-	LLMModel          string
-	GenerationID      string
-	BYOKProvider      string
-	PagesAttempted    int
-	PagesSuccessful   int
-	FetchDurationMs   int
-	ExtractDurationMs int
-	TotalDurationMs   int
-	RequestID         string
-	UserAgent         string
-	IPCountry         string
-}
-
-// recordUsage records usage to both lean billing table and rich insights table.
-func (s *ExtractionService) recordUsage(ctx context.Context, input *UsageInput) {
-	usageID := ulid.Make().String()
-	now := time.Now()
-
-	// Record to lean billing table
-	usageRecord := &models.UsageRecord{
-		ID:              usageID,
-		UserID:          input.UserID,
-		JobID:           input.JobID,
-		Date:            now.Format("2006-01-02"),
-		Type:            input.JobType,
-		Status:          input.Status,
-		TotalChargedUSD: input.TotalChargedUSD,
-		IsBYOK:          input.IsBYOK,
-		CreatedAt:       now,
-	}
-
-	if err := s.repos.Usage.Create(ctx, usageRecord); err != nil {
-		s.logger.Warn("failed to record usage", "error", err)
-		return
-	}
-
-	// Record to rich insights table
-	insight := &models.UsageInsight{
-		ID:                ulid.Make().String(),
-		UsageID:           usageID,
-		TargetURL:         input.TargetURL,
-		SchemaID:          input.SchemaID,
-		CrawlConfigJSON:   input.CrawlConfigJSON,
-		ErrorMessage:      input.ErrorMessage,
-		ErrorCode:         input.ErrorCode,
-		TokensInput:       input.TokensInput,
-		TokensOutput:      input.TokensOutput,
-		LLMCostUSD:        input.LLMCostUSD,
-		MarkupRate:        input.MarkupRate,
-		MarkupUSD:         input.MarkupUSD,
-		LLMProvider:       input.LLMProvider,
-		LLMModel:          input.LLMModel,
-		GenerationID:      input.GenerationID,
-		BYOKProvider:      input.BYOKProvider,
-		PagesAttempted:    input.PagesAttempted,
-		PagesSuccessful:   input.PagesSuccessful,
-		FetchDurationMs:   input.FetchDurationMs,
-		ExtractDurationMs: input.ExtractDurationMs,
-		TotalDurationMs:   input.TotalDurationMs,
-		RequestID:         input.RequestID,
-		UserAgent:         input.UserAgent,
-		IPCountry:         input.IPCountry,
-		CreatedAt:         now,
-	}
-
-	if err := s.repos.UsageInsight.Create(ctx, insight); err != nil {
-		s.logger.Warn("failed to record usage insight", "error", err)
-	}
-}
-
-// recordUsageLegacy is a temporary wrapper for old-style usage recording.
-// TODO: Update all callers to use recordUsage with UsageInput.
-func (s *ExtractionService) recordUsageLegacy(ctx context.Context, userID, jobID string, jobType models.JobType,
-	pages, tokensInput, tokensOutput, costCredits int, provider, model string) {
-
-	s.recordUsage(ctx, &UsageInput{
-		UserID:          userID,
-		JobID:           jobID,
-		JobType:         jobType,
-		Status:          "success",
-		TotalChargedUSD: 0, // Legacy: no USD tracking yet
-		IsBYOK:          false,
-		TokensInput:     tokensInput,
-		TokensOutput:    tokensOutput,
-		LLMProvider:     provider,
-		LLMModel:        model,
-		PagesSuccessful: pages,
-	})
-}
-
 // ========================================
 // Helper Methods
 // ========================================
@@ -1566,38 +1430,6 @@ func parseSchema(data []byte) (schema.Schema, error) {
 
 	// Both failed - return the JSON error as it's the primary format
 	return schema.Schema{}, fmt.Errorf("invalid schema format (tried JSON and YAML): %w", err)
-}
-
-// detectBYOK determines if the user provided their own API key (Bring Your Own Key).
-// BYOK users are not charged for API usage.
-func (s *ExtractionService) detectBYOK(inputCfg, resolvedCfg *LLMConfigInput) bool {
-	// If user explicitly provided an API key in the request, it's BYOK
-	if inputCfg != nil && inputCfg.APIKey != "" {
-		return true
-	}
-
-	// If using Ollama (local LLM), it's effectively BYOK (no API cost to us)
-	if resolvedCfg.Provider == "ollama" {
-		return true
-	}
-
-	// If using our service keys, it's not BYOK
-	if s.cfg.ServiceOpenRouterKey != "" && resolvedCfg.APIKey == s.cfg.ServiceOpenRouterKey {
-		return false
-	}
-	if s.cfg.ServiceAnthropicKey != "" && resolvedCfg.APIKey == s.cfg.ServiceAnthropicKey {
-		return false
-	}
-	if s.cfg.ServiceOpenAIKey != "" && resolvedCfg.APIKey == s.cfg.ServiceOpenAIKey {
-		return false
-	}
-
-	// If we get here with an API key that's not ours, it's BYOK from saved config
-	if resolvedCfg.APIKey != "" {
-		return true
-	}
-
-	return false
 }
 
 // ResolveRelativeURLs recursively walks through extracted data and resolves

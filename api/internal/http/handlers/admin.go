@@ -182,13 +182,14 @@ func (h *AdminHandler) GetFallbackChain(ctx context.Context, input *GetFallbackC
 	var entries []*models.FallbackChainEntry
 	var err error
 
-	if input.Tier == "" {
+	switch input.Tier {
+	case "":
 		// Get all chains
 		entries, err = h.adminSvc.GetFallbackChain(ctx)
-	} else if input.Tier == "default" {
+	case "default":
 		// Get default chain specifically
 		entries, err = h.adminSvc.GetFallbackChainByTier(ctx, nil)
-	} else {
+	default:
 		// Get tier-specific chain
 		entries, err = h.adminSvc.GetFallbackChainByTier(ctx, &input.Tier)
 	}

@@ -28,7 +28,7 @@ func NewWebhookService(logger *slog.Logger) *WebhookService {
 // Send delivers a webhook payload to the specified URL.
 // This is a fire-and-forget operation that doesn't block on delivery.
 func (s *WebhookService) Send(ctx context.Context, url string, payload any) {
-	go s.deliver(url, payload)
+	go func() { _ = s.deliver(url, payload) }()
 }
 
 // SendSync delivers a webhook and waits for the response.
@@ -65,7 +65,7 @@ func (s *WebhookService) deliver(url string, payload any) error {
 			s.logger.Warn("webhook: delivery failed", "url", url, "attempt", attempt+1, "error", err)
 			continue
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			s.logger.Info("webhook: delivered successfully", "url", url, "status", resp.StatusCode)

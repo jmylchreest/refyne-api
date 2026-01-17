@@ -105,7 +105,7 @@ func (s *SitemapService) fetchSitemap(ctx context.Context, sitemapURL, urlPatter
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch sitemap: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("sitemap returned status %d", resp.StatusCode)
@@ -250,7 +250,7 @@ func (s *SitemapService) GetSitemapURLs(ctx context.Context, baseURL string, lim
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch sitemap: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("sitemap returned status %d", resp.StatusCode)
@@ -296,7 +296,7 @@ func (s *SitemapService) fetchSitemapURLsDirect(ctx context.Context, sitemapURL 
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch sitemap: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("sitemap returned status %d", resp.StatusCode)

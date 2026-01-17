@@ -97,10 +97,8 @@ func (h *AnalyzeHandler) Analyze(ctx context.Context, input *AnalyzeInput) (*Ana
 		UpdatedAt: now,
 	}
 
-	if err := h.jobRepo.Create(ctx, job); err != nil {
-		// Log error but don't fail the request - analysis can still proceed
-		// The job just won't be tracked
-	}
+	// Best effort: create job record. Analysis proceeds regardless.
+	_ = h.jobRepo.Create(ctx, job)
 
 	// Perform analysis
 	result, err := h.analyzerSvc.Analyze(ctx, userID, service.AnalyzeInput{
@@ -116,7 +114,7 @@ func (h *AnalyzeHandler) Analyze(ctx context.Context, input *AnalyzeInput) (*Ana
 		job.ErrorMessage = err.Error()
 		job.CompletedAt = &completedAt
 		job.UpdatedAt = completedAt
-		h.jobRepo.Update(ctx, job)
+		_ = h.jobRepo.Update(ctx, job) // Best effort update
 
 		return nil, huma.Error500InternalServerError("analysis failed: " + err.Error())
 	}
@@ -135,7 +133,7 @@ func (h *AnalyzeHandler) Analyze(ctx context.Context, input *AnalyzeInput) (*Ana
 		job.ResultJSON = string(resultJSON)
 	}
 
-	h.jobRepo.Update(ctx, job)
+	_ = h.jobRepo.Update(ctx, job) // Best effort update
 
 	// Convert result to output format
 	output := &AnalyzeOutput{
@@ -170,9 +168,4 @@ func (h *AnalyzeHandler) Analyze(ctx context.Context, input *AnalyzeInput) (*Ana
 	}
 
 	return output, nil
-}
-
-// pageTypeToString converts PageType to string.
-func pageTypeToString(pt models.PageType) string {
-	return string(pt)
 }

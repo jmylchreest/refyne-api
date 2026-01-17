@@ -29,9 +29,9 @@ type TierLimitsJSON struct {
 type TierSettingsLoader struct {
 	loader *config.S3Loader
 
-	mu       sync.RWMutex
-	tiers    map[string]TierLimits // overrides from S3
-	logger   *slog.Logger
+	mu     sync.RWMutex
+	tiers  map[string]TierLimits // overrides from S3
+	logger *slog.Logger
 }
 
 // TierSettingsConfig holds configuration for the tier settings loader.
@@ -99,15 +99,7 @@ func (t *TierSettingsLoader) refresh(ctx context.Context) {
 	// Convert to TierLimits
 	newTiers := make(map[string]TierLimits)
 	for name, limits := range settings.Tiers {
-		newTiers[name] = TierLimits{
-			MonthlyExtractions: limits.MonthlyExtractions,
-			MaxPagesPerCrawl:   limits.MaxPagesPerCrawl,
-			MaxConcurrentJobs:  limits.MaxConcurrentJobs,
-			RequestsPerMinute:  limits.RequestsPerMinute,
-			WebhooksEnabled:    limits.WebhooksEnabled,
-			BYOKEnabled:        limits.BYOKEnabled,
-			AntiBotEnabled:     limits.AntiBotEnabled,
-		}
+		newTiers[name] = TierLimits(limits)
 	}
 
 	t.mu.Lock()

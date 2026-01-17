@@ -108,12 +108,3 @@ func getUserID(ctx context.Context) string {
 func getUserClaims(ctx context.Context) *mw.UserClaims {
 	return mw.GetUserClaims(ctx)
 }
-
-// getUserTier extracts the user's subscription tier from context.
-func getUserTier(ctx context.Context) string {
-	claims := mw.GetUserClaims(ctx)
-	if claims == nil {
-		return "free"
-	}
-	return claims.Tier
-}

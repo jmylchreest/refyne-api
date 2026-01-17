@@ -62,7 +62,7 @@ func (f *OpenRouterCostFetcher) FetchGenerationCost(ctx context.Context, generat
 	if err != nil {
 		return 0, fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -257,7 +257,7 @@ func (s *PricingService) RefreshOpenRouterPricing(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -303,7 +303,7 @@ func parsePrice(s string) float64 {
 		return 0
 	}
 	var price float64
-	fmt.Sscanf(s, "%f", &price)
+	_, _ = fmt.Sscanf(s, "%f", &price)
 	return price
 }
 

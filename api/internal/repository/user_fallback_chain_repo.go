@@ -31,7 +31,7 @@ func (r *SQLiteUserFallbackChainRepository) GetByUserID(ctx context.Context, use
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return r.scanEntries(rows)
 }
@@ -47,7 +47,7 @@ func (r *SQLiteUserFallbackChainRepository) GetEnabledByUserID(ctx context.Conte
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return r.scanEntries(rows)
 }
@@ -58,7 +58,7 @@ func (r *SQLiteUserFallbackChainRepository) ReplaceAll(ctx context.Context, user
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() // Rollback is no-op after commit
 
 	// Delete existing entries for user
 	if _, err := tx.ExecContext(ctx, `DELETE FROM user_fallback_chain WHERE user_id = ?`, userID); err != nil {

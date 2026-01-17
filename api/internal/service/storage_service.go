@@ -36,15 +36,6 @@ func NewStorageService(cfg *appconfig.Config, logger *slog.Logger) (*StorageServ
 		}, nil
 	}
 
-	// Create custom endpoint resolver for Tigris
-	customResolver := aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-		return aws.Endpoint{
-			URL:               cfg.StorageEndpoint,
-			SigningRegion:     cfg.StorageRegion,
-			HostnameImmutable: true,
-		}, nil
-	})
-
 	// Load AWS config with static credentials
 	awsCfg, err := config.LoadDefaultConfig(context.Background(),
 		config.WithRegion(cfg.StorageRegion),
@@ -53,13 +44,14 @@ func NewStorageService(cfg *appconfig.Config, logger *slog.Logger) (*StorageServ
 			cfg.StorageSecretKey,
 			"",
 		)),
-		config.WithEndpointResolverWithOptions(customResolver),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load AWS config: %w", err)
 	}
 
+	// Create S3 client with custom endpoint for S3-compatible storage (Tigris, MinIO, etc.)
 	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(cfg.StorageEndpoint)
 		o.UsePathStyle = true // Required for some S3-compatible services
 	})
 
@@ -158,7 +150,7 @@ func (s *StorageService) GetJobResults(ctx context.Context, jobID string) (*JobR
 	if err != nil {
 		return nil, fmt.Errorf("failed to get job results: %w", err)
 	}
-	defer output.Body.Close()
+	defer func() { _ = output.Body.Close() }()
 
 	data, err := io.ReadAll(output.Body)
 	if err != nil {

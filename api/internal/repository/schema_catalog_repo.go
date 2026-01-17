@@ -193,7 +193,7 @@ func (r *SQLiteSchemaCatalogRepository) ListForUser(ctx context.Context, userID 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return r.scanSchemas(rows)
 }
@@ -211,7 +211,7 @@ func (r *SQLiteSchemaCatalogRepository) ListPlatform(ctx context.Context) ([]*mo
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return r.scanSchemas(rows)
 }
@@ -229,7 +229,7 @@ func (r *SQLiteSchemaCatalogRepository) ListByCategory(ctx context.Context, cate
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return r.scanSchemas(rows)
 }
@@ -246,7 +246,7 @@ func (r *SQLiteSchemaCatalogRepository) ListAll(ctx context.Context) ([]*models.
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return r.scanSchemas(rows)
 }
@@ -305,7 +305,7 @@ func (r *SQLiteSchemaCatalogRepository) scanSchema(row *sql.Row) (*models.Schema
 	schema.IsPlatform = isPlatform == 1
 
 	if tagsJSON != "" {
-		json.Unmarshal([]byte(tagsJSON), &schema.Tags)
+		_ = json.Unmarshal([]byte(tagsJSON), &schema.Tags)
 	}
 
 	schema.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
@@ -360,7 +360,7 @@ func (r *SQLiteSchemaCatalogRepository) scanSchemas(rows *sql.Rows) ([]*models.S
 		schema.IsPlatform = isPlatform == 1
 
 		if tagsJSON != "" {
-			json.Unmarshal([]byte(tagsJSON), &schema.Tags)
+			_ = json.Unmarshal([]byte(tagsJSON), &schema.Tags)
 		}
 
 		schema.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)

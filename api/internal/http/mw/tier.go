@@ -101,7 +101,7 @@ func RequireUsageQuota(usageSvc *service.UsageService) func(http.Handler) http.H
 					"used":    usage.TotalJobs,
 					"tier":    claims.Tier,
 				}
-				json.NewEncoder(w).Encode(response)
+				_ = json.NewEncoder(w).Encode(response)
 				return
 			}
 
@@ -147,7 +147,7 @@ func RequireFeature(feature string) func(http.Handler) http.Handler {
 					"feature": feature,
 					"tier":    claims.Tier,
 				}
-				json.NewEncoder(w).Encode(response)
+				_ = json.NewEncoder(w).Encode(response)
 				return
 			}
 
@@ -236,7 +236,7 @@ func RequireConcurrentJobLimit(jobSvc JobService) func(http.Handler) http.Handle
 					"active":  activeJobs,
 					"tier":    claims.Tier,
 				}
-				json.NewEncoder(w).Encode(response)
+				_ = json.NewEncoder(w).Encode(response)
 				return
 			}
 

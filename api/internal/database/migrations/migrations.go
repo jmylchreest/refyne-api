@@ -86,7 +86,7 @@ func getAppliedVersions(db *sql.DB) (map[string]bool, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	applied := make(map[string]bool)
 	for rows.Next() {
@@ -106,7 +106,7 @@ func runMigration(db *sql.DB, m Migration) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() // Rollback is no-op after commit
 
 	for _, stmt := range m.Up {
 		if _, err := tx.Exec(stmt); err != nil {
@@ -152,7 +152,7 @@ func GetAppliedMigrations(db *sql.DB) ([]AppliedMigration, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var migrations []AppliedMigration
 	for rows.Next() {

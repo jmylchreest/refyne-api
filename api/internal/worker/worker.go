@@ -186,7 +186,7 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 		UseSitemap       bool   `json:"use_sitemap"`
 	}
 	if job.CrawlOptionsJSON != "" {
-		json.Unmarshal([]byte(job.CrawlOptionsJSON), &options)
+		_ = json.Unmarshal([]byte(job.CrawlOptionsJSON), &options)
 	}
 
 	// If using sitemap, discover URLs from sitemap.xml

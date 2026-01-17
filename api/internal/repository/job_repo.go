@@ -82,7 +82,7 @@ func (r *SQLiteJobRepository) GetByUserID(ctx context.Context, userID string, li
 	if err != nil {
 		return nil, fmt.Errorf("failed to query jobs: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var jobs []*models.Job
 	for rows.Next() {
@@ -136,7 +136,7 @@ func (r *SQLiteJobRepository) GetPending(ctx context.Context, limit int) ([]*mod
 	if err != nil {
 		return nil, fmt.Errorf("failed to query pending jobs: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var jobs []*models.Job
 	for rows.Next() {
@@ -154,7 +154,7 @@ func (r *SQLiteJobRepository) ClaimJob(ctx context.Context, id string) (*models.
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() // Rollback is no-op after commit
 
 	result, err := tx.ExecContext(ctx,
 		"UPDATE jobs SET status = 'running', started_at = ?, updated_at = ? WHERE id = ? AND status = 'pending'",
@@ -204,7 +204,7 @@ func (r *SQLiteJobRepository) ClaimPending(ctx context.Context) (*models.Job, er
 	committed := false
 	defer func() {
 		if !committed {
-			tx.Rollback()
+			_ = tx.Rollback()
 		}
 	}()
 
@@ -326,7 +326,7 @@ func (r *SQLiteJobRepository) DeleteOlderThan(ctx context.Context, before time.T
 	if err != nil {
 		return nil, fmt.Errorf("failed to query old jobs: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var ids []string
 	for rows.Next() {
@@ -475,7 +475,7 @@ func (r *SQLiteJobResultRepository) GetByJobID(ctx context.Context, jobID string
 	if err != nil {
 		return nil, fmt.Errorf("failed to query job results: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return r.scanJobResults(rows)
 }
@@ -494,7 +494,7 @@ func (r *SQLiteJobResultRepository) GetCrawlMap(ctx context.Context, jobID strin
 	if err != nil {
 		return nil, fmt.Errorf("failed to query crawl map: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return r.scanJobResults(rows)
 }
@@ -566,7 +566,7 @@ func (r *SQLiteJobResultRepository) GetAfterID(ctx context.Context, jobID, after
 	if err != nil {
 		return nil, fmt.Errorf("failed to query job results: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return r.scanJobResults(rows)
 }
@@ -639,7 +639,7 @@ func (r *SQLiteAPIKeyRepository) GetByUserID(ctx context.Context, userID string)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var keys []*models.APIKey
 	for rows.Next() {
@@ -674,7 +674,7 @@ func (r *SQLiteAPIKeyRepository) scanAPIKey(row *sql.Row) (*models.APIKey, error
 		return nil, err
 	}
 	if scopesJSON.Valid {
-		json.Unmarshal([]byte(scopesJSON.String), &key.Scopes)
+		_ = json.Unmarshal([]byte(scopesJSON.String), &key.Scopes)
 	}
 	key.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 	if lastUsedAt.Valid {
@@ -696,7 +696,7 @@ func (r *SQLiteAPIKeyRepository) scanAPIKeyFromRows(rows *sql.Rows) (*models.API
 		return nil, err
 	}
 	if scopesJSON.Valid {
-		json.Unmarshal([]byte(scopesJSON.String), &key.Scopes)
+		_ = json.Unmarshal([]byte(scopesJSON.String), &key.Scopes)
 	}
 	key.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 	if lastUsedAt.Valid {
@@ -775,7 +775,7 @@ func (r *SQLiteUsageRepository) GetByUserID(ctx context.Context, userID string, 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var records []*models.UsageRecord
 	for rows.Next() {
@@ -863,7 +863,7 @@ func (r *SQLiteTelemetryRepository) GetByType(ctx context.Context, eventType str
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var events []*models.TelemetryEvent
 	for rows.Next() {
@@ -926,7 +926,7 @@ func (r *SQLiteLicenseRepository) GetByKey(ctx context.Context, key string) (*mo
 		return nil, err
 	}
 	if featuresJSON.Valid {
-		json.Unmarshal([]byte(featuresJSON.String), &license.Features)
+		_ = json.Unmarshal([]byte(featuresJSON.String), &license.Features)
 	}
 	license.IssuedAt, _ = time.Parse(time.RFC3339, issuedAt)
 	license.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
@@ -954,7 +954,7 @@ func (r *SQLiteLicenseRepository) List(ctx context.Context, limit, offset int) (
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var licenses []*models.License
 	for rows.Next() {
@@ -966,7 +966,7 @@ func (r *SQLiteLicenseRepository) List(ctx context.Context, limit, offset int) (
 			return nil, err
 		}
 		if featuresJSON.Valid {
-			json.Unmarshal([]byte(featuresJSON.String), &license.Features)
+			_ = json.Unmarshal([]byte(featuresJSON.String), &license.Features)
 		}
 		license.IssuedAt, _ = time.Parse(time.RFC3339, issuedAt)
 		license.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)

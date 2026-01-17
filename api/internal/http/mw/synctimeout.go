@@ -19,10 +19,8 @@ func ExtendWriteDeadlineForSyncRequests() func(http.Handler) http.Handler {
 				// Extend deadline to max sync timeout plus 30s buffer for response writing
 				rc := http.NewResponseController(w)
 				deadline := time.Now().Add(constants.MaxSyncWaitTimeout + 30*time.Second)
-				if err := rc.SetWriteDeadline(deadline); err != nil {
-					// If we can't extend, log but continue - request may timeout early
-					// Some proxies/servers don't support this
-				}
+				// Best effort: extend timeout for sync wait. Some proxies may not support this.
+				_ = rc.SetWriteDeadline(deadline)
 			}
 
 			next.ServeHTTP(w, r)

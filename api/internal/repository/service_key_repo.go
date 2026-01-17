@@ -62,7 +62,7 @@ func (r *SQLiteServiceKeyRepository) GetAll(ctx context.Context) ([]*models.Serv
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return r.scanKeys(rows)
 }
@@ -78,7 +78,7 @@ func (r *SQLiteServiceKeyRepository) GetEnabled(ctx context.Context) ([]*models.
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return r.scanKeys(rows)
 }

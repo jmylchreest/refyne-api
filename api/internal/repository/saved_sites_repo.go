@@ -138,7 +138,7 @@ func (r *SQLiteSavedSitesRepository) ListByUserID(ctx context.Context, userID st
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return r.scanSites(rows)
 }
@@ -156,7 +156,7 @@ func (r *SQLiteSavedSitesRepository) ListByOrganizationID(ctx context.Context, o
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return r.scanSites(rows)
 }
@@ -174,7 +174,7 @@ func (r *SQLiteSavedSitesRepository) ListByDomain(ctx context.Context, userID, d
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return r.scanSites(rows)
 }

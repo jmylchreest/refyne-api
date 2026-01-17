@@ -227,7 +227,7 @@ func (h *JobHandler) CreateCrawlJob(ctx context.Context, input *CreateCrawlJobIn
 			JobID:        job.ID,
 			Status:       string(job.Status),
 			PageCount:    job.PageCount,
-			CostUSD:  job.CostUSD,
+			CostUSD:      job.CostUSD,
 			DurationMs:   durationMs,
 			ErrorMessage: job.ErrorMessage,
 			TokenUsage: &TokenUsage{
@@ -267,8 +267,8 @@ type JobResponse struct {
 	Type             string  `json:"type"`
 	Status           string  `json:"status"`
 	URL              string  `json:"url"`
-	URLsQueued       int     `json:"urls_queued"`  // Total URLs queued for processing (for progress tracking)
-	PageCount        int     `json:"page_count"`   // Pages processed so far
+	URLsQueued       int     `json:"urls_queued"` // Total URLs queued for processing (for progress tracking)
+	PageCount        int     `json:"page_count"`  // Pages processed so far
 	TokenUsageInput  int     `json:"token_usage_input"`
 	TokenUsageOutput int     `json:"token_usage_output"`
 	CostUSD          float64 `json:"cost_usd"` // Actual USD cost charged (0 for BYOK)
@@ -302,7 +302,7 @@ func (h *JobHandler) ListJobs(ctx context.Context, input *ListJobsInput) (*ListJ
 			PageCount:        job.PageCount,
 			TokenUsageInput:  job.TokenUsageInput,
 			TokenUsageOutput: job.TokenUsageOutput,
-			CostUSD:      job.CostUSD,
+			CostUSD:          job.CostUSD,
 			ErrorMessage:     job.ErrorMessage,
 			ErrorCategory:    job.ErrorCategory,
 			CreatedAt:        job.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
@@ -359,7 +359,7 @@ func (h *JobHandler) GetJob(ctx context.Context, input *GetJobInput) (*GetJobOut
 		PageCount:        job.PageCount,
 		TokenUsageInput:  job.TokenUsageInput,
 		TokenUsageOutput: job.TokenUsageOutput,
-		CostUSD:      job.CostUSD,
+		CostUSD:          job.CostUSD,
 		ErrorMessage:     job.ErrorMessage,
 		ErrorCategory:    job.ErrorCategory,
 		CreatedAt:        job.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
@@ -419,10 +419,8 @@ func (h *JobHandler) StreamResults(w http.ResponseWriter, r *http.Request) {
 	// Disable write timeout for SSE - jobs can run for a long time
 	// Use ResponseController (Go 1.20+) to extend the write deadline
 	rc := http.NewResponseController(w)
-	if err := rc.SetWriteDeadline(time.Time{}); err != nil {
-		// If we can't disable the deadline, log but continue - some proxies may not support this
-		// The connection will just close after the server's WriteTimeout
-	}
+	// Best effort: disable write deadline for long-running SSE. Some proxies may not support this.
+	_ = rc.SetWriteDeadline(time.Time{})
 
 	// Send initial status with urls_queued for progress tracking
 	sendSSEEvent(w, flusher, "status", map[string]any{
@@ -553,15 +551,15 @@ func sendSSEEvent(w http.ResponseWriter, flusher http.Flusher, event string, dat
 	if err != nil {
 		return
 	}
-	fmt.Fprintf(w, "event: %s\n", event)
-	fmt.Fprintf(w, "data: %s\n\n", jsonData)
+	_, _ = fmt.Fprintf(w, "event: %s\n", event)
+	_, _ = fmt.Fprintf(w, "data: %s\n\n", jsonData)
 	flusher.Flush()
 }
 
 // sendSSEHeartbeat sends an SSE comment as a keepalive/heartbeat.
 // SSE comments start with a colon and are ignored by the client EventSource API.
 func sendSSEHeartbeat(w http.ResponseWriter, flusher http.Flusher) {
-	fmt.Fprintf(w, ": heartbeat\n\n")
+	_, _ = fmt.Fprintf(w, ": heartbeat\n\n")
 	flusher.Flush()
 }
 
@@ -646,9 +644,10 @@ func (h *JobHandler) GetCrawlMap(ctx context.Context, input *GetCrawlMapInput) (
 		}
 
 		// Track completion/error stats
-		if r.CrawlStatus == models.CrawlStatusCompleted {
+		switch r.CrawlStatus {
+		case models.CrawlStatusCompleted:
 			completed++
-		} else if r.CrawlStatus == models.CrawlStatusFailed {
+		case models.CrawlStatusFailed:
 			failed++
 			if r.ErrorCategory != "" {
 				errorCounts[r.ErrorCategory]++

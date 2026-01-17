@@ -278,7 +278,7 @@ func (s *AdminService) listOpenRouterModels(ctx context.Context) ([]ProviderMode
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch models: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -374,7 +374,7 @@ func (s *AdminService) listOpenAIModels(ctx context.Context) ([]ProviderModel, e
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch models: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		s.logger.Warn("OpenAI API returned non-200, using static list", "status", resp.StatusCode)
@@ -430,8 +430,14 @@ func (s *AdminService) getStaticOpenAIModels() []ProviderModel {
 func formatOpenAIModelName(id string) string {
 	// Handle some common patterns
 	name := strings.ReplaceAll(id, "-", " ")
-	name = strings.Title(name)
-	return name
+	// Title case each word
+	words := strings.Fields(name)
+	for i, word := range words {
+		if len(word) > 0 {
+			words[i] = strings.ToUpper(word[:1]) + word[1:]
+		}
+	}
+	return strings.Join(words, " ")
 }
 
 // listOllamaModels fetches models from a local Ollama instance.
@@ -455,10 +461,10 @@ func (s *AdminService) listOllamaModels(ctx context.Context) ([]ProviderModel, e
 			{ID: "gemma2", Name: "Gemma 2", Description: "Google's Gemma 2 model (not installed)"},
 		}, nil
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Ollama API returned %d", resp.StatusCode)
+		return nil, fmt.Errorf("ollama API returned %d", resp.StatusCode)
 	}
 
 	var result struct {
@@ -558,13 +564,14 @@ func (s *AdminService) ValidateModels(ctx context.Context, input ValidateModelsI
 		if !found {
 			// For Anthropic and OpenAI, we have static lists so unfound models might still work
 			// For OpenRouter, we fetch the full list so unfound means it doesn't exist
-			if m.Provider == "openrouter" {
+			switch m.Provider {
+			case "openrouter":
 				validation.Status = ModelStatusNotFound
 				validation.Message = "Model not found in OpenRouter catalog"
-			} else if m.Provider == "ollama" {
+			case "ollama":
 				validation.Status = ModelStatusUnknown
 				validation.Message = "Model may need to be pulled locally"
-			} else {
+			default:
 				// Anthropic/OpenAI - could be a valid model we don't have in our static list
 				validation.Status = ModelStatusUnknown
 				validation.Message = "Model not in known list, but may still be valid"
@@ -579,9 +586,9 @@ func (s *AdminService) ValidateModels(ctx context.Context, input ValidateModelsI
 
 // SubscriptionTier represents a subscription tier from Clerk.
 type SubscriptionTier struct {
-	ID          string `json:"id"`          // Clerk product ID (cprod_xxx)
-	Name        string `json:"name"`        // Display name
-	Slug        string `json:"slug"`        // Slug used as tier identifier
+	ID          string `json:"id"`   // Clerk product ID (cprod_xxx)
+	Name        string `json:"name"` // Display name
+	Slug        string `json:"slug"` // Slug used as tier identifier
 	Description string `json:"description"`
 	IsDefault   bool   `json:"is_default"`
 }

@@ -72,7 +72,7 @@ func (r *SQLiteFallbackChainRepository) GetAll(ctx context.Context) ([]*models.F
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var entries []*models.FallbackChainEntry
 	for rows.Next() {
@@ -110,7 +110,7 @@ func (r *SQLiteFallbackChainRepository) GetByTier(ctx context.Context, tier *str
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var entries []*models.FallbackChainEntry
 	for rows.Next() {
@@ -137,7 +137,7 @@ func (r *SQLiteFallbackChainRepository) GetEnabledByTier(ctx context.Context, ti
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var entries []*models.FallbackChainEntry
 	for rows.Next() {
@@ -171,7 +171,7 @@ func (r *SQLiteFallbackChainRepository) GetEnabled(ctx context.Context) ([]*mode
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var entries []*models.FallbackChainEntry
 	for rows.Next() {
@@ -192,7 +192,7 @@ func (r *SQLiteFallbackChainRepository) ReplaceAllByTier(ctx context.Context, ti
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() // Rollback is no-op after commit
 
 	// Delete existing entries for this tier
 	if tier == nil {
@@ -249,7 +249,7 @@ func (r *SQLiteFallbackChainRepository) GetAllTiers(ctx context.Context) ([]stri
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var tiers []string
 	for rows.Next() {
@@ -333,7 +333,7 @@ func (r *SQLiteFallbackChainRepository) Delete(ctx context.Context, id string) e
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() // Rollback is no-op after commit
 
 	// Get the tier and position of the entry being deleted
 	var tier sql.NullString
@@ -375,7 +375,7 @@ func (r *SQLiteFallbackChainRepository) Reorder(ctx context.Context, ids []strin
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() // Rollback is no-op after commit
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	for i, id := range ids {

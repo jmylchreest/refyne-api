@@ -310,7 +310,7 @@ func (v *ClerkVerifier) refreshJWKS() error {
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrJWKSFetch, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("%w: status %d", ErrJWKSFetch, resp.StatusCode)

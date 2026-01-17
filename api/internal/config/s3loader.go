@@ -171,7 +171,7 @@ func (l *S3Loader) Fetch(ctx context.Context) (*S3LoadResult, error) {
 		)
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Read the response body
 	var data []byte

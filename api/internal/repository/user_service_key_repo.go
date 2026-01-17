@@ -63,7 +63,7 @@ func (r *SQLiteUserServiceKeyRepository) GetByUserID(ctx context.Context, userID
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return r.scanKeys(rows)
 }
@@ -90,7 +90,7 @@ func (r *SQLiteUserServiceKeyRepository) GetEnabledByUserID(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return r.scanKeys(rows)
 }
