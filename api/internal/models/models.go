@@ -73,7 +73,7 @@ type Job struct {
 	PageCount        int        `json:"page_count"`
 	TokenUsageInput  int        `json:"token_usage_input"`
 	TokenUsageOutput int        `json:"token_usage_output"`
-	CostCredits      int        `json:"cost_credits"`
+	CostUSD          float64    `json:"cost_usd"` // Actual USD cost charged to user (0 for BYOK)
 	WebhookURL       string     `json:"webhook_url,omitempty"`
 	WebhookStatus    string     `json:"webhook_status,omitempty"`
 	WebhookAttempts  int        `json:"webhook_attempts"`

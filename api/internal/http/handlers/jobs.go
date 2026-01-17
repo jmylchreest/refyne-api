@@ -91,7 +91,7 @@ type CrawlJobResponseBody struct {
 	PageCount    int            `json:"page_count,omitempty" example:"5" doc:"Number of pages successfully extracted (sync mode)"`
 	Data         map[string]any `json:"data,omitempty" doc:"Merged extraction results from all pages (sync mode, completed only)"`
 	TokenUsage   *TokenUsage    `json:"token_usage,omitempty" doc:"Token usage statistics (sync mode)"`
-	CostCredits  int            `json:"cost_credits,omitempty" example:"150" doc:"Total credits consumed (sync mode)"`
+	CostUSD      float64        `json:"cost_usd,omitempty" example:"0.15" doc:"Total USD cost charged (sync mode)"`
 	DurationMs   int64          `json:"duration_ms,omitempty" example:"12500" doc:"Total job duration in milliseconds (sync mode)"`
 	ErrorMessage string         `json:"error_message,omitempty" doc:"Error message if job failed or timed out"`
 }
@@ -227,7 +227,7 @@ func (h *JobHandler) CreateCrawlJob(ctx context.Context, input *CreateCrawlJobIn
 			JobID:        job.ID,
 			Status:       string(job.Status),
 			PageCount:    job.PageCount,
-			CostCredits:  job.CostCredits,
+			CostUSD:  job.CostUSD,
 			DurationMs:   durationMs,
 			ErrorMessage: job.ErrorMessage,
 			TokenUsage: &TokenUsage{
@@ -263,20 +263,20 @@ type ListJobsOutput struct {
 
 // JobResponse represents a job in API responses.
 type JobResponse struct {
-	ID               string `json:"id"`
-	Type             string `json:"type"`
-	Status           string `json:"status"`
-	URL              string `json:"url"`
-	URLsQueued       int    `json:"urls_queued"`  // Total URLs queued for processing (for progress tracking)
-	PageCount        int    `json:"page_count"`   // Pages processed so far
-	TokenUsageInput  int    `json:"token_usage_input"`
-	TokenUsageOutput int    `json:"token_usage_output"`
-	CostCredits      int    `json:"cost_credits"`
-	ErrorMessage     string `json:"error_message,omitempty"`
-	ErrorCategory    string `json:"error_category,omitempty"`
-	StartedAt        string `json:"started_at,omitempty"`
-	CompletedAt      string `json:"completed_at,omitempty"`
-	CreatedAt        string `json:"created_at"`
+	ID               string  `json:"id"`
+	Type             string  `json:"type"`
+	Status           string  `json:"status"`
+	URL              string  `json:"url"`
+	URLsQueued       int     `json:"urls_queued"`  // Total URLs queued for processing (for progress tracking)
+	PageCount        int     `json:"page_count"`   // Pages processed so far
+	TokenUsageInput  int     `json:"token_usage_input"`
+	TokenUsageOutput int     `json:"token_usage_output"`
+	CostUSD          float64 `json:"cost_usd"` // Actual USD cost charged (0 for BYOK)
+	ErrorMessage     string  `json:"error_message,omitempty"`
+	ErrorCategory    string  `json:"error_category,omitempty"`
+	StartedAt        string  `json:"started_at,omitempty"`
+	CompletedAt      string  `json:"completed_at,omitempty"`
+	CreatedAt        string  `json:"created_at"`
 }
 
 // ListJobs handles job listing.
@@ -302,7 +302,7 @@ func (h *JobHandler) ListJobs(ctx context.Context, input *ListJobsInput) (*ListJ
 			PageCount:        job.PageCount,
 			TokenUsageInput:  job.TokenUsageInput,
 			TokenUsageOutput: job.TokenUsageOutput,
-			CostCredits:      job.CostCredits,
+			CostUSD:      job.CostUSD,
 			ErrorMessage:     job.ErrorMessage,
 			ErrorCategory:    job.ErrorCategory,
 			CreatedAt:        job.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
@@ -359,7 +359,7 @@ func (h *JobHandler) GetJob(ctx context.Context, input *GetJobInput) (*GetJobOut
 		PageCount:        job.PageCount,
 		TokenUsageInput:  job.TokenUsageInput,
 		TokenUsageOutput: job.TokenUsageOutput,
-		CostCredits:      job.CostCredits,
+		CostUSD:      job.CostUSD,
 		ErrorMessage:     job.ErrorMessage,
 		ErrorCategory:    job.ErrorCategory,
 		CreatedAt:        job.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
@@ -539,7 +539,7 @@ func (h *JobHandler) StreamResults(w http.ResponseWriter, r *http.Request) {
 					"page_count":     job.PageCount,
 					"error_message":  job.ErrorMessage,
 					"error_category": job.ErrorCategory,
-					"cost_credits":   job.CostCredits,
+					"cost_usd":       job.CostUSD,
 				})
 				return
 			}

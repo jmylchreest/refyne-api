@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -149,8 +150,7 @@ func (w *Worker) processExtractJob(ctx context.Context, job *models.Job) {
 	job.PageCount = 1
 	job.TokenUsageInput = result.Usage.InputTokens
 	job.TokenUsageOutput = result.Usage.OutputTokens
-	// Convert USD cost to credits (1 credit = $0.01) for backwards compatibility
-	job.CostCredits = int(result.Usage.CostUSD * 100)
+	job.CostUSD = result.Usage.CostUSD
 	job.ResultJSON = string(resultData)
 	job.CompletedAt = &now
 
@@ -250,7 +250,9 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 		now := time.Now()
 		dataJSON := ""
 		if pageResult.Data != nil {
-			if d, err := json.Marshal(pageResult.Data); err == nil {
+			// Resolve relative URLs in extracted data against the page URL
+			resolvedData := service.ResolveRelativeURLs(pageResult.Data, pageResult.URL)
+			if d, err := json.Marshal(resolvedData); err == nil {
 				dataJSON = string(d)
 			}
 		}
@@ -347,9 +349,29 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 	job.PageCount = result.PageCount
 	job.TokenUsageInput = result.TotalTokensInput
 	job.TokenUsageOutput = result.TotalTokensOutput
-	job.CostCredits = result.TotalCredits
+	job.CostUSD = result.TotalCostUSD
 	job.ResultJSON = string(resultData)
 	job.CompletedAt = &completedAt
+
+	// Handle early stop scenarios (e.g., insufficient balance)
+	if result.StoppedEarly {
+		switch result.StopReason {
+		case "insufficient_balance":
+			job.ErrorMessage = fmt.Sprintf("Crawl stopped early: insufficient balance after %d pages. Partial results are available.", result.PageCount)
+			job.ErrorCategory = "insufficient_balance"
+		case "callback_error":
+			job.ErrorMessage = fmt.Sprintf("Crawl stopped early after %d pages due to processing error.", result.PageCount)
+			job.ErrorCategory = "processing_error"
+		default:
+			job.ErrorMessage = fmt.Sprintf("Crawl stopped early after %d pages.", result.PageCount)
+			job.ErrorCategory = "early_stop"
+		}
+		w.logger.Warn("crawl stopped early",
+			"job_id", job.ID,
+			"reason", result.StopReason,
+			"pages_completed", result.PageCount,
+		)
+	}
 
 	if err := w.jobRepo.Update(ctx, job); err != nil {
 		w.logger.Error("failed to update job", "job_id", job.ID, "error", err)
@@ -367,7 +389,9 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 		}
 
 		for _, pageResult := range result.PageResults {
-			dataJSON, _ := json.Marshal(pageResult.Data)
+			// Resolve relative URLs in extracted data against the page URL
+			resolvedData := service.ResolveRelativeURLs(pageResult.Data, pageResult.URL)
+			dataJSON, _ := json.Marshal(resolvedData)
 			jobResults.Results = append(jobResults.Results, service.JobResultData{
 				ID:        pageResult.URL, // Use URL as ID for now
 				URL:       pageResult.URL,
@@ -384,11 +408,11 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 	// Send webhook if configured
 	if job.WebhookURL != "" {
 		w.webhookSvc.Send(ctx, job.WebhookURL, map[string]any{
-			"job_id":     job.ID,
-			"status":     "completed",
-			"page_count": result.PageCount,
-			"results":    result.Results,
-			"total_cost": result.TotalCredits,
+			"job_id":       job.ID,
+			"status":       "completed",
+			"page_count":   result.PageCount,
+			"results":      result.Results,
+			"cost_usd":     result.TotalCostUSD,
 		})
 	}
 

@@ -81,7 +81,7 @@ type CompleteExtractJobInput struct {
 	PageCount        int     `json:"page_count"`
 	TokenUsageInput  int     `json:"token_usage_input"`
 	TokenUsageOutput int     `json:"token_usage_output"`
-	CostCredits      int     `json:"cost_credits"`
+	CostUSD          float64 `json:"cost_usd"`
 	LLMProvider      string  `json:"llm_provider"`
 	LLMModel         string  `json:"llm_model"`
 }
@@ -267,7 +267,7 @@ func (s *JobService) CompleteExtractJob(ctx context.Context, jobID string, input
 	job.PageCount = input.PageCount
 	job.TokenUsageInput = input.TokenUsageInput
 	job.TokenUsageOutput = input.TokenUsageOutput
-	job.CostCredits = input.CostCredits
+	job.CostUSD = input.CostUSD
 	job.LLMProvider = input.LLMProvider
 	job.LLMModel = input.LLMModel
 	job.CompletedAt = &now

@@ -26,7 +26,7 @@ func (r *SQLiteJobRepository) Create(ctx context.Context, job *models.Job) error
 	query := `
 		INSERT INTO jobs (id, user_id, type, status, url, schema_json, crawl_options_json,
 			result_json, error_message, urls_queued, page_count, token_usage_input, token_usage_output,
-			cost_credits, webhook_url, webhook_status, webhook_attempts, started_at, completed_at,
+			cost_usd, webhook_url, webhook_status, webhook_attempts, started_at, completed_at,
 			created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
@@ -44,7 +44,7 @@ func (r *SQLiteJobRepository) Create(ctx context.Context, job *models.Job) error
 		job.PageCount,
 		job.TokenUsageInput,
 		job.TokenUsageOutput,
-		job.CostCredits,
+		job.CostUSD,
 		nullString(job.WebhookURL),
 		nullString(job.WebhookStatus),
 		job.WebhookAttempts,
@@ -63,7 +63,7 @@ func (r *SQLiteJobRepository) GetByID(ctx context.Context, id string) (*models.J
 	query := `
 		SELECT id, user_id, type, status, url, schema_json, crawl_options_json,
 			result_json, error_message, urls_queued, page_count, token_usage_input, token_usage_output,
-			cost_credits, webhook_url, webhook_status, webhook_attempts, started_at, completed_at,
+			cost_usd, webhook_url, webhook_status, webhook_attempts, started_at, completed_at,
 			created_at, updated_at
 		FROM jobs WHERE id = ?
 	`
@@ -74,7 +74,7 @@ func (r *SQLiteJobRepository) GetByUserID(ctx context.Context, userID string, li
 	query := `
 		SELECT id, user_id, type, status, url, schema_json, crawl_options_json,
 			result_json, error_message, urls_queued, page_count, token_usage_input, token_usage_output,
-			cost_credits, webhook_url, webhook_status, webhook_attempts, started_at, completed_at,
+			cost_usd, webhook_url, webhook_status, webhook_attempts, started_at, completed_at,
 			created_at, updated_at
 		FROM jobs WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
 	`
@@ -98,7 +98,7 @@ func (r *SQLiteJobRepository) GetByUserID(ctx context.Context, userID string, li
 func (r *SQLiteJobRepository) Update(ctx context.Context, job *models.Job) error {
 	query := `
 		UPDATE jobs SET status = ?, result_json = ?, error_message = ?, urls_queued = ?, page_count = ?,
-			token_usage_input = ?, token_usage_output = ?, cost_credits = ?,
+			token_usage_input = ?, token_usage_output = ?, cost_usd = ?,
 			webhook_status = ?, webhook_attempts = ?, started_at = ?, completed_at = ?, updated_at = ?
 		WHERE id = ?
 	`
@@ -110,7 +110,7 @@ func (r *SQLiteJobRepository) Update(ctx context.Context, job *models.Job) error
 		job.PageCount,
 		job.TokenUsageInput,
 		job.TokenUsageOutput,
-		job.CostCredits,
+		job.CostUSD,
 		nullString(job.WebhookStatus),
 		job.WebhookAttempts,
 		nullTime(job.StartedAt),
@@ -128,7 +128,7 @@ func (r *SQLiteJobRepository) GetPending(ctx context.Context, limit int) ([]*mod
 	query := `
 		SELECT id, user_id, type, status, url, schema_json, crawl_options_json,
 			result_json, error_message, urls_queued, page_count, token_usage_input, token_usage_output,
-			cost_credits, webhook_url, webhook_status, webhook_attempts, started_at, completed_at,
+			cost_usd, webhook_url, webhook_status, webhook_attempts, started_at, completed_at,
 			created_at, updated_at
 		FROM jobs WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?
 	`
@@ -177,7 +177,7 @@ func (r *SQLiteJobRepository) ClaimJob(ctx context.Context, id string) (*models.
 	query := `
 		SELECT id, user_id, type, status, url, schema_json, crawl_options_json,
 			result_json, error_message, urls_queued, page_count, token_usage_input, token_usage_output,
-			cost_credits, webhook_url, webhook_status, webhook_attempts, started_at, completed_at,
+			cost_usd, webhook_url, webhook_status, webhook_attempts, started_at, completed_at,
 			created_at, updated_at
 		FROM jobs WHERE id = ?
 	`
@@ -222,7 +222,7 @@ func (r *SQLiteJobRepository) ClaimPending(ctx context.Context) (*models.Job, er
 		)
 		RETURNING id, user_id, type, status, url, schema_json, crawl_options_json,
 			result_json, error_message, urls_queued, page_count, token_usage_input, token_usage_output,
-			cost_credits, webhook_url, webhook_status, webhook_attempts, started_at, completed_at,
+			cost_usd, webhook_url, webhook_status, webhook_attempts, started_at, completed_at,
 			created_at, updated_at
 	`
 
@@ -252,7 +252,7 @@ func (r *SQLiteJobRepository) scanJob(row *sql.Row) (*models.Job, error) {
 	err := row.Scan(
 		&job.ID, &job.UserID, &job.Type, &job.Status, &job.URL, &job.SchemaJSON,
 		&crawlOptionsJSON, &resultJSON, &errorMessage, &job.URLsQueued, &job.PageCount,
-		&job.TokenUsageInput, &job.TokenUsageOutput, &job.CostCredits,
+		&job.TokenUsageInput, &job.TokenUsageOutput, &job.CostUSD,
 		&webhookURL, &webhookStatus, &job.WebhookAttempts,
 		&startedAt, &completedAt, &createdAt, &updatedAt,
 	)
@@ -291,7 +291,7 @@ func (r *SQLiteJobRepository) scanJobFromRows(rows *sql.Rows) (*models.Job, erro
 	err := rows.Scan(
 		&job.ID, &job.UserID, &job.Type, &job.Status, &job.URL, &job.SchemaJSON,
 		&crawlOptionsJSON, &resultJSON, &errorMessage, &job.URLsQueued, &job.PageCount,
-		&job.TokenUsageInput, &job.TokenUsageOutput, &job.CostCredits,
+		&job.TokenUsageInput, &job.TokenUsageOutput, &job.CostUSD,
 		&webhookURL, &webhookStatus, &job.WebhookAttempts,
 		&startedAt, &completedAt, &createdAt, &updatedAt,
 	)

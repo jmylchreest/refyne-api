@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -598,7 +600,9 @@ type CrawlResult struct {
 	PageCount         int          `json:"page_count"`
 	TotalTokensInput  int          `json:"total_tokens_input"`
 	TotalTokensOutput int          `json:"total_tokens_output"`
-	TotalCredits      int          `json:"total_credits"`
+	TotalCostUSD      float64      `json:"total_cost_usd"` // Actual USD cost charged to user
+	StoppedEarly      bool         `json:"stopped_early"`  // True if crawl terminated before completion
+	StopReason        string       `json:"stop_reason"`    // Reason for early stop (e.g., "insufficient_balance")
 }
 
 // Crawl performs a multi-page crawl extraction.
@@ -753,21 +757,12 @@ func (s *ExtractionService) Crawl(ctx context.Context, userID string, input Craw
 		return nil, s.handleLLMError(lastError, llmCfg, isBYOK)
 	}
 
-	// Calculate cost
-	totalTokens := totalTokensInput + totalTokensOutput
-	totalCredits := (totalTokens + 999) / 1000
-
-	// Calculate actual costs for logging
+	// Calculate actual costs
 	var llmCostUSD, userCostUSD float64
 	if s.billing != nil {
 		llmCostUSD = s.billing.GetActualCost(ctx, totalTokensInput, totalTokensOutput, llmCfg.Model, llmCfg.Provider)
 		userCostUSD, _, _ = s.billing.CalculateTotalCost(llmCostUSD, "")
 	}
-
-	// Record usage
-	s.recordUsageLegacy(ctx, userID, "", models.JobTypeCrawl, pageCount,
-		totalTokensInput, totalTokensOutput, totalCredits,
-		llmCfg.Provider, llmCfg.Model)
 
 	s.logger.Info("crawl completed",
 		"job_id", input.JobID,
@@ -789,7 +784,9 @@ func (s *ExtractionService) Crawl(ctx context.Context, userID string, input Craw
 		PageCount:         pageCount,
 		TotalTokensInput:  totalTokensInput,
 		TotalTokensOutput: totalTokensOutput,
-		TotalCredits:      totalCredits,
+		TotalCostUSD:      userCostUSD,
+		StoppedEarly:      false, // Simple Crawl doesn't have mid-crawl balance check
+		StopReason:        "",
 	}, nil
 }
 
@@ -821,6 +818,25 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve LLM config: %w", err)
 	}
+
+	// Get available balance for non-BYOK users (for mid-crawl balance enforcement)
+	var availableBalance float64
+	var checkBalance bool
+	if !isBYOK && s.billing != nil {
+		checkBalance = true
+		availableBalance, err = s.billing.GetAvailableBalance(ctx, userID)
+		if err != nil {
+			s.logger.Warn("failed to get available balance, skipping mid-crawl balance check",
+				"user_id", userID,
+				"error", err,
+			)
+			checkBalance = false
+		}
+	}
+
+	// Create a cancellable context so we can stop the crawler if balance is exhausted
+	crawlCtx, cancelCrawl := context.WithCancel(ctx)
+	defer cancelCrawl()
 
 	// Build seed URLs list - use SeedURLs if provided (from sitemap), otherwise just the main URL
 	seedURLs := input.SeedURLs
@@ -862,11 +878,12 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 	)
 
 	// Perform crawl - use CrawlMany for multiple seeds (from sitemap), single Crawl otherwise
+	// Use crawlCtx so we can cancel if balance is exhausted
 	var results <-chan *refyne.Result
 	if len(seedURLs) > 1 {
-		results = r.CrawlMany(ctx, seedURLs, sch, crawlOpts...)
+		results = r.CrawlMany(crawlCtx, seedURLs, sch, crawlOpts...)
 	} else {
-		results = r.Crawl(ctx, input.URL, sch, crawlOpts...)
+		results = r.Crawl(crawlCtx, input.URL, sch, crawlOpts...)
 	}
 
 	s.logger.Debug("crawler channel ready, waiting for results",
@@ -887,6 +904,9 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 		totalTokensOutput int
 		pageCount         int
 		lastError         error
+		cumulativeCostUSD float64 // Running total of costs (for balance tracking)
+		stoppedEarly      bool    // True if we stopped due to balance or other limit
+		stopReason        string  // Reason for early stop
 	)
 
 	for result := range results {
@@ -944,6 +964,9 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 				pageUserCost, _, _ = s.billing.CalculateTotalCost(pageLLMCost, "")
 			}
 
+			// Track cumulative cost for balance enforcement
+			cumulativeCostUSD += pageUserCost
+
 			// Log successful extraction
 			s.logger.Info("extracted",
 				"job_id", input.JobID,
@@ -958,6 +981,7 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 				"output_tokens", result.TokenUsage.OutputTokens,
 				"llm_cost_usd", pageLLMCost,
 				"user_cost_usd", pageUserCost,
+				"cumulative_cost_usd", cumulativeCostUSD,
 				"is_byok", isBYOK,
 			)
 
@@ -978,6 +1002,27 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 			totalTokensInput += result.TokenUsage.InputTokens
 			totalTokensOutput += result.TokenUsage.OutputTokens
 			pageCount++
+
+			// Check if we have enough balance for the next page (non-BYOK only)
+			// Use the cost of this page as estimate for the next page
+			if checkBalance && pageUserCost > 0 {
+				remainingBalance := availableBalance - cumulativeCostUSD
+				if remainingBalance < pageUserCost {
+					s.logger.Warn("insufficient balance for next page, stopping crawl",
+						"job_id", input.JobID,
+						"user_id", userID,
+						"available_balance", availableBalance,
+						"cumulative_cost", cumulativeCostUSD,
+						"remaining_balance", remainingBalance,
+						"estimated_next_page_cost", pageUserCost,
+						"pages_completed", pageCount,
+					)
+					stoppedEarly = true
+					stopReason = "insufficient_balance"
+					cancelCrawl() // Stop the crawler
+					// Continue processing to drain any remaining results from the channel
+				}
+			}
 		}
 
 		pageResults = append(pageResults, pageResult)
@@ -986,6 +1031,8 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 		if callbacks.OnResult != nil {
 			if err := callbacks.OnResult(pageResult); err != nil {
 				s.logger.Error("callback error, stopping crawl", "error", err)
+				stoppedEarly = true
+				stopReason = "callback_error"
 				break
 			}
 		}
@@ -996,21 +1043,12 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 		return nil, s.handleLLMError(lastError, llmCfg, isBYOK)
 	}
 
-	// Calculate cost
-	totalTokens := totalTokensInput + totalTokensOutput
-	totalCredits := (totalTokens + 999) / 1000
-
-	// Calculate actual costs for logging
+	// Calculate actual costs
 	var llmCostUSD, userCostUSD float64
 	if s.billing != nil {
 		llmCostUSD = s.billing.GetActualCost(ctx, totalTokensInput, totalTokensOutput, llmCfg.Model, llmCfg.Provider)
 		userCostUSD, _, _ = s.billing.CalculateTotalCost(llmCostUSD, "")
 	}
-
-	// Record usage
-	s.recordUsageLegacy(ctx, userID, "", models.JobTypeCrawl, pageCount,
-		totalTokensInput, totalTokensOutput, totalCredits,
-		llmCfg.Provider, llmCfg.Model)
 
 	s.logger.Info("crawl completed",
 		"job_id", input.JobID,
@@ -1024,6 +1062,8 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 		"total_output_tokens", totalTokensOutput,
 		"llm_cost_usd", llmCostUSD,
 		"user_cost_usd", userCostUSD,
+		"stopped_early", stoppedEarly,
+		"stop_reason", stopReason,
 	)
 
 	return &CrawlResult{
@@ -1032,20 +1072,26 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 		PageCount:         pageCount,
 		TotalTokensInput:  totalTokensInput,
 		TotalTokensOutput: totalTokensOutput,
-		TotalCredits:      totalCredits,
+		TotalCostUSD:      userCostUSD,
+		StoppedEarly:      stoppedEarly,
+		StopReason:        stopReason,
 	}, nil
 }
 
 // createRefyneInstance creates a new refyne instance with the given LLM config.
 // Returns the refyne instance and the cleaner name for logging.
 func (s *ExtractionService) createRefyneInstance(llmCfg *LLMConfigInput) (*refyne.Refyne, string, error) {
-	// Use Readability -> Markdown chain
-	// 1. Readability extracts main content (or falls back to original if not article-like)
+	// Use Trafilatura -> Markdown chain
+	// 1. Trafilatura extracts main content (more inclusive than Readability)
+	//    - Keeps tables, links, images (important for data extraction)
+	//    - Works better for non-article pages (product listings, job boards, etc.)
 	// 2. Markdown converts HTML to markdown (strips tags, preserves structure)
-	// This ensures we always get markdown output even if Readability can't extract.
 	contentCleaner := cleaner.NewChain(
-		cleaner.NewReadability(&cleaner.ReadabilityConfig{
+		cleaner.NewTrafilatura(&cleaner.TrafilaturaConfig{
 			Output: cleaner.OutputHTML,
+			Tables: cleaner.Include, // Keep tables for structured data
+			Links:  cleaner.Include, // Keep links for URL extraction
+			Images: cleaner.Include, // Keep image URLs
 		}),
 		cleaner.NewMarkdown(),
 	)
@@ -1552,4 +1598,100 @@ func (s *ExtractionService) detectBYOK(inputCfg, resolvedCfg *LLMConfigInput) bo
 	}
 
 	return false
+}
+
+// ResolveRelativeURLs recursively walks through extracted data and resolves
+// any relative URLs against the base page URL. This ensures all URL fields
+// in the extraction results are absolute URLs.
+//
+// Common URL field names that are resolved:
+// - url, link, href
+// - image_url, image, img_url, thumbnail_url
+// - source_url, page_url
+func ResolveRelativeURLs(data any, baseURL string) any {
+	if data == nil || baseURL == "" {
+		return data
+	}
+
+	parsedBase, err := url.Parse(baseURL)
+	if err != nil {
+		return data // Can't parse base URL, return as-is
+	}
+
+	return resolveURLsRecursive(data, parsedBase)
+}
+
+// resolveURLsRecursive recursively processes data structures to resolve URLs.
+func resolveURLsRecursive(data any, baseURL *url.URL) any {
+	switch v := data.(type) {
+	case map[string]any:
+		result := make(map[string]any, len(v))
+		for key, val := range v {
+			if isURLField(key) {
+				if strVal, ok := val.(string); ok {
+					result[key] = resolveURL(strVal, baseURL)
+				} else {
+					result[key] = val
+				}
+			} else {
+				result[key] = resolveURLsRecursive(val, baseURL)
+			}
+		}
+		return result
+
+	case []any:
+		result := make([]any, len(v))
+		for i, item := range v {
+			result[i] = resolveURLsRecursive(item, baseURL)
+		}
+		return result
+
+	default:
+		return data
+	}
+}
+
+// isURLField returns true if the field name typically contains a URL.
+func isURLField(fieldName string) bool {
+	name := strings.ToLower(fieldName)
+	urlFields := []string{
+		"url", "link", "href",
+		"image_url", "image", "img_url", "img", "thumbnail_url", "thumbnail",
+		"source_url", "page_url", "canonical_url",
+		"video_url", "audio_url", "media_url",
+		"profile_url", "avatar_url",
+	}
+	for _, field := range urlFields {
+		if name == field {
+			return true
+		}
+	}
+	// Also match fields ending in _url or _link
+	return strings.HasSuffix(name, "_url") || strings.HasSuffix(name, "_link")
+}
+
+// resolveURL resolves a potentially relative URL against a base URL.
+func resolveURL(rawURL string, baseURL *url.URL) string {
+	if rawURL == "" {
+		return rawURL
+	}
+
+	// Already absolute (has scheme)
+	if strings.HasPrefix(rawURL, "http://") || strings.HasPrefix(rawURL, "https://") {
+		return rawURL
+	}
+
+	// Protocol-relative URL
+	if strings.HasPrefix(rawURL, "//") {
+		return baseURL.Scheme + ":" + rawURL
+	}
+
+	// Parse and resolve against base
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL // Can't parse, return as-is
+	}
+
+	resolved := baseURL.ResolveReference(parsed)
+	return resolved.String()
 }

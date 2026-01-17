@@ -20,6 +20,7 @@ import (
 	"github.com/jmylchreest/refyne-api/internal/config"
 	"github.com/jmylchreest/refyne-api/internal/crypto"
 	"github.com/jmylchreest/refyne-api/internal/models"
+	"github.com/jmylchreest/refyne-api/internal/preprocessor"
 	"github.com/jmylchreest/refyne-api/internal/repository"
 )
 
@@ -31,7 +32,8 @@ type AnalyzerService struct {
 	logger          *slog.Logger
 	encryptor       *crypto.Encryptor
 	cleaner         cleaner.Cleaner
-	fallbackCleaner cleaner.Cleaner // Used when content is too large for context window
+	fallbackCleaner cleaner.Cleaner                // Used when content is too large for context window
+	preprocessor    preprocessor.LLMPreProcessor   // Preprocessor for generating LLM hints
 }
 
 // NewAnalyzerService creates a new analyzer service (legacy constructor).
@@ -55,6 +57,12 @@ func NewAnalyzerServiceWithBilling(cfg *config.Config, repos *repository.Reposit
 		Images: cleaner.Exclude,    // Exclude images to save tokens
 	})
 
+	// Create preprocessor chain for generating LLM hints
+	// HintRepeats detects repeated HTML patterns to suggest array-based schemas
+	llmPreprocessor := preprocessor.NewChain(
+		preprocessor.NewHintRepeats(),
+	)
+
 	return &AnalyzerService{
 		cfg:             cfg,
 		repos:           repos,
@@ -63,6 +71,7 @@ func NewAnalyzerServiceWithBilling(cfg *config.Config, repos *repository.Reposit
 		encryptor:       encryptor,
 		cleaner:         cleaner.NewNoop(), // Use noop cleaner - raw HTML for analysis
 		fallbackCleaner: fallbackCleaner,
+		preprocessor:    llmPreprocessor,
 	}
 }
 
@@ -618,14 +627,38 @@ type analyzeResult struct {
 
 // analyzeWithLLM calls the LLM to analyze page content and generate a schema.
 func (s *AnalyzerService) analyzeWithLLM(ctx context.Context, mainContent string, detailContents []string, detailURLs []string, links []string, llmConfig *LLMConfigInput) (*analyzeResult, error) {
+	// Run preprocessor to generate hints before truncation (needs full content)
+	hints, err := s.preprocessor.Process(mainContent)
+	if err != nil {
+		s.logger.Warn("preprocessor failed", "error", err)
+		hints = preprocessor.NewHints() // Continue with empty hints
+	}
+
+	// Log what the preprocessor detected
+	if len(hints.DetectedTypes) > 0 {
+		typeNames := make([]string, len(hints.DetectedTypes))
+		for i, dt := range hints.DetectedTypes {
+			typeNames[i] = fmt.Sprintf("%s(%d)", dt.Name, dt.Count)
+		}
+		s.logger.Info("preprocessor detected content types",
+			"types", typeNames,
+			"preprocessor", s.preprocessor.Name(),
+		)
+	} else {
+		s.logger.Debug("preprocessor detected no repeated patterns",
+			"preprocessor", s.preprocessor.Name(),
+			"content_length", len(mainContent),
+		)
+	}
+
 	// Truncate content to avoid token limits
 	mainContent = s.truncateContent(mainContent, 15000)
 	for i := range detailContents {
 		detailContents[i] = s.truncateContent(detailContents[i], 5000)
 	}
 
-	// Build the prompt
-	prompt := s.buildAnalysisPrompt(mainContent, detailContents, detailURLs, links)
+	// Build the prompt with preprocessing hints
+	prompt := s.buildAnalysisPrompt(mainContent, detailContents, detailURLs, links, hints)
 
 	// Call LLM API
 	llmResult, err := s.callLLM(ctx, llmConfig, prompt)
@@ -662,7 +695,7 @@ func (s *AnalyzerService) truncateContent(content string, maxLen int) string {
 }
 
 // buildAnalysisPrompt creates the prompt for the LLM to analyze the page.
-func (s *AnalyzerService) buildAnalysisPrompt(mainContent string, detailContents []string, detailURLs []string, links []string) string {
+func (s *AnalyzerService) buildAnalysisPrompt(mainContent string, detailContents []string, detailURLs []string, links []string, hints *preprocessor.Hints) string {
 	var sb strings.Builder
 
 	sb.WriteString(`You are analyzing a website to generate an extraction schema.
@@ -695,121 +728,79 @@ func (s *AnalyzerService) buildAnalysisPrompt(mainContent string, detailContents
 		}
 	}
 
+	// Add preprocessor hints if available
+	if hints != nil {
+		hintsSection := hints.ToPromptSection()
+		if hintsSection != "" {
+			sb.WriteString(hintsSection)
+		}
+	}
+
 	sb.WriteString(`
 
 ## Your Task
 
-Generate a **combined schema** that works across BOTH listing pages and detail pages. This is critical because:
-- Users will crawl multiple pages and merge results
-- The same schema must handle partial data from listings AND full data from detail pages
-- Fields should be optional so partial data can still be extracted
+Generate a schema that works across listing AND detail pages. Fields should be optional for partial extraction.
 
-### Schema Model Types
+### Schema Approach
 
-Choose the most appropriate model and adapt field names to match the actual site content:
+Use a descriptive array name matching the content: products[], jobs[], articles[], episodes[], case_studies[], services[], etc.
 
-**E-commerce / Products**
-- products[] with: title, url, price, currency, image_url, description, sku, availability, category, brand
+**Required fields**: title, url (always include these as required)
+**Common fields**: description, image_url, date, category, price, currency
+**Add relevant fields** based on what you observe in the content - don't limit yourself to a fixed template.
 
-**Jobs / Careers**
-- jobs[] with: title, url, company, location, salary, currency, job_type, posted_date, description
+**Mixed content sites** (e.g., /blog/ AND /solutions/ AND /podcasts/): Use items[] with a content_type field, plus a metadata object for type-specific fields the LLM can populate dynamically.
 
-**Real Estate / Properties**
-- properties[] with: title, url, price, currency, address, bedrooms, bathrooms, area_sqft, image_url
+### Schema Rules
 
-**Articles / Blog / News**
-- articles[] with: title, url, author, published_date, summary, image_url, category, read_time
+- Prices: integer in smallest unit (£15.99 = 1599) + currency field (ISO: GBP, USD)
+- URLs: absolute paths only
+- Only title + url are required; everything else optional
 
-**Podcasts / Episodes**
-- episodes[] with: title, url, description, duration, published_date, guest, host, episode_number
-
-**Case Studies / Success Stories**
-- case_studies[] with: title, url, company_name, industry, challenge, solution, results, testimonial
-
-**Services / Portfolio**
-- services[] with: name, description, price, currency, features[], image_url
-
-**Landing Pages / Product Features**
-- features[] with: title, description, icon_url, category
-
-**IMPORTANT - Mixed Content Sites**: If the follow patterns target DIFFERENT content types (e.g., /blog/ AND /solutions/ AND /case-study/), create a FLEXIBLE schema with:
-
-1. **Common fields** (always present): title, url, content_type
-2. **Dynamic metadata object** for type-specific fields that vary by content
-
-Use this pattern for items[]:
-- title (string, required)
-- url (string, required)
-- content_type (string) - e.g., blog, case_study, solution, podcast
-- description (string)
-- image_url (string)
-- date (string)
-- metadata (object) - Additional fields specific to this content type
-
-The metadata object allows the LLM to extract type-specific fields dynamically:
-- Blog: metadata.author, metadata.read_time, metadata.category
-- Case study: metadata.company, metadata.industry, metadata.results, metadata.testimonial
-- Podcast: metadata.duration, metadata.guest, metadata.episode_number
-- Solution: metadata.features[], metadata.benefits[], metadata.pricing
-
-### Schema Guidelines
-
-1. **Use descriptive field names** based on what you see (e.g., products, listings, jobs - not generic "items")
-2. **Prices**: integer in smallest currency unit (e.g., £15.99 = 1599) + separate currency field (ISO code: GBP, USD, EUR)
-3. **URLs must be absolute** (include domain)
-4. **Mark ONLY title and url as required** - everything else optional for partial extraction
-5. **Keep descriptions short** - just describe what the field contains
-
-### Output Format
-
-Return valid JSON only (no markdown blocks):
+### Output Format (JSON only, no markdown)
 
 {
-  "site_summary": "Brief description of what this site is",
-  "page_type": "listing|detail|article|product|company|unknown",
-  "detected_elements": [
-    {"name": "field_name", "type": "string|number|array|url|date", "count": 10, "description": "What this is"}
-  ],
-  "suggested_schema": "name: SiteName\ndescription: Brief description\nfields:\n  - name: products\n    type: array\n    items:\n      type: object\n      properties:\n        - name: title\n          type: string\n          required: true\n        - name: url\n          type: string\n          required: true\n        - name: price\n          type: integer\n          description: Price in smallest currency unit\n        - name: currency\n          type: string\n          description: ISO currency code (GBP, USD, EUR)",
-  "follow_patterns": [
-    {"pattern": "a[href*='/news/world']", "description": "World news section"},
-    {"pattern": "a[href*='/news/business']", "description": "Business news section"},
-    {"pattern": "a[href*='/news/technology']", "description": "Technology section"},
-    {"pattern": "a[href*='/articles/']", "description": "Individual article pages"}
-  ]
+  "site_summary": "Brief description",
+  "page_type": "listing|detail|article|product|unknown",
+  "detected_elements": [{"name": "...", "type": "string|number|array", "count": N}],
+  "suggested_schema": "<YAML schema - see structure below>",
+  "follow_patterns": [{"pattern": "a[href*='/path/']", "description": "..."}]
 }
 
-### Follow Pattern Guidelines (CRITICAL)
+The suggested_schema MUST be a YAML string with this exact structure:
 
-Generate CSS selectors based on the URL patterns in the Links Found section.
+name: SchemaName
+description: What this schema extracts
+fields:
+  - name: items
+    type: array
+    items:
+      type: object
+      properties:
+        - name: title
+          type: string
+          required: true
+        - name: url
+          type: string
+          required: true
+        - name: description
+          type: string
+        - name: category
+          type: string
+        - name: metadata
+          type: object
+          description: Additional type-specific fields
 
-RULE: Use ONLY href-based selectors. Do NOT invent class names.
+Valid types: string, integer, number, boolean, array, object. Use "items" for arrays, "properties" for objects.
 
-**IMPORTANT**: Complex sites often have MULTIPLE content sections. Identify ALL distinct content patterns:
-- News sites have sections like /world, /business, /technology, /health, /sports, /articles
-- E-commerce has /products/, /categories/, /collections/
-- Job boards have /jobs/, /careers/, /positions/
+### Follow Patterns
 
-GOOD selectors (use these patterns):
-- a[href*='/blog/'] for blog sections
-- a[href*='/products/'] for product listings
-- a[href*='/news/world'] for world news section
-- a[href*='/news/business'] for business section
-- a[href*='/articles/'] for article pages
-- a[href^='/jobs/'] for job listings (starts with)
+Generate CSS selectors from the Links Found section. Use ONLY href-based selectors:
+- GOOD: a[href*='/blog/'], a[href*='/products/'], a[href^='/jobs/']
+- BAD: .blog-post a (invented class), main a[href*='/x/'] (assumes main exists)
 
-BAD selectors (DO NOT use invented classes):
-- .blog-post a - WRONG: class does not exist
-- .article-list a - WRONG: class does not exist
-- main a[href*='/blog/'] - WRONG if no main tag in HTML
-
-How to generate patterns:
-1. Look at ALL links in the Links Found section
-2. Identify DISTINCT URL path patterns (sections, categories, content types)
-3. Create a separate pattern for EACH content section
-4. Include article/detail page patterns like /articles/ or /article/
-
-RETURN MULTIPLE patterns if the site has multiple content sections. Most large sites (news, e-commerce) need 3-6 patterns to capture all content.
+Identify ALL distinct URL patterns. Large sites need 3-6 patterns for different sections.
 `)
 
 	return sb.String()
