@@ -193,6 +193,18 @@ const (
 	LLMRequestTimeout = 3 * time.Minute
 )
 
+// Cache durations for Cache-Control headers
+const (
+	// CacheMaxAgeShort is for rapidly changing data (health checks, etc.)
+	CacheMaxAgeShort = 30 * time.Second
+	// CacheMaxAgeMedium is for semi-stable data (schemas, tier info)
+	CacheMaxAgeMedium = 5 * time.Minute
+	// CacheMaxAgeLong is for stable data (provider lists, model lists)
+	CacheMaxAgeLong = 1 * time.Hour
+	// CacheMaxAgeImmutable is for immutable data (completed job results)
+	CacheMaxAgeImmutable = 24 * time.Hour
+)
+
 // QuotaExceededMessage returns a user-friendly message for monthly quota exceeded.
 func QuotaExceededMessage(tier string) string {
 	normalized := NormalizeTierName(tier)

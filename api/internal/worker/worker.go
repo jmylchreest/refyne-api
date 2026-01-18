@@ -144,7 +144,12 @@ func (w *Worker) processExtractJob(ctx context.Context, job *models.Job) {
 	}
 
 	// Update job with results
-	resultData, _ := json.Marshal(result.Data)
+	resultData, err := json.Marshal(result.Data)
+	if err != nil {
+		w.logger.Error("failed to marshal job result data", "job_id", job.ID, "error", err)
+		w.failJob(ctx, job, "internal error: failed to marshal result")
+		return
+	}
 	now := time.Now()
 	job.Status = models.JobStatusCompleted
 	job.PageCount = 1
@@ -319,14 +324,28 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 		w.logger.Debug("urls queued updated", "job_id", job.ID, "urls_queued", queuedCount)
 	}
 
+	// Deserialize LLM configs from job
+	var llmConfigs []*service.LLMConfigInput
+	if job.LLMConfigsJSON != "" {
+		if err := json.Unmarshal([]byte(job.LLMConfigsJSON), &llmConfigs); err != nil {
+			w.logger.Error("failed to parse LLM configs", "job_id", job.ID, "error", err)
+			w.failJob(ctx, job, "invalid LLM configuration")
+			return
+		}
+	}
+	if len(llmConfigs) == 0 {
+		w.failJob(ctx, job, "no LLM configuration found")
+		return
+	}
+
 	result, err := w.extractionSvc.CrawlWithCallback(ctx, job.UserID, service.CrawlInput{
-		JobID:               job.ID,
-		URL:                 job.URL,
-		SeedURLs:            sitemapURLs, // URLs from sitemap discovery (empty if not using sitemap)
-		Schema:              json.RawMessage(job.SchemaJSON),
-		Tier:                job.Tier,                // User's tier at job creation time
-		BYOKAllowed:         job.BYOKAllowed,         // Whether user had provider_byok feature at job creation
-		ModelsCustomAllowed: job.ModelsCustomAllowed, // Whether user had models_custom feature at job creation
+		JobID:      job.ID,
+		URL:        job.URL,
+		SeedURLs:   sitemapURLs, // URLs from sitemap discovery (empty if not using sitemap)
+		Schema:     json.RawMessage(job.SchemaJSON),
+		LLMConfigs: llmConfigs,  // Pre-resolved config chain from job creation
+		Tier:       job.Tier,    // User's tier at job creation time
+		IsBYOK:     job.IsBYOK,  // Whether using user's own API keys
 		Options: service.CrawlOptions{
 			FollowSelector:   options.FollowSelector,
 			FollowPattern:    options.FollowPattern,

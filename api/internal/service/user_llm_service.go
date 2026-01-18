@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/jmylchreest/refyne-api/internal/crypto"
+	"github.com/jmylchreest/refyne-api/internal/llm"
 	"github.com/jmylchreest/refyne-api/internal/models"
 	"github.com/jmylchreest/refyne-api/internal/repository"
 )
@@ -197,10 +198,5 @@ func (s *UserLLMService) GetDecryptedKey(ctx context.Context, userID, provider s
 
 // isValidUserProvider checks if a provider name is valid for user keys.
 func isValidUserProvider(provider string) bool {
-	switch provider {
-	case "openrouter", "anthropic", "openai", "ollama":
-		return true
-	default:
-		return false
-	}
+	return llm.IsValidProvider(provider)
 }

@@ -358,8 +358,8 @@ func TestGetServiceKeys_DBOverridesEnv(t *testing.T) {
 
 	// Set DB keys
 	serviceKeyRepo.keys = []*models.ServiceKey{
-		{Provider: "llm.ProviderOpenRouter", APIKeyEncrypted: "db-openrouter-key", IsEnabled: true},
-		{Provider: "llm.ProviderAnthropic", APIKeyEncrypted: "db-anthropic-key", IsEnabled: true},
+		{Provider: "openrouter", APIKeyEncrypted: "db-openrouter-key", IsEnabled: true},
+		{Provider: "anthropic", APIKeyEncrypted: "db-anthropic-key", IsEnabled: true},
 	}
 
 	keys := resolver.GetServiceKeys(ctx)
@@ -394,7 +394,7 @@ func TestGetServiceKeys_WithEncryption(t *testing.T) {
 	// Create resolver with encryptor
 	serviceKeyRepo := newMockServiceKeyRepository()
 	serviceKeyRepo.keys = []*models.ServiceKey{
-		{Provider: "llm.ProviderOpenRouter", APIKeyEncrypted: encrypted, IsEnabled: true},
+		{Provider: "openrouter", APIKeyEncrypted: encrypted, IsEnabled: true},
 	}
 
 	repos := &repository.Repositories{
@@ -561,7 +561,7 @@ func TestResolveConfigs_ModelsCustomOnly(t *testing.T) {
 
 	// Set up user's fallback chain (no user keys)
 	userFallbackChainRepo.entries = []*models.UserFallbackChainEntry{
-		{UserID: userID, Provider: "llm.ProviderOpenRouter", Model: "custom-model", Position: 1, IsEnabled: true},
+		{UserID: userID, Provider: "openrouter", Model: "custom-model", Position: 1, IsEnabled: true},
 	}
 
 	configs, isBYOK := resolver.ResolveConfigs(ctx, userID, nil, "free", false, true)
@@ -640,8 +640,8 @@ func TestGetDefaultConfigsForTier(t *testing.T) {
 	// Set up tier-specific chain
 	proTier := "pro"
 	fallbackChainRepo.entries = []*models.FallbackChainEntry{
-		{Tier: &proTier, Provider: "llm.ProviderOpenRouter", Model: "pro-model", Position: 1, IsEnabled: true},
-		{Tier: nil, Provider: "llm.ProviderOpenRouter", Model: "default-model", Position: 1, IsEnabled: true},
+		{Tier: &proTier, Provider: "openrouter", Model: "pro-model", Position: 1, IsEnabled: true},
+		{Tier: nil, Provider: "openrouter", Model: "default-model", Position: 1, IsEnabled: true},
 	}
 
 	// Test tier-specific chain
@@ -685,8 +685,8 @@ func TestGetDefaultConfigsForTier_HardcodedFallback(t *testing.T) {
 	}
 
 	// Last should be ollama
-	if len(configs) > 0 && configs[len(configs)-1].Provider != "llm.ProviderOllama" {
-		t.Errorf("last provider = %s, want llm.ProviderOllama", configs[len(configs)-1].Provider)
+	if len(configs) > 0 && configs[len(configs)-1].Provider != "ollama" {
+		t.Errorf("last provider = %s, want ollama", configs[len(configs)-1].Provider)
 	}
 }
 
@@ -730,7 +730,7 @@ func TestBuildUserFallbackChain_OllamaNoKey(t *testing.T) {
 
 	// Set up ollama entry (doesn't need key)
 	userFallbackChainRepo.entries = []*models.UserFallbackChainEntry{
-		{UserID: userID, Provider: "llm.ProviderOllama", Model: "llama3.2", Position: 1, IsEnabled: true},
+		{UserID: userID, Provider: "ollama", Model: "llama3.2", Position: 1, IsEnabled: true},
 	}
 
 	// No keys needed for ollama
@@ -741,8 +741,8 @@ func TestBuildUserFallbackChain_OllamaNoKey(t *testing.T) {
 	if len(configs) != 1 {
 		t.Errorf("expected 1 config for ollama, got %d", len(configs))
 	}
-	if len(configs) > 0 && configs[0].Provider != "llm.ProviderOllama" {
-		t.Errorf("provider = %s, want llm.ProviderOllama", configs[0].Provider)
+	if len(configs) > 0 && configs[0].Provider != "ollama" {
+		t.Errorf("provider = %s, want ollama", configs[0].Provider)
 	}
 }
 

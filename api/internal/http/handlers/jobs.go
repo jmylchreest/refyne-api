@@ -21,17 +21,21 @@ type JobHandler struct {
 	jobSvc      *service.JobService
 	storageSvc  *service.StorageService
 	webhookSvc  *service.WebhookService
+	resolver    *service.LLMConfigResolver
 }
 
 // NewJobHandler creates a new job handler.
-func NewJobHandler(jobSvc *service.JobService, storageSvc *service.StorageService) *JobHandler {
+func NewJobHandler(jobSvc *service.JobService, storageSvc *service.StorageService, resolver *service.LLMConfigResolver) *JobHandler {
 	return &JobHandler{
 		jobSvc:     jobSvc,
 		storageSvc: storageSvc,
+		resolver:   resolver,
 	}
 }
 
 // NewJobHandlerWithWebhook creates a new job handler with webhook service.
+// Note: This handler is for read operations (list/get jobs) and doesn't need the resolver.
+// Use NewJobHandler for job creation which requires config resolution.
 func NewJobHandlerWithWebhook(jobSvc *service.JobService, storageSvc *service.StorageService, webhookSvc *service.WebhookService) *JobHandler {
 	return &JobHandler{
 		jobSvc:     jobSvc,
@@ -163,6 +167,16 @@ func (h *JobHandler) CreateCrawlJob(ctx context.Context, input *CreateCrawlJobIn
 		modelsCustomAllowed = claims.HasFeature("models_custom")
 	}
 
+	// Resolve LLM configs at job creation time
+	var llmConfigs []*service.LLMConfigInput
+	var isBYOK bool
+	if h.resolver != nil {
+		llmConfigs, isBYOK = h.resolver.ResolveConfigs(ctx, userID, nil, tier, byokAllowed, modelsCustomAllowed)
+	}
+	if len(llmConfigs) == 0 {
+		return nil, huma.Error500InternalServerError("failed to resolve LLM configuration")
+	}
+
 	result, err := h.jobSvc.CreateCrawlJob(ctx, userID, service.CreateCrawlJobInput{
 		URL:    input.Body.URL,
 		Schema: input.Body.Schema,
@@ -179,10 +193,10 @@ func (h *JobHandler) CreateCrawlJob(ctx context.Context, input *CreateCrawlJobIn
 			ExtractFromSeeds: input.Body.Options.ExtractFromSeeds,
 			UseSitemap:       input.Body.Options.UseSitemap,
 		},
-		WebhookURL:          input.Body.WebhookURL,
-		Tier:                tier,
-		BYOKAllowed:         byokAllowed,
-		ModelsCustomAllowed: modelsCustomAllowed,
+		WebhookURL: input.Body.WebhookURL,
+		LLMConfigs: llmConfigs,
+		Tier:       tier,
+		IsBYOK:     isBYOK,
 	})
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to create crawl job: " + err.Error())
@@ -1182,6 +1196,13 @@ func (h *JobHandler) GetJobResultsRaw(w http.ResponseWriter, r *http.Request) {
 	if job == nil {
 		http.Error(w, `{"error":"job not found"}`, http.StatusNotFound)
 		return
+	}
+
+	// Set cache headers based on job status
+	// Completed jobs are immutable and can be cached for a long time
+	if job.Status == models.JobStatusCompleted {
+		immutableSecs := int(constants.CacheMaxAgeImmutable.Seconds())
+		w.Header().Set("Cache-Control", fmt.Sprintf("private, max-age=%d, immutable", immutableSecs))
 	}
 
 	// Get results

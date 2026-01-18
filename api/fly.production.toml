@@ -1,0 +1,45 @@
+# fly.production.toml - Fly.io configuration for refyne-api PRODUCTION
+# Used by GitHub Actions on v* tag push
+# Manual deploy: fly deploy --config fly.production.toml --app refyne-api
+
+app = "refyne-api"
+primary_region = "sjc"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  LOG_LEVEL = "info"
+  # Secrets set via: fly secrets set KEY=value --app refyne-api
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1  # Keep one machine warm for production
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 250
+    soft_limit = 200
+
+[[http_service.checks]]
+  grace_period = "10s"
+  interval = "30s"
+  method = "GET"
+  timeout = "5s"
+  path = "/health"
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1
+
+# Persistent volume for SQLite
+# Create: fly volumes create refyne_data --size 3 --region sjc --app refyne-api
+# [[mounts]]
+#   source = "refyne_data"
+#   destination = "/data"

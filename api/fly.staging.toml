@@ -1,0 +1,45 @@
+# fly.staging.toml - Fly.io configuration for refyne-api STAGING
+# Used by GitHub Actions on push to main branch
+# Manual deploy: fly deploy --config fly.staging.toml --app refyne-api-staging
+
+app = "refyne-api-staging"
+primary_region = "sjc"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  LOG_LEVEL = "debug"
+  # Secrets set via: fly secrets set KEY=value --app refyne-api-staging
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 250
+    soft_limit = 200
+
+[[http_service.checks]]
+  grace_period = "10s"
+  interval = "30s"
+  method = "GET"
+  timeout = "5s"
+  path = "/health"
+
+[[vm]]
+  memory = "256mb"
+  cpu_kind = "shared"
+  cpus = 1
+
+# Persistent volume for SQLite (staging uses smaller volume)
+# Create: fly volumes create refyne_data --size 1 --region sjc --app refyne-api-staging
+# [[mounts]]
+#   source = "refyne_data"
+#   destination = "/data"

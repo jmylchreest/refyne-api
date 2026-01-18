@@ -218,10 +218,13 @@ func main() {
 		AllowedOrigins:   cfg.CORSOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-ID"},
-		ExposedHeaders:   []string{"Link", "X-Request-ID", "X-RateLimit-Limit", "X-RateLimit-Remaining", "Retry-After"},
+		ExposedHeaders:   []string{"Link", "X-Request-ID", "X-RateLimit-Limit", "X-RateLimit-Remaining", "Retry-After", "Cache-Control"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
+
+	// Cache-Control headers for response caching
+	router.Use(mw.Cache(mw.DefaultCacheConfig()))
 
 	// Request size limit (1MB) - prevent large payload attacks
 	router.Use(middleware.RequestSize(1 * 1024 * 1024))
@@ -417,7 +420,7 @@ func main() {
 		huma.Post(quotaAPI, "/api/v1/extract", handlers.NewExtractionHandler(services.Extraction, services.Job).Extract)
 
 		// Job creation routes
-		huma.Post(quotaAPI, "/api/v1/crawl", handlers.NewJobHandler(services.Job, services.Storage).CreateCrawlJob)
+		huma.Post(quotaAPI, "/api/v1/crawl", handlers.NewJobHandler(services.Job, services.Storage, services.LLMConfigResolver).CreateCrawlJob)
 	})
 
 	// Create server

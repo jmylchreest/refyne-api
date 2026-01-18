@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -204,40 +205,6 @@ func (s *BalanceService) ExpireOldCredits(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
-// RecalculateExpiry updates expiry dates for all non-expired subscription credits.
-// NOTE: This function is deprecated as rollover is now per-tier and stored in TierLimits.
-// Credit transactions would need to store the tier they were issued for to properly
-// recalculate expiry. Since all tiers currently have CreditRolloverMonths=0, this
-// function sets all credits to expire at end of month as a fallback.
-func (s *BalanceService) RecalculateExpiry(ctx context.Context) error {
-	credits, err := s.repos.CreditTransaction.GetNonExpiredSubscriptionCredits(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get subscription credits: %w", err)
-	}
-
-	for _, credit := range credits {
-		// Since we don't know the tier this credit was issued for,
-		// set expiry to end of the month the credit was created in
-		endOfMonth := time.Date(
-			credit.CreatedAt.Year(),
-			credit.CreatedAt.Month()+1,
-			1, 0, 0, 0, 0, time.UTC,
-		).Add(-time.Second)
-		newExpiry := &endOfMonth
-
-		// Only update if different
-		if !expiryEqual(credit.ExpiresAt, newExpiry) {
-			if err := s.repos.CreditTransaction.UpdateExpiry(ctx, credit.ID, newExpiry); err != nil {
-				s.logger.Error("failed to update expiry", "id", credit.ID, "error", err)
-				continue
-			}
-		}
-	}
-
-	s.logger.Info("recalculated expiry dates", "count", len(credits))
-	return nil
-}
-
 // addCredits is the internal method for adding/deducting credits.
 func (s *BalanceService) addCredits(ctx context.Context, userID string, txType models.CreditTransactionType,
 	amountUSD float64, expiresAt *time.Time, stripePaymentID, jobID *string, description string) error {
@@ -341,17 +308,6 @@ func (s *BalanceService) GetSubscriptionPeriod(ctx context.Context, userID strin
 	return balance.PeriodStart, balance.PeriodEnd, nil
 }
 
-// expiryEqual compares two expiry times, handling nil values.
-func expiryEqual(a, b *time.Time) bool {
-	if a == nil && b == nil {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
-	}
-	return a.Equal(*b)
-}
-
 // isDuplicateKeyError checks if an error is a duplicate key constraint violation.
 func isDuplicateKeyError(err error) bool {
 	if err == nil {
@@ -359,21 +315,7 @@ func isDuplicateKeyError(err error) bool {
 	}
 	// SQLite unique constraint violation
 	errStr := err.Error()
-	return contains(errStr, "UNIQUE constraint failed") ||
-		contains(errStr, "duplicate key") ||
-		contains(errStr, "already exists")
-}
-
-// contains checks if s contains substr (simple implementation).
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsImpl(s, substr))
-}
-
-func containsImpl(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
+	return strings.Contains(errStr, "UNIQUE constraint failed") ||
+		strings.Contains(errStr, "duplicate key") ||
+		strings.Contains(errStr, "already exists")
 }

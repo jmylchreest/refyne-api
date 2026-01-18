@@ -100,33 +100,65 @@ func getAppliedVersions(db *sql.DB) (map[string]bool, error) {
 	return applied, rows.Err()
 }
 
-// runMigration executes a single migration within a transaction.
+// runMigration executes a single migration.
+// ALTER TABLE statements are run outside of transactions due to SQLite limitations.
+// Other statements are run within a transaction for atomicity.
 func runMigration(db *sql.DB, m Migration) error {
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }() // Rollback is no-op after commit
+	// Separate ALTER TABLE statements from other statements
+	// SQLite has issues with ALTER TABLE inside explicit transactions
+	var alterStatements []string
+	var otherStatements []string
 
 	for _, stmt := range m.Up {
-		if _, err := tx.Exec(stmt); err != nil {
-			// Handle expected errors gracefully
-			if isExpectedError(err, stmt) {
-				continue
-			}
-			return fmt.Errorf("failed to execute statement: %w\n%s", err, stmt)
+		trimmed := strings.TrimSpace(strings.ToUpper(stmt))
+		if strings.HasPrefix(trimmed, "ALTER TABLE") {
+			alterStatements = append(alterStatements, stmt)
+		} else {
+			otherStatements = append(otherStatements, stmt)
 		}
 	}
 
-	// Record migration
-	if _, err := tx.Exec(
+	// Run ALTER TABLE statements outside of transaction
+	for _, stmt := range alterStatements {
+		if _, err := db.Exec(stmt); err != nil {
+			if isExpectedError(err, stmt) {
+				continue
+			}
+			return fmt.Errorf("failed to execute ALTER TABLE statement: %w\n%s", err, stmt)
+		}
+	}
+
+	// Run other statements in a transaction
+	if len(otherStatements) > 0 {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback() }()
+
+		for _, stmt := range otherStatements {
+			if _, err := tx.Exec(stmt); err != nil {
+				if isExpectedError(err, stmt) {
+					continue
+				}
+				return fmt.Errorf("failed to execute statement: %w\n%s", err, stmt)
+			}
+		}
+
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("failed to commit transaction: %w", err)
+		}
+	}
+
+	// Record migration (outside transaction since ALTER TABLEs already ran)
+	if _, err := db.Exec(
 		"INSERT INTO schema_migrations (version, description, applied_at) VALUES (?, ?, ?)",
 		m.Timestamp, m.Description, time.Now().UTC().Format(time.RFC3339),
 	); err != nil {
 		return fmt.Errorf("failed to record migration: %w", err)
 	}
 
-	return tx.Commit()
+	return nil
 }
 
 // isExpectedError checks if an error is expected and can be ignored.

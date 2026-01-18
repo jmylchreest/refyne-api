@@ -28,6 +28,47 @@ const (
 	ProviderFallbackDelay = 1 * time.Second
 )
 
+// CalculateBackoff returns the backoff duration for the given retry attempt (0-indexed).
+// Uses exponential backoff with the configured InitialBackoff, BackoffMultiplier, and MaxBackoff.
+// Example: attempt 0 = 2s, attempt 1 = 4s, attempt 2 = 8s, etc. (capped at MaxBackoff).
+func CalculateBackoff(attempt int) time.Duration {
+	if attempt < 0 {
+		return InitialBackoff
+	}
+
+	// Calculate exponential backoff: initial * (multiplier ^ attempt)
+	backoff := float64(InitialBackoff)
+	for i := 0; i < attempt; i++ {
+		backoff *= BackoffMultiplier
+	}
+
+	duration := time.Duration(backoff)
+	if duration > MaxBackoff {
+		return MaxBackoff
+	}
+	return duration
+}
+
+// CalculateRateLimitBackoff returns the backoff duration for rate limit errors.
+// Rate limits typically require longer waits than transient errors.
+func CalculateRateLimitBackoff(attempt int) time.Duration {
+	if attempt < 0 {
+		return RateLimitBackoff
+	}
+
+	// Start with RateLimitBackoff and apply exponential growth
+	backoff := float64(RateLimitBackoff)
+	for i := 0; i < attempt; i++ {
+		backoff *= BackoffMultiplier
+	}
+
+	duration := time.Duration(backoff)
+	if duration > MaxBackoff {
+		return MaxBackoff
+	}
+	return duration
+}
+
 // Extraction concurrency limits.
 const (
 	// DefaultExtractConcurrency is the default number of concurrent extractions

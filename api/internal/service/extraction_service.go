@@ -32,39 +32,27 @@ type ExtractionService struct {
 }
 
 // NewExtractionService creates a new extraction service (legacy constructor).
-func NewExtractionService(cfg *config.Config, repos *repository.Repositories, logger *slog.Logger) *ExtractionService {
-	return NewExtractionServiceWithBilling(cfg, repos, nil, logger)
+func NewExtractionService(cfg *config.Config, repos *repository.Repositories, resolver *LLMConfigResolver, encryptor *crypto.Encryptor, logger *slog.Logger) *ExtractionService {
+	return NewExtractionServiceWithBilling(cfg, repos, nil, resolver, encryptor, logger)
 }
 
 // NewExtractionServiceWithBilling creates an extraction service with billing integration.
-func NewExtractionServiceWithBilling(cfg *config.Config, repos *repository.Repositories, billing *BillingService, logger *slog.Logger) *ExtractionService {
-	// Create encryptor for decrypting stored API keys
-	encryptor, err := crypto.NewEncryptor(cfg.EncryptionKey)
-	if err != nil {
-		logger.Error("failed to create encryptor for extraction service", "error", err)
-		// Continue without encryptor - will fail gracefully if needed
-	}
-
+func NewExtractionServiceWithBilling(cfg *config.Config, repos *repository.Repositories, billing *BillingService, resolver *LLMConfigResolver, encryptor *crypto.Encryptor, logger *slog.Logger) *ExtractionService {
 	return &ExtractionService{
 		cfg:       cfg,
 		repos:     repos,
 		billing:   billing,
+		resolver:  resolver,
 		logger:    logger,
 		encryptor: encryptor,
 	}
 }
 
-// SetResolver sets the LLM config resolver for config resolution and capability lookups.
-// This is called after both services and resolver are created.
-func (s *ExtractionService) SetResolver(resolver *LLMConfigResolver) {
-	s.resolver = resolver
-}
-
 // getStrictMode determines if a model supports strict JSON schema mode.
 // Delegates to the resolver which uses cached capabilities when available.
-func (s *ExtractionService) getStrictMode(provider, model string, chainStrictMode *bool) bool {
+func (s *ExtractionService) getStrictMode(ctx context.Context, provider, model string, chainStrictMode *bool) bool {
 	if s.resolver != nil {
-		return s.resolver.GetStrictMode(provider, model, chainStrictMode)
+		return s.resolver.GetStrictMode(ctx, provider, model, chainStrictMode)
 	}
 	// Fall back to static defaults if resolver not set
 	if chainStrictMode != nil {
@@ -415,19 +403,19 @@ func (s *ExtractionService) resolveLLMConfigsWithFallback(ctx context.Context, u
 
 	// Fallback if resolver not set (shouldn't happen in normal operation)
 	s.logger.Warn("resolver not set, using hardcoded defaults")
-	return s.getHardcodedDefaultChain(), false
+	return s.getHardcodedDefaultChain(ctx), false
 }
 
 // CrawlInput represents crawl input.
 type CrawlInput struct {
-	JobID               string          `json:"job_id,omitempty"`              // Job ID for logging/tracking
-	URL                 string          `json:"url"`
-	SeedURLs            []string        `json:"seed_urls,omitempty"`           // Additional seed URLs (from sitemap discovery)
-	Schema              json.RawMessage `json:"schema"`
-	Options             CrawlOptions    `json:"options"`
-	Tier                string          `json:"tier,omitempty"`                // User's tier for tier-specific processing
-	BYOKAllowed         bool            `json:"byok_allowed,omitempty"`        // Whether user has the "provider_byok" feature
-	ModelsCustomAllowed bool            `json:"models_custom_allowed,omitempty"` // Whether user has the "models_custom" feature
+	JobID      string          `json:"job_id,omitempty"`    // Job ID for logging/tracking
+	URL        string          `json:"url"`
+	SeedURLs   []string        `json:"seed_urls,omitempty"` // Additional seed URLs (from sitemap discovery)
+	Schema     json.RawMessage `json:"schema"`
+	Options    CrawlOptions    `json:"options"`
+	LLMConfigs []*LLMConfigInput `json:"llm_configs,omitempty"` // Pre-resolved LLM config chain
+	Tier       string            `json:"tier,omitempty"`        // User's subscription tier at job creation time
+	IsBYOK     bool              `json:"is_byok,omitempty"`     // Whether using user's own API keys
 }
 
 // Note: CrawlOptions is defined in job_service.go to avoid duplication
@@ -466,26 +454,12 @@ type CrawlResult struct {
 
 // Crawl performs a multi-page crawl extraction.
 func (s *ExtractionService) Crawl(ctx context.Context, userID string, input CrawlInput) (*CrawlResult, error) {
-	// Enforce MaxPagesPerCrawl tier limit
-	tierLimits := constants.GetTierLimitsWithS3(ctx, input.Tier)
-	if tierLimits.MaxPagesPerCrawl > 0 {
-		// User's max_pages is clamped to their tier's limit (0 = no limit)
-		if input.Options.MaxPages == 0 || input.Options.MaxPages > tierLimits.MaxPagesPerCrawl {
-			s.logger.Debug("clamping max_pages to tier limit",
-				"user_id", userID,
-				"tier", input.Tier,
-				"requested", input.Options.MaxPages,
-				"tier_limit", tierLimits.MaxPagesPerCrawl,
-			)
-			input.Options.MaxPages = tierLimits.MaxPagesPerCrawl
-		}
+	// Use pre-resolved LLM configs from input
+	if len(input.LLMConfigs) == 0 {
+		return nil, fmt.Errorf("no LLM configs provided")
 	}
-
-	// Resolve LLM configuration with BYOK eligibility check
-	llmCfg, isBYOK, err := s.resolveLLMConfigWithBYOK(ctx, userID, nil, input.Tier, input.BYOKAllowed, input.ModelsCustomAllowed)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve LLM config: %w", err)
-	}
+	llmCfg := input.LLMConfigs[0]
+	isBYOK := input.IsBYOK
 
 	// Parse schema (supports both JSON and YAML)
 	sch, err := parseSchema(input.Schema)
@@ -687,30 +661,17 @@ type CrawlCallbacks struct {
 // This allows incremental processing of results (e.g., saving to database as they come in)
 // and tracking of URL discovery for progress reporting.
 func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string, input CrawlInput, callbacks CrawlCallbacks) (*CrawlResult, error) {
-	// Enforce MaxPagesPerCrawl tier limit
-	tierLimits := constants.GetTierLimitsWithS3(ctx, input.Tier)
-	if tierLimits.MaxPagesPerCrawl > 0 {
-		// User's max_pages is clamped to their tier's limit (0 = no limit)
-		if input.Options.MaxPages == 0 || input.Options.MaxPages > tierLimits.MaxPagesPerCrawl {
-			s.logger.Debug("clamping max_pages to tier limit",
-				"user_id", userID,
-				"tier", input.Tier,
-				"requested", input.Options.MaxPages,
-				"tier_limit", tierLimits.MaxPagesPerCrawl,
-			)
-			input.Options.MaxPages = tierLimits.MaxPagesPerCrawl
-		}
+	// Use pre-resolved LLM configs from input
+	if len(input.LLMConfigs) == 0 {
+		return nil, fmt.Errorf("no LLM configs provided")
 	}
-
-	// Resolve LLM configuration with BYOK eligibility check
-	llmCfg, isBYOK, err := s.resolveLLMConfigWithBYOK(ctx, userID, nil, input.Tier, input.BYOKAllowed, input.ModelsCustomAllowed)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve LLM config: %w", err)
-	}
+	llmCfg := input.LLMConfigs[0]
+	isBYOK := input.IsBYOK
 
 	// Get available balance for non-BYOK users (for mid-crawl balance enforcement)
 	var availableBalance float64
 	var checkBalance bool
+	var err error
 	if !isBYOK && s.billing != nil {
 		checkBalance = true
 		availableBalance, err = s.billing.GetAvailableBalance(ctx, userID)
@@ -1099,57 +1060,51 @@ func (s *ExtractionService) resolveLLMConfigWithBYOK(ctx context.Context, userID
 	}
 
 	// Fallback if resolver not set
-	return s.getDefaultLLMConfig(), false, nil
-}
-
-// getDefaultLLMConfigs returns the fallback chain of LLM configurations for users without custom config.
-// Returns a list in priority order - the extraction service will try each until one succeeds.
-func (s *ExtractionService) getDefaultLLMConfigs() []*LLMConfigInput {
-	return s.getDefaultLLMConfigsForTier("")
+	return s.getDefaultLLMConfig(ctx), false, nil
 }
 
 // getDefaultLLMConfigsForTier returns the fallback chain for a specific tier.
 // Delegates to resolver when available.
-func (s *ExtractionService) getDefaultLLMConfigsForTier(tier string) []*LLMConfigInput {
+func (s *ExtractionService) getDefaultLLMConfigsForTier(ctx context.Context, tier string) []*LLMConfigInput {
 	if s.resolver != nil {
-		return s.resolver.GetDefaultConfigsForTier(tier)
+		return s.resolver.GetDefaultConfigsForTier(ctx, tier)
 	}
 	// Fallback if resolver not set
-	return s.getHardcodedDefaultChain()
+	return s.getHardcodedDefaultChain(ctx)
 }
 
 // getHardcodedDefaultChain returns the default fallback chain when no custom chain is configured.
 //
 // getHardcodedDefaultChain returns the hardcoded fallback chain when resolver isn't available.
 // This is a minimal fallback that should rarely be used in production.
-func (s *ExtractionService) getHardcodedDefaultChain() []*LLMConfigInput {
+func (s *ExtractionService) getHardcodedDefaultChain(ctx context.Context) []*LLMConfigInput {
 	// If resolver is available, use its method which has access to service keys
 	if s.resolver != nil {
-		return s.resolver.GetDefaultConfigsForTier("")
+		return s.resolver.GetDefaultConfigsForTier(ctx, "")
 	}
 
 	// Ultimate fallback: just Ollama (no API key needed)
 	return []*LLMConfigInput{{
 		Provider:   "ollama",
 		Model:      "llama3.2",
-		StrictMode: s.getStrictMode("ollama", "llama3.2", nil),
+		StrictMode: s.getStrictMode(ctx, "ollama", "llama3.2", nil),
 	}}
 }
 
 // getDefaultLLMConfig returns the first available LLM configuration (for backward compatibility).
-func (s *ExtractionService) getDefaultLLMConfig() *LLMConfigInput {
+func (s *ExtractionService) getDefaultLLMConfig(ctx context.Context) *LLMConfigInput {
 	if s.resolver != nil {
-		return s.resolver.GetDefaultConfig("")
+		return s.resolver.GetDefaultConfig(ctx, "")
 	}
 	// Fallback if resolver not set
-	configs := s.getHardcodedDefaultChain()
+	configs := s.getHardcodedDefaultChain(ctx)
 	if len(configs) > 0 {
 		return configs[0]
 	}
 	return &LLMConfigInput{
 		Provider:   "ollama",
 		Model:      "llama3.2",
-		StrictMode: s.getStrictMode("ollama", "llama3.2", nil),
+		StrictMode: s.getStrictMode(ctx, "ollama", "llama3.2", nil),
 	}
 }
 

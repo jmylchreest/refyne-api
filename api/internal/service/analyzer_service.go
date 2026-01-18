@@ -40,9 +40,9 @@ type AnalyzerService struct {
 
 // getStrictMode determines if a model supports strict JSON schema mode.
 // Delegates to resolver which uses cached capabilities when available.
-func (s *AnalyzerService) getStrictMode(provider, model string) bool {
+func (s *AnalyzerService) getStrictMode(ctx context.Context, provider, model string) bool {
 	if s.resolver != nil {
-		return s.resolver.GetStrictMode(provider, model, nil)
+		return s.resolver.GetStrictMode(ctx, provider, model, nil)
 	}
 	// Fall back to static defaults
 	_, _, strictMode := llm.GetModelSettings(provider, model, nil, nil, nil)
@@ -1092,7 +1092,7 @@ func (s *AnalyzerService) resolveLLMConfig(ctx context.Context, userID, tier, re
 	return &LLMConfigInput{
 		Provider:   "ollama",
 		Model:      "llama3.2",
-		StrictMode: s.getStrictMode("ollama", "llama3.2"),
+		StrictMode: s.getStrictMode(ctx, "ollama", "llama3.2"),
 	}, false
 }
 

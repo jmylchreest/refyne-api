@@ -417,21 +417,3 @@ func (e *WebhookError) Error() string {
 	return "webhook delivery failed with status: " + http.StatusText(e.StatusCode)
 }
 
-// Legacy methods for backward compatibility
-
-// Send delivers a webhook payload to the specified URL (legacy).
-// Deprecated: Use SendForJob or DeliverWithTracking instead.
-func (s *WebhookService) SendLegacy(ctx context.Context, url string, payload any) {
-	config := &WebhookConfig{
-		URL:    url,
-		Events: []string{"*"},
-	}
-	go func() {
-		payloadBytes, err := json.Marshal(payload)
-		if err != nil {
-			s.logger.Error("webhook: failed to marshal payload", "error", err)
-			return
-		}
-		_, _, _, _ = s.deliver(context.Background(), config, payloadBytes)
-	}()
-}

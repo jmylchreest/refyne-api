@@ -346,7 +346,7 @@ func (s *BillingService) RecordUsage(ctx context.Context, record *UsageRecord) e
 // IsBYOK determines if the request is using user's own API key.
 func (s *BillingService) IsBYOK(provider, apiKey, serviceOpenRouterKey, serviceAnthropicKey, serviceOpenAIKey string) bool {
 	// Ollama is local, so effectively BYOK (no API cost)
-	if provider == "ollama" {
+	if provider == llm.ProviderOllama {
 		return true
 	}
 

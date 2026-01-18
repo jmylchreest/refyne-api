@@ -3,6 +3,8 @@
 // and generate hints that help the LLM produce better results.
 package preprocessor
 
+import "strconv"
+
 // DetectedContentType represents a detected repeated content pattern.
 type DetectedContentType struct {
 	Name  string // e.g., "products", "articles", "jobs"
@@ -73,20 +75,20 @@ func (h *Hints) ToPromptSection() string {
 		if len(h.DetectedTypes) == 1 {
 			// Single content type - simple listing page
 			dt := h.DetectedTypes[0]
-			result += "- Found " + itoa(dt.Count) + " repeated " + dt.Name + " elements\n"
+			result += "- Found " + strconv.Itoa(dt.Count) + " repeated " + dt.Name + " elements\n"
 			result += "- This is a listing page - use " + dt.Name + "[] array\n"
 		} else {
 			// Multiple content types - mixed content page
 			result += "- This is a MIXED CONTENT page with multiple content types:\n"
 			for _, dt := range h.DetectedTypes {
-				result += "  - " + itoa(dt.Count) + " " + dt.Name + "\n"
+				result += "  - " + strconv.Itoa(dt.Count) + " " + dt.Name + "\n"
 			}
 			result += "- Use items[] with a content_type field to distinguish between types\n"
 			result += "- Add a metadata object for type-specific fields\n"
 		}
 	} else if h.RepeatedElements > 0 {
 		// Fallback to legacy single-type detection
-		result += "- Found " + itoa(h.RepeatedElements) + " repeated elements (this is a listing page)\n"
+		result += "- Found " + strconv.Itoa(h.RepeatedElements) + " repeated elements (this is a listing page)\n"
 		result += "- Use an array-based schema to capture all items\n"
 		if h.SuggestedArrayName != "" {
 			result += "- Suggested array name: " + h.SuggestedArrayName + "[]\n"
@@ -102,22 +104,6 @@ func (h *Hints) ToPromptSection() string {
 	}
 
 	return result
-}
-
-// itoa is a simple int to string conversion to avoid importing strconv.
-func itoa(i int) string {
-	if i == 0 {
-		return "0"
-	}
-	if i < 0 {
-		return "-" + itoa(-i)
-	}
-	var digits []byte
-	for i > 0 {
-		digits = append([]byte{byte('0' + i%10)}, digits...)
-		i /= 10
-	}
-	return string(digits)
 }
 
 // LLMPreProcessor analyzes content and generates hints for LLM prompts.

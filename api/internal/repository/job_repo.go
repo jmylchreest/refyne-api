@@ -25,11 +25,15 @@ func NewSQLiteJobRepository(db *sql.DB) *SQLiteJobRepository {
 func (r *SQLiteJobRepository) Create(ctx context.Context, job *models.Job) error {
 	query := `
 		INSERT INTO jobs (id, user_id, type, status, url, schema_json, crawl_options_json,
-			result_json, error_message, urls_queued, page_count, token_usage_input, token_usage_output,
-			cost_usd, webhook_url, webhook_status, webhook_attempts, started_at, completed_at,
-			created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			result_json, error_message, llm_configs_json, tier, is_byok, urls_queued, page_count,
+			token_usage_input, token_usage_output, cost_usd, webhook_url, webhook_status,
+			webhook_attempts, started_at, completed_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
+	isBYOK := 0
+	if job.IsBYOK {
+		isBYOK = 1
+	}
 	_, err := r.db.ExecContext(ctx, query,
 		job.ID,
 		job.UserID,
@@ -40,6 +44,9 @@ func (r *SQLiteJobRepository) Create(ctx context.Context, job *models.Job) error
 		nullString(job.CrawlOptionsJSON),
 		nullString(job.ResultJSON),
 		nullString(job.ErrorMessage),
+		job.LLMConfigsJSON,
+		job.Tier,
+		isBYOK,
 		job.URLsQueued,
 		job.PageCount,
 		job.TokenUsageInput,
@@ -62,9 +69,9 @@ func (r *SQLiteJobRepository) Create(ctx context.Context, job *models.Job) error
 func (r *SQLiteJobRepository) GetByID(ctx context.Context, id string) (*models.Job, error) {
 	query := `
 		SELECT id, user_id, type, status, url, schema_json, crawl_options_json,
-			result_json, error_message, urls_queued, page_count, token_usage_input, token_usage_output,
-			cost_usd, webhook_url, webhook_status, webhook_attempts, started_at, completed_at,
-			created_at, updated_at
+			result_json, error_message, llm_configs_json, tier, is_byok, urls_queued, page_count,
+			token_usage_input, token_usage_output, cost_usd, webhook_url, webhook_status,
+			webhook_attempts, started_at, completed_at, created_at, updated_at
 		FROM jobs WHERE id = ?
 	`
 	return r.scanJob(r.db.QueryRowContext(ctx, query, id))
@@ -73,9 +80,9 @@ func (r *SQLiteJobRepository) GetByID(ctx context.Context, id string) (*models.J
 func (r *SQLiteJobRepository) GetByUserID(ctx context.Context, userID string, limit, offset int) ([]*models.Job, error) {
 	query := `
 		SELECT id, user_id, type, status, url, schema_json, crawl_options_json,
-			result_json, error_message, urls_queued, page_count, token_usage_input, token_usage_output,
-			cost_usd, webhook_url, webhook_status, webhook_attempts, started_at, completed_at,
-			created_at, updated_at
+			result_json, error_message, llm_configs_json, tier, is_byok, urls_queued, page_count,
+			token_usage_input, token_usage_output, cost_usd, webhook_url, webhook_status,
+			webhook_attempts, started_at, completed_at, created_at, updated_at
 		FROM jobs WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
 	`
 	rows, err := r.db.QueryContext(ctx, query, userID, limit, offset)
@@ -127,9 +134,9 @@ func (r *SQLiteJobRepository) Update(ctx context.Context, job *models.Job) error
 func (r *SQLiteJobRepository) GetPending(ctx context.Context, limit int) ([]*models.Job, error) {
 	query := `
 		SELECT id, user_id, type, status, url, schema_json, crawl_options_json,
-			result_json, error_message, urls_queued, page_count, token_usage_input, token_usage_output,
-			cost_usd, webhook_url, webhook_status, webhook_attempts, started_at, completed_at,
-			created_at, updated_at
+			result_json, error_message, llm_configs_json, tier, is_byok, urls_queued, page_count,
+			token_usage_input, token_usage_output, cost_usd, webhook_url, webhook_status,
+			webhook_attempts, started_at, completed_at, created_at, updated_at
 		FROM jobs WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?
 	`
 	rows, err := r.db.QueryContext(ctx, query, limit)
@@ -176,9 +183,9 @@ func (r *SQLiteJobRepository) ClaimJob(ctx context.Context, id string) (*models.
 
 	query := `
 		SELECT id, user_id, type, status, url, schema_json, crawl_options_json,
-			result_json, error_message, urls_queued, page_count, token_usage_input, token_usage_output,
-			cost_usd, webhook_url, webhook_status, webhook_attempts, started_at, completed_at,
-			created_at, updated_at
+			result_json, error_message, llm_configs_json, tier, is_byok, urls_queued, page_count,
+			token_usage_input, token_usage_output, cost_usd, webhook_url, webhook_status,
+			webhook_attempts, started_at, completed_at, created_at, updated_at
 		FROM jobs WHERE id = ?
 	`
 	job, err := r.scanJob(tx.QueryRowContext(ctx, query, id))
@@ -221,9 +228,9 @@ func (r *SQLiteJobRepository) ClaimPending(ctx context.Context) (*models.Job, er
 			LIMIT 1
 		)
 		RETURNING id, user_id, type, status, url, schema_json, crawl_options_json,
-			result_json, error_message, urls_queued, page_count, token_usage_input, token_usage_output,
-			cost_usd, webhook_url, webhook_status, webhook_attempts, started_at, completed_at,
-			created_at, updated_at
+			result_json, error_message, llm_configs_json, tier, is_byok, urls_queued, page_count,
+			token_usage_input, token_usage_output, cost_usd, webhook_url, webhook_status,
+			webhook_attempts, started_at, completed_at, created_at, updated_at
 	`
 
 	job, err := r.scanJob(tx.QueryRowContext(ctx, query, now, now))
@@ -246,12 +253,15 @@ func (r *SQLiteJobRepository) ClaimPending(ctx context.Context) (*models.Job, er
 func (r *SQLiteJobRepository) scanJob(row *sql.Row) (*models.Job, error) {
 	var job models.Job
 	var createdAt, updatedAt string
-	var crawlOptionsJSON, resultJSON, errorMessage, webhookURL, webhookStatus sql.NullString
+	var isBYOK int
+	var crawlOptionsJSON, resultJSON, errorMessage, llmConfigsJSON, tier, webhookURL, webhookStatus sql.NullString
 	var startedAt, completedAt sql.NullString
 
 	err := row.Scan(
-		&job.ID, &job.UserID, &job.Type, &job.Status, &job.URL, &job.SchemaJSON,
-		&crawlOptionsJSON, &resultJSON, &errorMessage, &job.URLsQueued, &job.PageCount,
+		&job.ID, &job.UserID,
+		&job.Type, &job.Status, &job.URL, &job.SchemaJSON,
+		&crawlOptionsJSON, &resultJSON, &errorMessage, &llmConfigsJSON, &tier, &isBYOK,
+		&job.URLsQueued, &job.PageCount,
 		&job.TokenUsageInput, &job.TokenUsageOutput, &job.CostUSD,
 		&webhookURL, &webhookStatus, &job.WebhookAttempts,
 		&startedAt, &completedAt, &createdAt, &updatedAt,
@@ -266,6 +276,9 @@ func (r *SQLiteJobRepository) scanJob(row *sql.Row) (*models.Job, error) {
 	job.CrawlOptionsJSON = crawlOptionsJSON.String
 	job.ResultJSON = resultJSON.String
 	job.ErrorMessage = errorMessage.String
+	job.LLMConfigsJSON = llmConfigsJSON.String
+	job.Tier = tier.String
+	job.IsBYOK = isBYOK == 1
 	job.WebhookURL = webhookURL.String
 	job.WebhookStatus = webhookStatus.String
 	job.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
@@ -285,12 +298,15 @@ func (r *SQLiteJobRepository) scanJob(row *sql.Row) (*models.Job, error) {
 func (r *SQLiteJobRepository) scanJobFromRows(rows *sql.Rows) (*models.Job, error) {
 	var job models.Job
 	var createdAt, updatedAt string
-	var crawlOptionsJSON, resultJSON, errorMessage, webhookURL, webhookStatus sql.NullString
+	var isBYOK int
+	var crawlOptionsJSON, resultJSON, errorMessage, llmConfigsJSON, tier, webhookURL, webhookStatus sql.NullString
 	var startedAt, completedAt sql.NullString
 
 	err := rows.Scan(
-		&job.ID, &job.UserID, &job.Type, &job.Status, &job.URL, &job.SchemaJSON,
-		&crawlOptionsJSON, &resultJSON, &errorMessage, &job.URLsQueued, &job.PageCount,
+		&job.ID, &job.UserID,
+		&job.Type, &job.Status, &job.URL, &job.SchemaJSON,
+		&crawlOptionsJSON, &resultJSON, &errorMessage, &llmConfigsJSON, &tier, &isBYOK,
+		&job.URLsQueued, &job.PageCount,
 		&job.TokenUsageInput, &job.TokenUsageOutput, &job.CostUSD,
 		&webhookURL, &webhookStatus, &job.WebhookAttempts,
 		&startedAt, &completedAt, &createdAt, &updatedAt,
@@ -302,6 +318,9 @@ func (r *SQLiteJobRepository) scanJobFromRows(rows *sql.Rows) (*models.Job, erro
 	job.CrawlOptionsJSON = crawlOptionsJSON.String
 	job.ResultJSON = resultJSON.String
 	job.ErrorMessage = errorMessage.String
+	job.LLMConfigsJSON = llmConfigsJSON.String
+	job.Tier = tier.String
+	job.IsBYOK = isBYOK == 1
 	job.WebhookURL = webhookURL.String
 	job.WebhookStatus = webhookStatus.String
 	job.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)

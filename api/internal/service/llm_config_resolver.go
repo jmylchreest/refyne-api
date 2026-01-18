@@ -45,12 +45,12 @@ func (r *LLMConfigResolver) SetRegistry(registry *llm.Registry) {
 }
 
 // GetServiceKeys retrieves service keys, preferring DB over env vars.
-func (r *LLMConfigResolver) GetServiceKeys() ServiceKeys {
+func (r *LLMConfigResolver) GetServiceKeys(ctx context.Context) ServiceKeys {
 	keys := ServiceKeys{}
 
 	// Try to load from database first
 	if r.repos != nil && r.repos.ServiceKey != nil {
-		dbKeys, err := r.repos.ServiceKey.GetAll(context.Background())
+		dbKeys, err := r.repos.ServiceKey.GetAll(ctx)
 		if err == nil {
 			for _, k := range dbKeys {
 				// Decrypt the key if we have an encryptor
@@ -62,11 +62,11 @@ func (r *LLMConfigResolver) GetServiceKeys() ServiceKeys {
 				}
 
 				switch k.Provider {
-				case "openrouter":
+				case llm.ProviderOpenRouter:
 					keys.OpenRouterKey = apiKey
-				case "anthropic":
+				case llm.ProviderAnthropic:
 					keys.AnthropicKey = apiKey
-				case "openai":
+				case llm.ProviderOpenAI:
 					keys.OpenAIKey = apiKey
 				}
 			}
@@ -90,7 +90,7 @@ func (r *LLMConfigResolver) GetServiceKeys() ServiceKeys {
 // GetStrictMode determines if a model supports strict JSON schema mode.
 // Uses the registry's cached capabilities when available.
 // If chainStrictMode is provided, it takes precedence.
-func (r *LLMConfigResolver) GetStrictMode(provider, model string, chainStrictMode *bool) bool {
+func (r *LLMConfigResolver) GetStrictMode(ctx context.Context, provider, model string, chainStrictMode *bool) bool {
 	// If chain config explicitly sets StrictMode, use that (highest priority)
 	if chainStrictMode != nil {
 		return *chainStrictMode
@@ -98,7 +98,7 @@ func (r *LLMConfigResolver) GetStrictMode(provider, model string, chainStrictMod
 
 	// Use registry for capability detection if available
 	if r.registry != nil {
-		return r.registry.SupportsStructuredOutputs(context.Background(), provider, model)
+		return r.registry.SupportsStructuredOutputs(ctx, provider, model)
 	}
 
 	// Fall back to static defaults
@@ -128,7 +128,7 @@ func (r *LLMConfigResolver) ResolveConfigs(ctx context.Context, userID string, o
 			r.logger.Debug("override provided but BYOK not allowed, using system chain",
 				"user_id", userID,
 			)
-			return r.GetDefaultConfigsForTier(tier), false
+			return r.GetDefaultConfigsForTier(ctx, tier), false
 		}
 		r.logger.Info("using override config (BYOK)",
 			"user_id", userID,
@@ -178,7 +178,7 @@ func (r *LLMConfigResolver) ResolveConfigs(ctx context.Context, userID string, o
 	}
 
 	// Case 5: Default - system chain with system keys
-	configs := r.GetDefaultConfigsForTier(tier)
+	configs := r.GetDefaultConfigsForTier(ctx, tier)
 	if len(configs) > 0 {
 		r.logger.Debug("using system default chain",
 			"user_id", userID,
@@ -233,12 +233,12 @@ func (r *LLMConfigResolver) BuildUserFallbackChain(ctx context.Context, userID s
 
 	for _, entry := range chain {
 		key, ok := keyMap[entry.Provider]
-		if !ok && entry.Provider != "ollama" {
-			continue // No key for this provider (ollama doesn't need one)
+		if !ok && entry.Provider != llm.ProviderOllama {
+			continue // No key for this provider (Ollama doesn't need one)
 		}
 
 		var apiKey, baseURL string
-		if entry.Provider != "ollama" {
+		if entry.Provider != llm.ProviderOllama {
 			if key == nil || key.APIKeyEncrypted == "" {
 				continue // No API key configured
 			}
@@ -265,7 +265,7 @@ func (r *LLMConfigResolver) BuildUserFallbackChain(ctx context.Context, userID s
 			APIKey:     apiKey,
 			BaseURL:    baseURL,
 			Model:      entry.Model,
-			StrictMode: r.GetStrictMode(entry.Provider, entry.Model, entry.StrictMode),
+			StrictMode: r.GetStrictMode(ctx, entry.Provider, entry.Model, entry.StrictMode),
 		})
 	}
 
@@ -289,30 +289,30 @@ func (r *LLMConfigResolver) BuildUserChainWithSystemKeys(ctx context.Context, us
 		return nil
 	}
 
-	serviceKeys := r.GetServiceKeys()
+	serviceKeys := r.GetServiceKeys(ctx)
 	configs := make([]*LLMConfigInput, 0, len(chain))
 
 	for _, entry := range chain {
 		config := &LLMConfigInput{
 			Provider:   entry.Provider,
 			Model:      entry.Model,
-			StrictMode: r.GetStrictMode(entry.Provider, entry.Model, entry.StrictMode),
+			StrictMode: r.GetStrictMode(ctx, entry.Provider, entry.Model, entry.StrictMode),
 		}
 
 		// Use SYSTEM keys for the provider
 		switch entry.Provider {
-		case "openrouter":
+		case llm.ProviderOpenRouter:
 			config.APIKey = serviceKeys.OpenRouterKey
-		case "anthropic":
+		case llm.ProviderAnthropic:
 			config.APIKey = serviceKeys.AnthropicKey
-		case "openai":
+		case llm.ProviderOpenAI:
 			config.APIKey = serviceKeys.OpenAIKey
-		case "ollama":
+		case llm.ProviderOllama:
 			// Ollama doesn't require a key
 		}
 
-		// Skip if no system key available for non-ollama providers
-		if config.APIKey == "" && entry.Provider != "ollama" {
+		// Skip if no system key available for non-Ollama providers
+		if config.APIKey == "" && entry.Provider != llm.ProviderOllama {
 			continue
 		}
 
@@ -374,7 +374,7 @@ func (r *LLMConfigResolver) buildBYOKOnlyConfigs(ctx context.Context, userID str
 					APIKey:     apiKey,
 					BaseURL:    userKey.BaseURL,
 					Model:      entry.Model,
-					StrictMode: r.GetStrictMode(entry.Provider, entry.Model, entry.StrictMode),
+					StrictMode: r.GetStrictMode(ctx, entry.Provider, entry.Model, entry.StrictMode),
 				})
 			}
 		}
@@ -384,40 +384,40 @@ func (r *LLMConfigResolver) buildBYOKOnlyConfigs(ctx context.Context, userID str
 }
 
 // GetDefaultConfigsForTier returns the default LLM configs for a tier.
-func (r *LLMConfigResolver) GetDefaultConfigsForTier(tier string) []*LLMConfigInput {
+func (r *LLMConfigResolver) GetDefaultConfigsForTier(ctx context.Context, tier string) []*LLMConfigInput {
 	// First try to get from admin-configured fallback chain
 	if r.repos != nil && r.repos.FallbackChain != nil {
 		var chain []*models.FallbackChainEntry
 		var err error
 
 		if tier != "" {
-			chain, err = r.repos.FallbackChain.GetEnabledByTier(context.Background(), tier)
+			chain, err = r.repos.FallbackChain.GetEnabledByTier(ctx, tier)
 		}
 		if err != nil || len(chain) == 0 {
-			chain, err = r.repos.FallbackChain.GetEnabled(context.Background())
+			chain, err = r.repos.FallbackChain.GetEnabled(ctx)
 		}
 
 		if err == nil && len(chain) > 0 {
-			serviceKeys := r.GetServiceKeys()
+			serviceKeys := r.GetServiceKeys(ctx)
 			configs := make([]*LLMConfigInput, 0, len(chain))
 
 			for _, entry := range chain {
 				config := &LLMConfigInput{
 					Provider:   entry.Provider,
 					Model:      entry.Model,
-					StrictMode: r.GetStrictMode(entry.Provider, entry.Model, entry.StrictMode),
+					StrictMode: r.GetStrictMode(ctx, entry.Provider, entry.Model, entry.StrictMode),
 				}
 
 				switch entry.Provider {
-				case "openrouter":
+				case llm.ProviderOpenRouter:
 					config.APIKey = serviceKeys.OpenRouterKey
-				case "anthropic":
+				case llm.ProviderAnthropic:
 					config.APIKey = serviceKeys.AnthropicKey
-				case "openai":
+				case llm.ProviderOpenAI:
 					config.APIKey = serviceKeys.OpenAIKey
 				}
 
-				if config.APIKey != "" || entry.Provider == "ollama" {
+				if config.APIKey != "" || entry.Provider == llm.ProviderOllama {
 					configs = append(configs, config)
 				}
 			}
@@ -429,61 +429,61 @@ func (r *LLMConfigResolver) GetDefaultConfigsForTier(tier string) []*LLMConfigIn
 	}
 
 	// Fallback to hardcoded defaults
-	return r.getHardcodedDefaultChain()
+	return r.getHardcodedDefaultChain(ctx)
 }
 
 // GetDefaultConfig returns the first valid default config for a tier.
-func (r *LLMConfigResolver) GetDefaultConfig(tier string) *LLMConfigInput {
-	configs := r.GetDefaultConfigsForTier(tier)
+func (r *LLMConfigResolver) GetDefaultConfig(ctx context.Context, tier string) *LLMConfigInput {
+	configs := r.GetDefaultConfigsForTier(ctx, tier)
 	if len(configs) > 0 {
 		return configs[0]
 	}
 	// Ultimate fallback
 	return &LLMConfigInput{
-		Provider:   "ollama",
+		Provider:   llm.ProviderOllama,
 		Model:      "llama3.2",
-		StrictMode: r.GetStrictMode("ollama", "llama3.2", nil),
+		StrictMode: r.GetStrictMode(ctx, llm.ProviderOllama, "llama3.2", nil),
 	}
 }
 
 // getHardcodedDefaultChain returns the hardcoded fallback chain.
 // This is used when no admin-configured chain is available.
-func (r *LLMConfigResolver) getHardcodedDefaultChain() []*LLMConfigInput {
-	serviceKeys := r.GetServiceKeys()
+func (r *LLMConfigResolver) getHardcodedDefaultChain(ctx context.Context) []*LLMConfigInput {
+	serviceKeys := r.GetServiceKeys(ctx)
 	configs := make([]*LLMConfigInput, 0, 4)
 
 	// OpenRouter free models chain (requires OpenRouter API key)
 	if serviceKeys.OpenRouterKey != "" {
 		// 1. Xiaomi MiMo - fast and capable
 		configs = append(configs, &LLMConfigInput{
-			Provider:   "openrouter",
+			Provider:   llm.ProviderOpenRouter,
 			APIKey:     serviceKeys.OpenRouterKey,
 			Model:      "xiaomi/mimo-v2-flash:free",
-			StrictMode: r.GetStrictMode("openrouter", "xiaomi/mimo-v2-flash:free", nil),
+			StrictMode: r.GetStrictMode(ctx, llm.ProviderOpenRouter, "xiaomi/mimo-v2-flash:free", nil),
 		})
 
 		// 2. GPT-OSS-120B - large open-source model
 		configs = append(configs, &LLMConfigInput{
-			Provider:   "openrouter",
+			Provider:   llm.ProviderOpenRouter,
 			APIKey:     serviceKeys.OpenRouterKey,
 			Model:      "openai/gpt-oss-120b:free",
-			StrictMode: r.GetStrictMode("openrouter", "openai/gpt-oss-120b:free", nil),
+			StrictMode: r.GetStrictMode(ctx, llm.ProviderOpenRouter, "openai/gpt-oss-120b:free", nil),
 		})
 
 		// 3. Gemma 3 27B - Google's instruction-tuned model
 		configs = append(configs, &LLMConfigInput{
-			Provider:   "openrouter",
+			Provider:   llm.ProviderOpenRouter,
 			APIKey:     serviceKeys.OpenRouterKey,
 			Model:      "google/gemma-3-27b-it:free",
-			StrictMode: r.GetStrictMode("openrouter", "google/gemma-3-27b-it:free", nil),
+			StrictMode: r.GetStrictMode(ctx, llm.ProviderOpenRouter, "google/gemma-3-27b-it:free", nil),
 		})
 	}
 
 	// Final fallback: Ollama (no API key needed, requires local setup)
 	configs = append(configs, &LLMConfigInput{
-		Provider:   "ollama",
+		Provider:   llm.ProviderOllama,
 		Model:      "llama3.2",
-		StrictMode: r.GetStrictMode("ollama", "llama3.2", nil),
+		StrictMode: r.GetStrictMode(ctx, llm.ProviderOllama, "llama3.2", nil),
 	})
 
 	return configs

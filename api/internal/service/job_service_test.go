@@ -285,10 +285,12 @@ func TestJobService_CreateCrawlJob(t *testing.T) {
 				SameDomainOnly:   true,
 				ExtractFromSeeds: true,
 			},
-			WebhookURL:          "https://webhook.example.com/notify",
-			Tier:                "pro",
-			BYOKAllowed:         true,
-			ModelsCustomAllowed: true,
+			WebhookURL: "https://webhook.example.com/notify",
+			Tier:       "pro",
+			LLMConfigs: []*LLMConfigInput{
+				{Provider: "openrouter", Model: "anthropic/claude-3.5-sonnet"},
+			},
+			IsBYOK: true,
 		}
 
 		output, err := svc.CreateCrawlJob(context.Background(), "user-456", input)
@@ -307,11 +309,8 @@ func TestJobService_CreateCrawlJob(t *testing.T) {
 		if job.Tier != "pro" {
 			t.Errorf("Tier = %q, want %q", job.Tier, "pro")
 		}
-		if !job.BYOKAllowed {
-			t.Error("expected BYOKAllowed to be true")
-		}
-		if !job.ModelsCustomAllowed {
-			t.Error("expected ModelsCustomAllowed to be true")
+		if !job.IsBYOK {
+			t.Error("expected IsBYOK to be true")
 		}
 	})
 }

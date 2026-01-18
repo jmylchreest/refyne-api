@@ -45,7 +45,6 @@ const (
 type Job struct {
 	ID               string     `json:"id"`
 	UserID           string     `json:"user_id"` // Clerk user ID
-	Tier             string     `json:"tier"`    // User's tier at job creation time (for tier-specific processing)
 	Type             JobType    `json:"type"`
 	Status           JobStatus  `json:"status"`
 	URL              string     `json:"url"`
@@ -55,9 +54,9 @@ type Job struct {
 	ErrorMessage     string     `json:"error_message,omitempty"`  // User-visible error (sanitized for non-BYOK)
 	ErrorDetails     string     `json:"error_details,omitempty"`  // Full error details (admin/BYOK only)
 	ErrorCategory    string     `json:"error_category,omitempty"` // Error classification
-	BYOKAllowed         bool       `json:"byok_allowed"`          // True if user had "provider_byok" feature at job creation
-	ModelsCustomAllowed bool       `json:"models_custom_allowed"` // True if user had "models_custom" feature at job creation
-	IsBYOK              bool       `json:"is_byok"`               // True if user's own API key was used
+	LLMConfigsJSON   string     `json:"llm_configs_json"`         // Resolved LLM config chain (JSON array of LLMConfigInput)
+	Tier             string     `json:"tier"`                     // User's subscription tier at job creation time
+	IsBYOK           bool       `json:"is_byok"`                  // True if user's own API key was used
 	LLMProvider      string     `json:"llm_provider,omitempty"`   // Last provider attempted
 	LLMModel         string     `json:"llm_model,omitempty"`      // Last model attempted
 	URLsQueued       int        `json:"urls_queued"`              // Total URLs queued for processing (for progress tracking)

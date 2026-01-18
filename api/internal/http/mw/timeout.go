@@ -76,12 +76,3 @@ func Timeout(cfg TimeoutConfig) func(http.Handler) http.Handler {
 	}
 }
 
-// TimeoutWithSkip returns a middleware that applies timeout to requests,
-// except for paths that match the skip patterns (e.g., SSE streaming endpoints).
-// Deprecated: Use Timeout with TimeoutConfig for more flexibility.
-func TimeoutWithSkip(timeout time.Duration, skipPatterns ...string) func(http.Handler) http.Handler {
-	return Timeout(TimeoutConfig{
-		Default:      timeout,
-		SkipPatterns: skipPatterns,
-	})
-}
