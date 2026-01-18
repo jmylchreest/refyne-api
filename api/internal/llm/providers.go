@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
@@ -13,10 +14,11 @@ import (
 )
 
 // InitRegistry creates and initializes the provider registry with all supported providers.
-func InitRegistry(cfg *config.Config) *Registry {
-	r := NewRegistry(cfg)
+func InitRegistry(cfg *config.Config, logger *slog.Logger) *Registry {
+	r := NewRegistry(cfg, logger)
 
 	// OpenRouter - always available
+	// Capabilities are dynamically populated by PricingService, fallback to static defaults
 	r.Register("openrouter", ProviderRegistration{
 		Info: ProviderInfo{
 			Name:           "openrouter",
@@ -26,8 +28,9 @@ func InitRegistry(cfg *config.Config) *Registry {
 			KeyPlaceholder: "sk-or-...",
 			DocsURL:        "https://openrouter.ai/docs",
 		},
-		RequiredFeatures: nil, // Always available
-		ListModels:       listOpenRouterModels,
+		RequiredFeatures: nil,
+		ListModels:       listOpenRouterModels(r),
+		GetCapabilities:  getOpenRouterCapabilities(r),
 	})
 
 	// Anthropic - always available
@@ -40,8 +43,9 @@ func InitRegistry(cfg *config.Config) *Registry {
 			KeyPlaceholder: "sk-ant-...",
 			DocsURL:        "https://docs.anthropic.com",
 		},
-		RequiredFeatures: nil, // Always available
+		RequiredFeatures: nil,
 		ListModels:       listAnthropicModels,
+		GetCapabilities:  getAnthropicCapabilities,
 	})
 
 	// OpenAI - always available
@@ -54,8 +58,9 @@ func InitRegistry(cfg *config.Config) *Registry {
 			KeyPlaceholder: "sk-...",
 			DocsURL:        "https://platform.openai.com/docs",
 		},
-		RequiredFeatures: nil, // Always available
+		RequiredFeatures: nil,
 		ListModels:       listOpenAIModels,
+		GetCapabilities:  getOpenAICapabilities,
 	})
 
 	// Ollama - requires provider_ollama feature (self-hosted only)
@@ -70,64 +75,50 @@ func InitRegistry(cfg *config.Config) *Registry {
 		},
 		RequiredFeatures: []string{constants.FeatureProviderOllama},
 		ListModels:       listOllamaModels,
+		GetCapabilities:  getOllamaCapabilities,
 	})
 
 	return r
 }
 
-// listOpenRouterModels fetches models from the OpenRouter API.
-func listOpenRouterModels(ctx context.Context, baseURL, apiKey string) ([]ModelInfo, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://openrouter.ai/api/v1/models", nil)
-	if err != nil {
-		return nil, err
+// listOpenRouterModels returns a ModelLister that fetches models from OpenRouter.
+// It uses the registry's cached capabilities when available.
+func listOpenRouterModels(r *Registry) ModelLister {
+	return func(ctx context.Context, baseURL, apiKey string) ([]ModelInfo, error) {
+		// Return static models - capabilities are populated by PricingService via the registry cache
+		return getStaticOpenRouterModels(r), nil
 	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return getStaticOpenRouterModels(), nil
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return getStaticOpenRouterModels(), nil
-	}
-
-	var result struct {
-		Data []struct {
-			ID            string `json:"id"`
-			Name          string `json:"name"`
-			ContextLength int    `json:"context_length"`
-		} `json:"data"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return getStaticOpenRouterModels(), nil
-	}
-
-	models := make([]ModelInfo, 0, len(result.Data))
-	for _, m := range result.Data {
-		settings := GetDefaultSettings("openrouter", m.ID)
-		models = append(models, ModelInfo{
-			ID:               m.ID,
-			Name:             m.Name,
-			Provider:         "openrouter",
-			ContextWindow:    m.ContextLength,
-			SupportsStrict:   settings.StrictMode,
-			DefaultTemp:      settings.Temperature,
-			DefaultMaxTokens: settings.MaxTokens,
-		})
-	}
-
-	sort.Slice(models, func(i, j int) bool {
-		return models[i].Name < models[j].Name
-	})
-
-	return models, nil
 }
 
-func getStaticOpenRouterModels() []ModelInfo {
+// getOpenRouterCapabilities returns a CapabilitiesLookup that checks the registry cache first.
+func getOpenRouterCapabilities(r *Registry) CapabilitiesLookup {
+	return func(ctx context.Context, model string) ModelCapabilities {
+		// Check if cached by PricingService
+		if caps, ok := r.getCachedCapabilities("openrouter", model); ok {
+			return caps
+		}
+		// Fall back to static defaults for known models
+		return getStaticOpenRouterCapabilities(model)
+	}
+}
+
+// getStaticOpenRouterCapabilities returns static capability defaults for OpenRouter models.
+func getStaticOpenRouterCapabilities(model string) ModelCapabilities {
+	// Known models with structured output support
+	structuredOutputModels := map[string]bool{
+		"anthropic/claude-sonnet-4":     true,
+		"openai/gpt-4o":                 true,
+		"openai/gpt-4o-mini":            true,
+		"google/gemini-2.0-flash-001":   true,
+	}
+
+	return ModelCapabilities{
+		SupportsStructuredOutputs: structuredOutputModels[model],
+		SupportsStreaming:         true, // OpenRouter always supports streaming
+	}
+}
+
+func getStaticOpenRouterModels(r *Registry) []ModelInfo {
 	staticModels := []struct {
 		id      string
 		name    string
@@ -144,12 +135,14 @@ func getStaticOpenRouterModels() []ModelInfo {
 	models := make([]ModelInfo, 0, len(staticModels))
 	for _, m := range staticModels {
 		settings := GetDefaultSettings("openrouter", m.id)
+		// Get capabilities from registry cache or static defaults
+		caps := r.GetModelCapabilities(context.Background(), "openrouter", m.id)
 		models = append(models, ModelInfo{
 			ID:               m.id,
 			Name:             m.name,
 			Provider:         "openrouter",
 			ContextWindow:    m.context,
-			SupportsStrict:   settings.StrictMode,
+			Capabilities:     caps,
 			DefaultTemp:      settings.Temperature,
 			DefaultMaxTokens: settings.MaxTokens,
 		})
@@ -176,6 +169,13 @@ func listAnthropicModels(ctx context.Context, baseURL, apiKey string) ([]ModelIn
 		{"claude-3-haiku-20240307", "Claude 3 Haiku", 200000},
 	}
 
+	// Anthropic uses tool_use for structured outputs, not response_format
+	anthropicCaps := ModelCapabilities{
+		SupportsStructuredOutputs: false,
+		SupportsTools:             true,
+		SupportsStreaming:         true,
+	}
+
 	models := make([]ModelInfo, 0, len(staticModels))
 	for _, m := range staticModels {
 		settings := GetDefaultSettings("anthropic", m.id)
@@ -184,7 +184,7 @@ func listAnthropicModels(ctx context.Context, baseURL, apiKey string) ([]ModelIn
 			Name:             m.name,
 			Provider:         "anthropic",
 			ContextWindow:    m.context,
-			SupportsStrict:   settings.StrictMode,
+			Capabilities:     anthropicCaps,
 			DefaultTemp:      settings.Temperature,
 			DefaultMaxTokens: settings.MaxTokens,
 		})
@@ -196,29 +196,37 @@ func listAnthropicModels(ctx context.Context, baseURL, apiKey string) ([]ModelIn
 // listOpenAIModels returns static OpenAI models.
 func listOpenAIModels(ctx context.Context, baseURL, apiKey string) ([]ModelInfo, error) {
 	staticModels := []struct {
-		id      string
-		name    string
-		context int
+		id                        string
+		name                      string
+		context                   int
+		supportsStructuredOutputs bool
+		supportsReasoning         bool
 	}{
-		{"gpt-4o", "GPT-4o", 128000},
-		{"gpt-4o-mini", "GPT-4o Mini", 128000},
-		{"gpt-4-turbo", "GPT-4 Turbo", 128000},
-		{"gpt-4", "GPT-4", 8192},
-		{"gpt-3.5-turbo", "GPT-3.5 Turbo", 16385},
-		{"o1", "o1", 200000},
-		{"o1-mini", "o1 Mini", 128000},
-		{"o3-mini", "o3 Mini", 200000},
+		{"gpt-4o", "GPT-4o", 128000, true, false},
+		{"gpt-4o-mini", "GPT-4o Mini", 128000, true, false},
+		{"gpt-4-turbo", "GPT-4 Turbo", 128000, true, false},
+		{"gpt-4", "GPT-4", 8192, false, false},
+		{"gpt-3.5-turbo", "GPT-3.5 Turbo", 16385, false, false},
+		{"o1", "o1", 200000, true, true},
+		{"o1-mini", "o1 Mini", 128000, true, true},
+		{"o3-mini", "o3 Mini", 200000, true, true},
 	}
 
 	models := make([]ModelInfo, 0, len(staticModels))
 	for _, m := range staticModels {
 		settings := GetDefaultSettings("openai", m.id)
 		models = append(models, ModelInfo{
-			ID:               m.id,
-			Name:             m.name,
-			Provider:         "openai",
-			ContextWindow:    m.context,
-			SupportsStrict:   settings.StrictMode,
+			ID:            m.id,
+			Name:          m.name,
+			Provider:      "openai",
+			ContextWindow: m.context,
+			Capabilities: ModelCapabilities{
+				SupportsStructuredOutputs: m.supportsStructuredOutputs,
+				SupportsTools:             true,
+				SupportsStreaming:         true,
+				SupportsReasoning:         m.supportsReasoning,
+				SupportsResponseFormat:    true,
+			},
 			DefaultTemp:      settings.Temperature,
 			DefaultMaxTokens: settings.MaxTokens,
 		})
@@ -261,6 +269,15 @@ func listOllamaModels(ctx context.Context, baseURL, apiKey string) ([]ModelInfo,
 		return getStaticOllamaModels(), nil
 	}
 
+	// Ollama default capabilities - most models support streaming but not structured outputs
+	ollamaCaps := ModelCapabilities{
+		SupportsStructuredOutputs: false,
+		SupportsTools:             false,
+		SupportsStreaming:         true,
+		SupportsReasoning:         false,
+		SupportsResponseFormat:    false,
+	}
+
 	models := make([]ModelInfo, 0, len(result.Models))
 	for _, m := range result.Models {
 		name := strings.TrimSuffix(m.Name, ":latest")
@@ -269,7 +286,7 @@ func listOllamaModels(ctx context.Context, baseURL, apiKey string) ([]ModelInfo,
 			ID:               m.Name,
 			Name:             name,
 			Provider:         "ollama",
-			SupportsStrict:   settings.StrictMode,
+			Capabilities:     ollamaCaps,
 			DefaultTemp:      settings.Temperature,
 			DefaultMaxTokens: settings.MaxTokens,
 		})
@@ -299,11 +316,62 @@ func getStaticOllamaModels() []ModelInfo {
 			ID:               id,
 			Name:             id,
 			Provider:         "ollama",
-			SupportsStrict:   settings.StrictMode,
+			Capabilities:     getOllamaCapabilities(context.Background(), id),
 			DefaultTemp:      settings.Temperature,
 			DefaultMaxTokens: settings.MaxTokens,
 		})
 	}
 
 	return models
+}
+
+// Provider capability lookup functions
+// These return static defaults; dynamic capabilities are cached in the registry by PricingService
+
+// getAnthropicCapabilities returns capabilities for Anthropic models.
+// Anthropic uses tool_use for structured outputs, not response_format.
+func getAnthropicCapabilities(_ context.Context, _ string) ModelCapabilities {
+	return ModelCapabilities{
+		SupportsStructuredOutputs: false, // Uses tool_use instead
+		SupportsTools:             true,
+		SupportsStreaming:         true,
+		SupportsReasoning:         false,
+		SupportsResponseFormat:    false,
+	}
+}
+
+// getOpenAICapabilities returns capabilities for OpenAI models.
+func getOpenAICapabilities(_ context.Context, model string) ModelCapabilities {
+	// o1/o3 models have reasoning support
+	reasoningModels := map[string]bool{
+		"o1":      true,
+		"o1-mini": true,
+		"o3-mini": true,
+	}
+
+	// Older models don't support structured outputs
+	noStructuredOutputs := map[string]bool{
+		"gpt-4":        true,
+		"gpt-3.5-turbo": true,
+	}
+
+	return ModelCapabilities{
+		SupportsStructuredOutputs: !noStructuredOutputs[model],
+		SupportsTools:             true,
+		SupportsStreaming:         true,
+		SupportsReasoning:         reasoningModels[model],
+		SupportsResponseFormat:    true,
+	}
+}
+
+// getOllamaCapabilities returns capabilities for Ollama models.
+// Most Ollama models support streaming but not structured outputs.
+func getOllamaCapabilities(_ context.Context, _ string) ModelCapabilities {
+	return ModelCapabilities{
+		SupportsStructuredOutputs: false,
+		SupportsTools:             false,
+		SupportsStreaming:         true,
+		SupportsReasoning:         false,
+		SupportsResponseFormat:    false,
+	}
 }

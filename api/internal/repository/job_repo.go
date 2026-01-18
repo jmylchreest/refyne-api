@@ -710,44 +710,6 @@ func (r *SQLiteAPIKeyRepository) scanAPIKeyFromRows(rows *sql.Rows) (*models.API
 	return &key, nil
 }
 
-// SQLiteLLMConfigRepository implements LLMConfigRepository for SQLite.
-type SQLiteLLMConfigRepository struct {
-	db *sql.DB
-}
-
-func NewSQLiteLLMConfigRepository(db *sql.DB) *SQLiteLLMConfigRepository {
-	return &SQLiteLLMConfigRepository{db: db}
-}
-
-func (r *SQLiteLLMConfigRepository) GetByUserID(ctx context.Context, userID string) (*models.LLMConfig, error) {
-	query := `SELECT id, user_id, provider, api_key_encrypted, base_url, model, created_at, updated_at FROM llm_configs WHERE user_id = ?`
-	row := r.db.QueryRowContext(ctx, query, userID)
-	var cfg models.LLMConfig
-	var apiKey, baseURL, model sql.NullString
-	var createdAt, updatedAt string
-	err := row.Scan(&cfg.ID, &cfg.UserID, &cfg.Provider, &apiKey, &baseURL, &model, &createdAt, &updatedAt)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	cfg.APIKeyEncrypted = apiKey.String
-	cfg.BaseURL = baseURL.String
-	cfg.Model = model.String
-	cfg.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
-	cfg.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
-	return &cfg, nil
-}
-
-func (r *SQLiteLLMConfigRepository) Upsert(ctx context.Context, config *models.LLMConfig) error {
-	query := `INSERT INTO llm_configs (id, user_id, provider, api_key_encrypted, base_url, model, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(user_id) DO UPDATE SET provider = excluded.provider, api_key_encrypted = excluded.api_key_encrypted, base_url = excluded.base_url, model = excluded.model, updated_at = excluded.updated_at`
-	_, err := r.db.ExecContext(ctx, query, config.ID, config.UserID, config.Provider, nullString(config.APIKeyEncrypted), nullString(config.BaseURL), nullString(config.Model), config.CreatedAt.Format(time.RFC3339), config.UpdatedAt.Format(time.RFC3339))
-	return err
-}
-
 // SQLiteUsageRepository implements UsageRepository for SQLite.
 // This is the LEAN billing table - detailed telemetry is in usage_insights.
 type SQLiteUsageRepository struct {

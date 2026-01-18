@@ -20,12 +20,6 @@ type APIKeyRepository interface {
 	Revoke(ctx context.Context, id string) error
 }
 
-// LLMConfigRepository defines methods for LLM config data access.
-type LLMConfigRepository interface {
-	GetByUserID(ctx context.Context, userID string) (*models.LLMConfig, error)
-	Upsert(ctx context.Context, config *models.LLMConfig) error
-}
-
 // JobRepository defines methods for job data access.
 type JobRepository interface {
 	Create(ctx context.Context, job *models.Job) error
@@ -253,7 +247,6 @@ type WebhookDeliveryRepository interface {
 // Repositories holds all repository instances.
 type Repositories struct {
 	APIKey            APIKeyRepository
-	LLMConfig         LLMConfigRepository
 	Job               JobRepository
 	JobResult         JobResultRepository
 	Usage             UsageRepository
@@ -277,7 +270,6 @@ type Repositories struct {
 func NewRepositories(db *sql.DB) *Repositories {
 	return &Repositories{
 		APIKey:            NewSQLiteAPIKeyRepository(db),
-		LLMConfig:         NewSQLiteLLMConfigRepository(db),
 		Job:               NewSQLiteJobRepository(db),
 		JobResult:         NewSQLiteJobResultRepository(db),
 		Usage:             NewSQLiteUsageRepository(db),

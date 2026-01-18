@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jmylchreest/refyne-api/internal/llm"
 )
 
 const (
@@ -89,13 +91,15 @@ func (f *OpenRouterCostFetcher) FetchGenerationCost(ctx context.Context, generat
 	return result.Data.TotalCost, nil
 }
 
-// ModelPricing represents pricing for a single model.
+// ModelPricing represents pricing and capabilities for a single model.
 type ModelPricing struct {
-	ID              string  `json:"id"`
-	PromptPrice     float64 `json:"prompt_price"`     // Price per token (USD)
-	CompletionPrice float64 `json:"completion_price"` // Price per token (USD)
-	ContextLength   int     `json:"context_length"`
-	IsFree          bool    `json:"is_free"`
+	ID              string               `json:"id"`
+	Name            string               `json:"name"`
+	PromptPrice     float64              `json:"prompt_price"`     // Price per token (USD)
+	CompletionPrice float64              `json:"completion_price"` // Price per token (USD)
+	ContextLength   int                  `json:"context_length"`
+	IsFree          bool                 `json:"is_free"`
+	Capabilities    llm.ModelCapabilities `json:"capabilities"` // What features the model supports
 }
 
 // PricingService manages model pricing data from LLM providers.
@@ -112,12 +116,21 @@ type PricingService struct {
 
 	// Provider cost fetchers for generation cost lookup
 	costFetchers map[string]ProviderCostFetcher
+
+	// Capabilities cache (typically the llm.Registry)
+	capCache llm.CapabilitiesCache
 }
 
 // PricingServiceConfig holds configuration for the pricing service.
 type PricingServiceConfig struct {
 	OpenRouterAPIKey string
 	RefreshInterval  time.Duration
+}
+
+// SetCapabilitiesCache sets the capabilities cache that will be populated when pricing is fetched.
+// This is typically called after the registry is created.
+func (s *PricingService) SetCapabilitiesCache(cache llm.CapabilitiesCache) {
+	s.capCache = cache
 }
 
 // NewPricingService creates a new pricing service.
@@ -221,10 +234,12 @@ type openRouterModelsResponse struct {
 }
 
 type openRouterModel struct {
-	ID            string              `json:"id"`
-	Pricing       openRouterPricing   `json:"pricing"`
-	ContextLength int                 `json:"context_length"`
-	TopProvider   *openRouterProvider `json:"top_provider,omitempty"`
+	ID                  string              `json:"id"`
+	Name                string              `json:"name"`
+	Pricing             openRouterPricing   `json:"pricing"`
+	ContextLength       int                 `json:"context_length"`
+	TopProvider         *openRouterProvider `json:"top_provider,omitempty"`
+	SupportedParameters []string            `json:"supported_parameters"` // Capabilities like "structured_outputs", "tools", etc.
 }
 
 type openRouterPricing struct {
@@ -273,7 +288,7 @@ func (s *PricingService) RefreshOpenRouterPricing(ctx context.Context) error {
 		return fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	// Parse and cache pricing
+	// Parse and cache pricing with capabilities
 	prices := make(map[string]*ModelPricing, len(result.Data))
 	for _, model := range result.Data {
 		promptPrice := parsePrice(model.Pricing.Prompt)
@@ -281,10 +296,12 @@ func (s *PricingService) RefreshOpenRouterPricing(ctx context.Context) error {
 
 		prices[model.ID] = &ModelPricing{
 			ID:              model.ID,
+			Name:            model.Name,
 			PromptPrice:     promptPrice,
 			CompletionPrice: completionPrice,
 			ContextLength:   model.ContextLength,
 			IsFree:          promptPrice == 0 && completionPrice == 0,
+			Capabilities:    parseOpenRouterCapabilities(model.SupportedParameters),
 		}
 	}
 
@@ -292,6 +309,16 @@ func (s *PricingService) RefreshOpenRouterPricing(ctx context.Context) error {
 	s.openRouterPrices = prices
 	s.lastRefresh = time.Now()
 	s.openRouterMu.Unlock()
+
+	// Populate the capabilities cache if configured
+	if s.capCache != nil {
+		capMap := make(map[string]llm.ModelCapabilities, len(prices))
+		for id, pricing := range prices {
+			capMap[id] = pricing.Capabilities
+		}
+		s.capCache.SetModelCapabilitiesBulk("openrouter", capMap)
+		s.logger.Debug("capabilities cache populated", "provider", "openrouter", "model_count", len(capMap))
+	}
 
 	s.logger.Info("OpenRouter pricing refreshed", "model_count", len(prices))
 	return nil
@@ -305,6 +332,28 @@ func parsePrice(s string) float64 {
 	var price float64
 	_, _ = fmt.Sscanf(s, "%f", &price)
 	return price
+}
+
+// parseOpenRouterCapabilities converts OpenRouter's supported_parameters to normalized capabilities.
+func parseOpenRouterCapabilities(params []string) llm.ModelCapabilities {
+	caps := llm.ModelCapabilities{
+		SupportsStreaming: true, // OpenRouter always supports streaming
+	}
+
+	for _, p := range params {
+		switch p {
+		case "structured_outputs":
+			caps.SupportsStructuredOutputs = true
+		case "tools", "tool_choice":
+			caps.SupportsTools = true
+		case "reasoning":
+			caps.SupportsReasoning = true
+		case "response_format":
+			caps.SupportsResponseFormat = true
+		}
+	}
+
+	return caps
 }
 
 // GetModelPricing returns pricing for a specific model.

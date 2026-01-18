@@ -33,10 +33,13 @@ var ModelOverrides = map[string]ModelSettings{
 // GetModelSettings returns the recommended settings for a model.
 // Priority: chain config override > model override > provider default
 // Uses S3-backed defaults if configured via InitGlobalModelDefaults.
+// Note: StrictMode from this function uses static defaults. For dynamic capability detection
+// (e.g., from OpenRouter API), use GetModelSettingsWithCapabilities instead.
 func GetModelSettings(provider, model string, chainTemp *float64, chainMaxTokens *int, chainStrictMode *bool) (temperature float64, maxTokens int, strictMode bool) {
 	// Use global loader if available (supports S3-backed configuration)
 	return GlobalModelDefaults().GetModelSettings(provider, model, chainTemp, chainMaxTokens, chainStrictMode)
 }
+
 
 // GetDefaultSettings returns the default settings for a model without chain overrides.
 // This is useful for frontend to show recommended defaults.

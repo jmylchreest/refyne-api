@@ -21,18 +21,6 @@ type APIKey struct {
 	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
 }
 
-// LLMConfig represents a user's LLM configuration.
-type LLMConfig struct {
-	ID              string    `json:"id"`
-	UserID          string    `json:"user_id"` // Clerk user ID
-	Provider        string    `json:"provider"` // anthropic, openai, openrouter, ollama
-	APIKeyEncrypted string    `json:"-"`
-	BaseURL         string    `json:"base_url,omitempty"`
-	Model           string    `json:"model,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
-}
-
 // JobStatus represents the status of a job.
 type JobStatus string
 

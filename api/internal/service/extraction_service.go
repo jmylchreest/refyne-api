@@ -23,11 +23,12 @@ import (
 
 // ExtractionService handles synchronous single-page extraction.
 type ExtractionService struct {
-	cfg        *config.Config
-	repos      *repository.Repositories
-	billing    *BillingService
-	logger     *slog.Logger
-	encryptor  *crypto.Encryptor
+	cfg       *config.Config
+	repos     *repository.Repositories
+	billing   *BillingService
+	resolver  *LLMConfigResolver
+	logger    *slog.Logger
+	encryptor *crypto.Encryptor
 }
 
 // NewExtractionService creates a new extraction service (legacy constructor).
@@ -51,6 +52,26 @@ func NewExtractionServiceWithBilling(cfg *config.Config, repos *repository.Repos
 		logger:    logger,
 		encryptor: encryptor,
 	}
+}
+
+// SetResolver sets the LLM config resolver for config resolution and capability lookups.
+// This is called after both services and resolver are created.
+func (s *ExtractionService) SetResolver(resolver *LLMConfigResolver) {
+	s.resolver = resolver
+}
+
+// getStrictMode determines if a model supports strict JSON schema mode.
+// Delegates to the resolver which uses cached capabilities when available.
+func (s *ExtractionService) getStrictMode(provider, model string, chainStrictMode *bool) bool {
+	if s.resolver != nil {
+		return s.resolver.GetStrictMode(provider, model, chainStrictMode)
+	}
+	// Fall back to static defaults if resolver not set
+	if chainStrictMode != nil {
+		return *chainStrictMode
+	}
+	_, _, strictMode := llm.GetModelSettings(provider, model, nil, nil, nil)
+	return strictMode
 }
 
 // ExtractInput represents extraction input.
@@ -385,264 +406,16 @@ func (s *ExtractionService) handleSuccessfulExtraction(
 
 // resolveLLMConfigsWithFallback returns the list of LLM configs to try, in order.
 // Returns (configs, isBYOK) where isBYOK is true if user provided their own API key.
-//
-// Feature matrix:
-//   - BYOK + models_custom: user keys + user chain
-//   - BYOK only: user keys + system chain
-//   - models_custom only: system keys + user chain
-//   - Neither: system keys + system chain
-//
-// The byokAllowed parameter comes from JWT claims "provider_byok" feature.
-// The modelsCustomAllowed parameter comes from JWT claims "models_custom" feature.
+// Delegates to LLMConfigResolver for the feature matrix implementation.
 func (s *ExtractionService) resolveLLMConfigsWithFallback(ctx context.Context, userID string, override *LLMConfigInput, tier string, byokAllowed bool, modelsCustomAllowed bool) ([]*LLMConfigInput, bool) {
-	// Handle override provided with provider (requires BYOK)
-	if override != nil && override.Provider != "" {
-		if !byokAllowed {
-			s.logger.Debug("BYOK not allowed, ignoring override config",
-				"user_id", userID,
-				"tier", tier,
-			)
-			return s.getDefaultLLMConfigsForTier(tier), false
-		}
-		return []*LLMConfigInput{override}, true
+	// Delegate to resolver for all standard cases
+	if s.resolver != nil {
+		return s.resolver.ResolveConfigs(ctx, userID, override, tier, byokAllowed, modelsCustomAllowed)
 	}
 
-	// Check if user has a custom chain configured (only if models_custom feature enabled)
-	var userChain []*models.UserFallbackChainEntry
-	if modelsCustomAllowed && s.repos.UserFallbackChain != nil {
-		chain, err := s.repos.UserFallbackChain.GetEnabledByUserID(ctx, userID)
-		if err == nil && len(chain) > 0 {
-			userChain = chain
-		}
-	}
-
-	// Case 1: BYOK + models_custom = user keys + user chain
-	if byokAllowed && len(userChain) > 0 {
-		configs := s.buildUserFallbackChain(ctx, userID)
-		if len(configs) > 0 {
-			providerModels := make([]string, len(configs))
-			for i, c := range configs {
-				providerModels[i] = c.Provider + ":" + c.Model
-			}
-			s.logger.Info("using user fallback chain with user keys (BYOK + models_custom)",
-				"user_id", userID,
-				"entries", len(configs),
-				"chain", providerModels,
-			)
-			return configs, true
-		}
-	}
-
-	// Case 2: models_custom only (no BYOK) = system keys + user chain
-	if !byokAllowed && len(userChain) > 0 {
-		configs := s.buildUserChainWithSystemKeys(ctx, userID, tier)
-		if len(configs) > 0 {
-			providerModels := make([]string, len(configs))
-			for i, c := range configs {
-				providerModels[i] = c.Provider + ":" + c.Model
-			}
-			s.logger.Info("using user fallback chain with system keys (models_custom only)",
-				"user_id", userID,
-				"entries", len(configs),
-				"chain", providerModels,
-			)
-			return configs, false // Not BYOK since using system keys
-		}
-	}
-
-	// Case 3: BYOK only (no models_custom) = user keys + system chain
-	// Check for legacy single-provider config first
-	if byokAllowed {
-		// Check user's legacy saved config (single provider)
-		savedCfg, err := s.repos.LLMConfig.GetByUserID(ctx, userID)
-		if err != nil {
-			s.logger.Debug("failed to get user LLM config", "user_id", userID, "error", err)
-		}
-
-		if savedCfg != nil && savedCfg.Provider != "" {
-			// Decrypt API key if present
-			var apiKey string
-			if savedCfg.APIKeyEncrypted != "" && s.encryptor != nil {
-				decrypted, err := s.encryptor.Decrypt(savedCfg.APIKeyEncrypted)
-				if err != nil {
-					s.logger.Warn("failed to decrypt API key", "user_id", userID, "error", err)
-				} else {
-					apiKey = decrypted
-				}
-			}
-
-			if apiKey != "" {
-				s.logger.Info("using legacy user config with system chain (BYOK only)",
-					"user_id", userID,
-					"provider", savedCfg.Provider,
-				)
-				return []*LLMConfigInput{{
-					Provider: savedCfg.Provider,
-					APIKey:   apiKey,
-					BaseURL:  savedCfg.BaseURL,
-					Model:    savedCfg.Model,
-				}}, true
-			}
-		}
-	}
-
-	// Case 4: Neither feature = system keys + system chain
-	s.logger.Info("using system fallback chain with system keys",
-		"user_id", userID,
-		"tier", tier,
-		"byok_allowed", byokAllowed,
-		"models_custom_allowed", modelsCustomAllowed,
-	)
-	return s.getDefaultLLMConfigsForTier(tier), false
-}
-
-// buildUserFallbackChain builds the LLM config list from user's fallback chain and service keys.
-// Returns empty slice if user has no chain configured or no valid keys.
-func (s *ExtractionService) buildUserFallbackChain(ctx context.Context, userID string) []*LLMConfigInput {
-	if s.repos.UserFallbackChain == nil || s.repos.UserServiceKey == nil {
-		s.logger.Debug("user fallback chain repos not initialized", "user_id", userID)
-		return nil
-	}
-
-	// Get user's enabled fallback chain entries
-	chain, err := s.repos.UserFallbackChain.GetEnabledByUserID(ctx, userID)
-	if err != nil {
-		s.logger.Warn("failed to get user fallback chain", "user_id", userID, "error", err)
-		return nil
-	}
-	if len(chain) == 0 {
-		s.logger.Debug("user has no enabled fallback chain entries", "user_id", userID)
-		return nil
-	}
-	s.logger.Debug("found user fallback chain entries",
-		"user_id", userID,
-		"count", len(chain),
-	)
-
-	// Get user's service keys
-	keys, err := s.repos.UserServiceKey.GetEnabledByUserID(ctx, userID)
-	if err != nil {
-		s.logger.Warn("failed to get user service keys", "user_id", userID, "error", err)
-		return nil
-	}
-	s.logger.Debug("found user service keys",
-		"user_id", userID,
-		"count", len(keys),
-	)
-
-	// Build a map of provider -> decrypted key
-	keyMap := make(map[string]*models.UserServiceKey)
-	for _, k := range keys {
-		keyMap[k.Provider] = k
-	}
-
-	// Build configs from chain, only including entries where we have a valid key
-	var configs []*LLMConfigInput
-	for _, entry := range chain {
-		key, ok := keyMap[entry.Provider]
-		if !ok {
-			// No key for this provider, skip
-			s.logger.Debug("skipping chain entry - no key configured",
-				"user_id", userID,
-				"provider", entry.Provider,
-			)
-			continue
-		}
-
-		// Ollama doesn't require an API key
-		var apiKey string
-		if entry.Provider != "ollama" {
-			if key.APIKeyEncrypted == "" {
-				s.logger.Debug("skipping chain entry - no API key",
-					"user_id", userID,
-					"provider", entry.Provider,
-				)
-				continue
-			}
-			// Decrypt the API key
-			if s.encryptor != nil {
-				decrypted, err := s.encryptor.Decrypt(key.APIKeyEncrypted)
-				if err != nil {
-					s.logger.Warn("failed to decrypt user API key",
-						"user_id", userID,
-						"provider", entry.Provider,
-						"error", err,
-					)
-					continue
-				}
-				apiKey = decrypted
-			} else {
-				apiKey = key.APIKeyEncrypted
-			}
-		}
-
-		// Get model settings (including strict mode) - chain entry can override defaults
-		_, _, strictMode := llm.GetModelSettings(entry.Provider, entry.Model, entry.Temperature, entry.MaxTokens, entry.StrictMode)
-
-		configs = append(configs, &LLMConfigInput{
-			Provider:   entry.Provider,
-			APIKey:     apiKey,
-			BaseURL:    key.BaseURL,
-			Model:      entry.Model,
-			StrictMode: strictMode,
-		})
-	}
-
-	return configs
-}
-
-// buildUserChainWithSystemKeys builds LLM configs from user's chain using SYSTEM API keys.
-// This is for users with models_custom feature but without provider_byok.
-// Only includes entries for providers where system keys are available.
-func (s *ExtractionService) buildUserChainWithSystemKeys(ctx context.Context, userID string, tier string) []*LLMConfigInput {
-	if s.repos.UserFallbackChain == nil {
-		s.logger.Debug("user fallback chain repo not initialized", "user_id", userID)
-		return nil
-	}
-
-	chain, err := s.repos.UserFallbackChain.GetEnabledByUserID(ctx, userID)
-	if err != nil || len(chain) == 0 {
-		return nil
-	}
-
-	serviceKeys := s.getServiceKeys()
-	configs := make([]*LLMConfigInput, 0, len(chain))
-
-	for _, entry := range chain {
-		// Get model settings (including strict mode)
-		_, _, strictMode := llm.GetModelSettings(entry.Provider, entry.Model, entry.Temperature, entry.MaxTokens, entry.StrictMode)
-
-		config := &LLMConfigInput{
-			Provider:   entry.Provider,
-			Model:      entry.Model,
-			StrictMode: strictMode,
-		}
-
-		// Use SYSTEM keys based on provider
-		switch entry.Provider {
-		case "openrouter":
-			config.APIKey = serviceKeys.OpenRouterKey
-		case "anthropic":
-			config.APIKey = serviceKeys.AnthropicKey
-		case "openai":
-			config.APIKey = serviceKeys.OpenAIKey
-		case "ollama":
-			// Ollama doesn't need an API key
-		}
-
-		// Only include entry if we have a key (or it's Ollama)
-		if config.APIKey != "" || entry.Provider == "ollama" {
-			configs = append(configs, config)
-		} else {
-			s.logger.Debug("skipping chain entry - no system key available",
-				"user_id", userID,
-				"provider", entry.Provider,
-				"model", entry.Model,
-			)
-		}
-	}
-
-	return configs
+	// Fallback if resolver not set (shouldn't happen in normal operation)
+	s.logger.Warn("resolver not set, using hardcoded defaults")
+	return s.getHardcodedDefaultChain(), false
 }
 
 // CrawlInput represents crawl input.
@@ -1315,290 +1088,69 @@ func (s *ExtractionService) resolveLLMConfig(ctx context.Context, userID string,
 
 // resolveLLMConfigWithBYOK determines which LLM configuration to use with feature checking.
 // Returns (config, isBYOK, error) where isBYOK is true if the user is using their own API key.
-//
-// Feature matrix:
-//   - BYOK + models_custom: user keys + user chain
-//   - BYOK only: user keys + system chain
-//   - models_custom only: system keys + user chain
-//   - Neither: system keys + system chain
-//
-// The byokAllowed parameter comes from JWT claims "provider_byok" feature.
-// The modelsCustomAllowed parameter comes from JWT claims "models_custom" feature.
+// Delegates to LLMConfigResolver for the feature matrix implementation.
 func (s *ExtractionService) resolveLLMConfigWithBYOK(ctx context.Context, userID string, override *LLMConfigInput, tier string, byokAllowed bool, modelsCustomAllowed bool) (*LLMConfigInput, bool, error) {
-	// Handle override (requires BYOK)
-	if override != nil && override.Provider != "" {
-		if !byokAllowed {
-			s.logger.Debug("BYOK not allowed, ignoring override config for crawl",
-				"user_id", userID,
-			)
-			return s.getDefaultLLMConfig(), false, nil
-		}
-		return override, true, nil
-	}
-
-	// Check if user has a custom chain configured (only if models_custom feature enabled)
-	var userChain []*models.UserFallbackChainEntry
-	if modelsCustomAllowed && s.repos.UserFallbackChain != nil {
-		chain, err := s.repos.UserFallbackChain.GetEnabledByUserID(ctx, userID)
-		if err == nil && len(chain) > 0 {
-			userChain = chain
+	// Delegate to resolver for all standard cases
+	if s.resolver != nil {
+		config, isBYOK := s.resolver.ResolveConfig(ctx, userID, override, tier, byokAllowed, modelsCustomAllowed)
+		if config != nil {
+			return config, isBYOK, nil
 		}
 	}
 
-	// Case 1: BYOK + models_custom = user keys + user chain
-	if byokAllowed && len(userChain) > 0 {
-		configs := s.buildUserFallbackChain(ctx, userID)
-		if len(configs) > 0 {
-			s.logger.Info("using user fallback chain with user keys for crawl (BYOK + models_custom)",
-				"user_id", userID,
-				"provider", configs[0].Provider,
-				"model", configs[0].Model,
-			)
-			return configs[0], true, nil
-		}
-	}
-
-	// Case 2: models_custom only (no BYOK) = system keys + user chain
-	if !byokAllowed && len(userChain) > 0 {
-		configs := s.buildUserChainWithSystemKeys(ctx, userID, tier)
-		if len(configs) > 0 {
-			s.logger.Info("using user fallback chain with system keys for crawl (models_custom only)",
-				"user_id", userID,
-				"provider", configs[0].Provider,
-				"model", configs[0].Model,
-			)
-			return configs[0], false, nil // Not BYOK since using system keys
-		}
-	}
-
-	// Case 3: BYOK only (no models_custom) = user keys + system chain
-	if byokAllowed {
-		savedCfg, err := s.repos.LLMConfig.GetByUserID(ctx, userID)
-		if err != nil {
-			s.logger.Debug("failed to get user LLM config", "user_id", userID, "error", err)
-		}
-
-		if savedCfg != nil && savedCfg.Provider != "" {
-			var apiKey string
-			if savedCfg.APIKeyEncrypted != "" && s.encryptor != nil {
-				decrypted, err := s.encryptor.Decrypt(savedCfg.APIKeyEncrypted)
-				if err != nil {
-					s.logger.Warn("failed to decrypt API key", "user_id", userID, "error", err)
-				} else {
-					apiKey = decrypted
-				}
-			}
-
-			if apiKey != "" {
-				s.logger.Info("using legacy user config for crawl (BYOK only)",
-					"user_id", userID,
-					"provider", savedCfg.Provider,
-				)
-				return &LLMConfigInput{
-					Provider: savedCfg.Provider,
-					APIKey:   apiKey,
-					BaseURL:  savedCfg.BaseURL,
-					Model:    savedCfg.Model,
-				}, true, nil
-			}
-		}
-	}
-
-	// Case 4: Neither feature = system keys + system chain
-	s.logger.Info("using system config for crawl",
-		"user_id", userID,
-		"tier", tier,
-		"byok_allowed", byokAllowed,
-		"models_custom_allowed", modelsCustomAllowed,
-	)
+	// Fallback if resolver not set
 	return s.getDefaultLLMConfig(), false, nil
 }
 
 // getDefaultLLMConfigs returns the fallback chain of LLM configurations for users without custom config.
 // Returns a list in priority order - the extraction service will try each until one succeeds.
-// Uses the default (tier=nil) fallback chain.
 func (s *ExtractionService) getDefaultLLMConfigs() []*LLMConfigInput {
 	return s.getDefaultLLMConfigsForTier("")
 }
 
 // getDefaultLLMConfigsForTier returns the fallback chain for a specific tier.
-// If the tier has a custom chain configured, it uses that. Otherwise falls back to the default chain.
-// Returns a list in priority order - the extraction service will try each until one succeeds.
+// Delegates to resolver when available.
 func (s *ExtractionService) getDefaultLLMConfigsForTier(tier string) []*LLMConfigInput {
-	// First, try to get the configured fallback chain from the database
-	if s.repos != nil && s.repos.FallbackChain != nil {
-		var chain []*models.FallbackChainEntry
-		var err error
-
-		// Get tier-specific chain (falls back to default if none exists)
-		if tier != "" {
-			chain, err = s.repos.FallbackChain.GetEnabledByTier(context.Background(), tier)
-		} else {
-			chain, err = s.repos.FallbackChain.GetEnabled(context.Background())
-		}
-
-		if err == nil && len(chain) > 0 {
-			serviceKeys := s.getServiceKeys()
-			configs := make([]*LLMConfigInput, 0, len(chain))
-
-			for _, entry := range chain {
-				// Get model settings - chain entry can override defaults
-				_, _, strictMode := llm.GetModelSettings(entry.Provider, entry.Model, entry.Temperature, entry.MaxTokens, entry.StrictMode)
-
-				config := &LLMConfigInput{
-					Provider:   entry.Provider,
-					Model:      entry.Model,
-					StrictMode: strictMode,
-				}
-
-				// Add API key for the provider if we have one
-				switch entry.Provider {
-				case "openrouter":
-					config.APIKey = serviceKeys.OpenRouterKey
-				case "anthropic":
-					config.APIKey = serviceKeys.AnthropicKey
-				case "openai":
-					config.APIKey = serviceKeys.OpenAIKey
-				case "ollama":
-					// Ollama doesn't need an API key
-				}
-
-				// Only add if we have the required API key (or it's ollama)
-				if config.APIKey != "" || entry.Provider == "ollama" {
-					configs = append(configs, config)
-				}
-			}
-
-			if len(configs) > 0 {
-				s.logger.Debug("using fallback chain",
-					"tier", tier,
-					"entries", len(configs),
-				)
-				return configs
-			}
-		}
+	if s.resolver != nil {
+		return s.resolver.GetDefaultConfigsForTier(tier)
 	}
-
-	// Fall back to the hardcoded default chain
+	// Fallback if resolver not set
 	return s.getHardcodedDefaultChain()
 }
 
 // getHardcodedDefaultChain returns the default fallback chain when no custom chain is configured.
 //
-// Default chain (all OpenRouter free models):
-//  1. xiaomi/mimo-v2-flash:free   - Fast, capable free model
-//  2. openai/gpt-oss-120b:free    - Large open-source model
-//  3. google/gemma-3-27b-it:free  - Google's instruction-tuned model
-//  4. ollama:llama3.2             - Local fallback (no API key needed)
-//
-// This chain prioritizes free OpenRouter models for cost efficiency.
-// Configure a custom chain via the admin dashboard to override these defaults.
+// getHardcodedDefaultChain returns the hardcoded fallback chain when resolver isn't available.
+// This is a minimal fallback that should rarely be used in production.
 func (s *ExtractionService) getHardcodedDefaultChain() []*LLMConfigInput {
-	serviceKeys := s.getServiceKeys()
-	configs := make([]*LLMConfigInput, 0, 4)
-
-	// OpenRouter free models chain (requires OpenRouter API key)
-	if serviceKeys.OpenRouterKey != "" {
-		// 1. Xiaomi MiMo - fast and capable
-		_, _, strictMode1 := llm.GetModelSettings("openrouter", "xiaomi/mimo-v2-flash:free", nil, nil, nil)
-		configs = append(configs, &LLMConfigInput{
-			Provider:   "openrouter",
-			APIKey:     serviceKeys.OpenRouterKey,
-			Model:      "xiaomi/mimo-v2-flash:free",
-			StrictMode: strictMode1,
-		})
-
-		// 2. GPT-OSS-120B - large open-source model
-		_, _, strictMode2 := llm.GetModelSettings("openrouter", "openai/gpt-oss-120b:free", nil, nil, nil)
-		configs = append(configs, &LLMConfigInput{
-			Provider:   "openrouter",
-			APIKey:     serviceKeys.OpenRouterKey,
-			Model:      "openai/gpt-oss-120b:free",
-			StrictMode: strictMode2,
-		})
-
-		// 3. Gemma 3 27B - Google's instruction-tuned model
-		_, _, strictMode3 := llm.GetModelSettings("openrouter", "google/gemma-3-27b-it:free", nil, nil, nil)
-		configs = append(configs, &LLMConfigInput{
-			Provider:   "openrouter",
-			APIKey:     serviceKeys.OpenRouterKey,
-			Model:      "google/gemma-3-27b-it:free",
-			StrictMode: strictMode3,
-		})
+	// If resolver is available, use its method which has access to service keys
+	if s.resolver != nil {
+		return s.resolver.GetDefaultConfigsForTier("")
 	}
 
-	// Final fallback: Ollama (no API key needed, requires local setup)
-	_, _, strictModeOllama := llm.GetModelSettings("ollama", "llama3.2", nil, nil, nil)
-	configs = append(configs, &LLMConfigInput{
+	// Ultimate fallback: just Ollama (no API key needed)
+	return []*LLMConfigInput{{
 		Provider:   "ollama",
 		Model:      "llama3.2",
-		StrictMode: strictModeOllama,
-	})
-
-	return configs
+		StrictMode: s.getStrictMode("ollama", "llama3.2", nil),
+	}}
 }
 
 // getDefaultLLMConfig returns the first available LLM configuration (for backward compatibility).
 func (s *ExtractionService) getDefaultLLMConfig() *LLMConfigInput {
-	configs := s.getDefaultLLMConfigs()
+	if s.resolver != nil {
+		return s.resolver.GetDefaultConfig("")
+	}
+	// Fallback if resolver not set
+	configs := s.getHardcodedDefaultChain()
 	if len(configs) > 0 {
 		return configs[0]
 	}
-	// Ultimate fallback
 	return &LLMConfigInput{
-		Provider: "ollama",
-		Model:    "llama3.2",
+		Provider:   "ollama",
+		Model:      "llama3.2",
+		StrictMode: s.getStrictMode("ollama", "llama3.2", nil),
 	}
-}
-
-// ServiceKeys holds the service API keys (loaded from DB or env vars).
-type ServiceKeys struct {
-	OpenRouterKey string
-	AnthropicKey  string
-	OpenAIKey     string
-}
-
-// getServiceKeys retrieves service keys, preferring DB over env vars.
-func (s *ExtractionService) getServiceKeys() ServiceKeys {
-	keys := ServiceKeys{}
-
-	// Try to load from database first
-	if s.repos != nil && s.repos.ServiceKey != nil {
-		dbKeys, err := s.repos.ServiceKey.GetAll(context.Background())
-		if err == nil {
-			for _, k := range dbKeys {
-				// Decrypt the key if we have an encryptor
-				apiKey := k.APIKeyEncrypted
-				if s.encryptor != nil && k.APIKeyEncrypted != "" {
-					if decrypted, err := s.encryptor.Decrypt(k.APIKeyEncrypted); err == nil {
-						apiKey = decrypted
-					}
-				}
-
-				switch k.Provider {
-				case "openrouter":
-					keys.OpenRouterKey = apiKey
-				case "anthropic":
-					keys.AnthropicKey = apiKey
-				case "openai":
-					keys.OpenAIKey = apiKey
-				}
-			}
-		}
-	}
-
-	// Fall back to env vars for any missing keys
-	if keys.OpenRouterKey == "" {
-		keys.OpenRouterKey = s.cfg.ServiceOpenRouterKey
-	}
-	if keys.AnthropicKey == "" {
-		keys.AnthropicKey = s.cfg.ServiceAnthropicKey
-	}
-	if keys.OpenAIKey == "" {
-		keys.OpenAIKey = s.cfg.ServiceOpenAIKey
-	}
-
-	return keys
 }
 
 // ========================================

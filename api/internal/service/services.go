@@ -17,23 +17,23 @@ import (
 
 // Services holds all service instances.
 type Services struct {
-	Auth       *AuthService
-	Extraction *ExtractionService
-	Job        *JobService
-	APIKey     *APIKeyService
-	Usage      *UsageService
-	LLMConfig  *LLMConfigService
-	Webhook    *WebhookService
-	Balance    *BalanceService
-	Schema     *SchemaService
-	Billing    *BillingService
-	Admin      *AdminService
-	Analyzer   *AnalyzerService
-	Storage    *StorageService
-	UserLLM    *UserLLMService
-	Sitemap    *SitemapService
-	Pricing    *PricingService
-	TierSync   *TierSyncService
+	Auth              *AuthService
+	Extraction        *ExtractionService
+	Job               *JobService
+	APIKey            *APIKeyService
+	Usage             *UsageService
+	Webhook           *WebhookService
+	Balance           *BalanceService
+	Schema            *SchemaService
+	Billing           *BillingService
+	Admin             *AdminService
+	Analyzer          *AnalyzerService
+	Storage           *StorageService
+	UserLLM           *UserLLMService
+	Sitemap           *SitemapService
+	Pricing           *PricingService
+	TierSync          *TierSyncService
+	LLMConfigResolver *LLMConfigResolver
 }
 
 // NewServices creates all service instances.
@@ -62,13 +62,8 @@ func NewServices(cfg *config.Config, repos *repository.Repositories, logger *slo
 	// Create billing service
 	billingSvc := NewBillingService(repos, &billingCfg, orClient, pricingSvc, logger)
 
-	// Create extraction service with billing dependency
+	// Create extraction service with billing integration
 	extractionSvc := NewExtractionServiceWithBilling(cfg, repos, billingSvc, logger)
-
-	llmConfigSvc, err := NewLLMConfigService(cfg, repos, logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create LLM config service: %w", err)
-	}
 
 	// Create encryptor for admin service and user LLM service (to encrypt service keys)
 	var encryptor *crypto.Encryptor
@@ -80,8 +75,14 @@ func NewServices(cfg *config.Config, repos *repository.Repositories, logger *slo
 	webhookSvc := NewWebhookService(logger, repos.Webhook, repos.WebhookDelivery, encryptor)
 
 	adminSvc := NewAdminServiceWithClerk(repos, encryptor, cfg.ClerkSecretKey, logger)
-	analyzerSvc := NewAnalyzerServiceWithBilling(cfg, repos, billingSvc, logger)
 	userLLMSvc := NewUserLLMService(repos, encryptor, logger)
+
+	// Create shared LLM config resolver
+	llmResolver := NewLLMConfigResolver(cfg, repos, encryptor, logger)
+
+	// Pass resolver to services that need config resolution
+	extractionSvc.SetResolver(llmResolver)
+	analyzerSvc := NewAnalyzerServiceWithBilling(cfg, repos, billingSvc, llmResolver, logger)
 
 	// Create storage service (Tigris/S3-compatible)
 	storageSvc, err := NewStorageService(cfg, logger)
@@ -106,23 +107,23 @@ func NewServices(cfg *config.Config, repos *repository.Repositories, logger *slo
 	}
 
 	return &Services{
-		Auth:       authSvc,
-		Extraction: extractionSvc,
-		Job:        jobSvc,
-		APIKey:     apiKeySvc,
-		Usage:      usageSvc,
-		LLMConfig:  llmConfigSvc,
-		Webhook:    webhookSvc,
-		Balance:    balanceSvc,
-		Schema:     schemaSvc,
-		Billing:    billingSvc,
-		Admin:      adminSvc,
-		Analyzer:   analyzerSvc,
-		Storage:    storageSvc,
-		UserLLM:    userLLMSvc,
-		Sitemap:    sitemapSvc,
-		Pricing:    pricingSvc,
-		TierSync:   tierSyncSvc,
+		Auth:              authSvc,
+		Extraction:        extractionSvc,
+		Job:               jobSvc,
+		APIKey:            apiKeySvc,
+		Usage:             usageSvc,
+		Webhook:           webhookSvc,
+		Balance:           balanceSvc,
+		Schema:            schemaSvc,
+		Billing:           billingSvc,
+		Admin:             adminSvc,
+		Analyzer:          analyzerSvc,
+		Storage:           storageSvc,
+		UserLLM:           userLLMSvc,
+		Sitemap:           sitemapSvc,
+		Pricing:           pricingSvc,
+		TierSync:          tierSyncSvc,
+		LLMConfigResolver: llmResolver,
 	}, nil
 }
 

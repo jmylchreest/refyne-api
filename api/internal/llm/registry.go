@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 
 	"github.com/jmylchreest/refyne-api/internal/config"
@@ -12,6 +13,13 @@ import (
 type FeatureChecker interface {
 	HasFeature(pattern string) bool
 	HasAllFeatures(features []string) bool
+}
+
+// CapabilitiesCache is an interface for caching model capabilities.
+// This allows external services (like PricingService) to populate the cache.
+type CapabilitiesCache interface {
+	SetModelCapabilities(provider, model string, caps ModelCapabilities)
+	SetModelCapabilitiesBulk(provider string, models map[string]ModelCapabilities)
 }
 
 // ProviderInfo contains metadata about an LLM provider for API responses.
@@ -28,38 +36,75 @@ type ProviderInfo struct {
 
 // ModelInfo contains metadata about an LLM model.
 type ModelInfo struct {
-	ID               string  `json:"id"`                          // Model identifier (e.g., "gpt-4o")
-	Name             string  `json:"name"`                        // Display name
-	Provider         string  `json:"provider"`                    // Parent provider
-	ContextWindow    int     `json:"context_window,omitempty"`    // Context window size
-	SupportsStrict   bool    `json:"supports_strict"`             // Supports strict JSON schema mode
-	DefaultTemp      float64 `json:"default_temperature"`         // Recommended temperature
-	DefaultMaxTokens int     `json:"default_max_tokens"`          // Recommended max tokens
+	ID               string            `json:"id"`                       // Model identifier (e.g., "gpt-4o")
+	Name             string            `json:"name"`                     // Display name
+	Provider         string            `json:"provider"`                 // Parent provider
+	ContextWindow    int               `json:"context_window,omitempty"` // Context window size
+	Capabilities     ModelCapabilities `json:"capabilities"`             // What the model supports
+	DefaultTemp      float64           `json:"default_temperature"`      // Recommended temperature
+	DefaultMaxTokens int               `json:"default_max_tokens"`       // Recommended max tokens
 }
 
 // ModelLister is a function that lists available models for a provider.
 type ModelLister func(ctx context.Context, baseURL, apiKey string) ([]ModelInfo, error)
 
+// CapabilitiesLookup is a function that returns capabilities for a specific model.
+// This doesn't require authentication - it uses cached/static data.
+type CapabilitiesLookup func(ctx context.Context, model string) ModelCapabilities
+
 // ProviderRegistration contains all information about a registered provider.
 type ProviderRegistration struct {
-	Info             ProviderInfo
-	RequiredFeatures []string    // Features required to access this provider (empty = always available)
-	ListModels       ModelLister // Function to list available models
+	Info              ProviderInfo
+	RequiredFeatures  []string           // Features required to access this provider (empty = always available)
+	ListModels        ModelLister        // Function to list available models
+	GetCapabilities   CapabilitiesLookup // Function to get capabilities for a model (no auth needed)
 }
 
-// Registry manages LLM provider registrations.
+// Registry manages LLM provider registrations and caches model capabilities.
 type Registry struct {
 	mu        sync.RWMutex
 	providers map[string]*ProviderRegistration
 	cfg       *config.Config
+	logger    *slog.Logger
+
+	// Model capabilities cache - keyed by "provider/model"
+	capsMu sync.RWMutex
+	caps   map[string]ModelCapabilities
 }
 
 // NewRegistry creates a new provider registry.
-func NewRegistry(cfg *config.Config) *Registry {
+func NewRegistry(cfg *config.Config, logger *slog.Logger) *Registry {
 	return &Registry{
 		providers: make(map[string]*ProviderRegistration),
 		cfg:       cfg,
+		logger:    logger,
+		caps:      make(map[string]ModelCapabilities),
 	}
+}
+
+// SetModelCapabilities stores capabilities in the registry's cache.
+// This is called by external services (like PricingService) when they fetch model data.
+func (r *Registry) SetModelCapabilities(provider, model string, caps ModelCapabilities) {
+	r.capsMu.Lock()
+	defer r.capsMu.Unlock()
+	r.caps[provider+"/"+model] = caps
+}
+
+// SetModelCapabilitiesBulk stores multiple model capabilities at once.
+func (r *Registry) SetModelCapabilitiesBulk(provider string, models map[string]ModelCapabilities) {
+	r.capsMu.Lock()
+	defer r.capsMu.Unlock()
+	for model, caps := range models {
+		r.caps[provider+"/"+model] = caps
+	}
+}
+
+// getCachedCapabilities returns cached capabilities if available.
+func (r *Registry) getCachedCapabilities(provider, model string) (ModelCapabilities, bool) {
+	r.capsMu.RLock()
+	defer r.capsMu.RUnlock()
+	caps, ok := r.caps[provider+"/"+model]
+	return caps, ok
 }
 
 // Register adds a provider to the registry.
@@ -193,4 +238,60 @@ func (r *Registry) AllProviderNames() []string {
 	}
 
 	return names
+}
+
+// GetModelCapabilities returns capabilities for a specific model.
+// Priority: 1) cached capabilities, 2) provider's GetCapabilities function, 3) empty defaults
+func (r *Registry) GetModelCapabilities(ctx context.Context, provider, model string) ModelCapabilities {
+	// Check cache first
+	if caps, ok := r.getCachedCapabilities(provider, model); ok {
+		if r.logger != nil {
+			r.logger.Debug("model capabilities lookup",
+				"provider", provider,
+				"model", model,
+				"source", "cache",
+				"structured_outputs", caps.SupportsStructuredOutputs,
+				"tools", caps.SupportsTools,
+				"streaming", caps.SupportsStreaming,
+				"reasoning", caps.SupportsReasoning,
+			)
+		}
+		return caps
+	}
+
+	// Try provider's capability lookup function
+	r.mu.RLock()
+	reg, ok := r.providers[provider]
+	r.mu.RUnlock()
+
+	if ok && reg.GetCapabilities != nil {
+		caps := reg.GetCapabilities(ctx, model)
+		if r.logger != nil {
+			r.logger.Debug("model capabilities lookup",
+				"provider", provider,
+				"model", model,
+				"source", "provider_default",
+				"structured_outputs", caps.SupportsStructuredOutputs,
+				"tools", caps.SupportsTools,
+				"streaming", caps.SupportsStreaming,
+				"reasoning", caps.SupportsReasoning,
+			)
+		}
+		return caps
+	}
+
+	// Return empty capabilities
+	if r.logger != nil {
+		r.logger.Debug("model capabilities lookup",
+			"provider", provider,
+			"model", model,
+			"source", "empty_default",
+		)
+	}
+	return ModelCapabilities{}
+}
+
+// SupportsStructuredOutputs is a convenience method to check if a model supports structured outputs.
+func (r *Registry) SupportsStructuredOutputs(ctx context.Context, provider, model string) bool {
+	return r.GetModelCapabilities(ctx, provider, model).SupportsStructuredOutputs
 }

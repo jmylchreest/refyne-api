@@ -97,8 +97,14 @@ func main() {
 	}
 
 	// Initialize LLM provider registry
-	providerRegistry := llm.InitRegistry(cfg)
+	providerRegistry := llm.InitRegistry(cfg, logger)
 	logger.Info("provider registry initialized", "providers", providerRegistry.AllProviderNames())
+
+	// Wire the registry to services that need capability lookups
+	// PricingService populates the registry's capability cache when fetching OpenRouter data
+	services.Pricing.SetCapabilitiesCache(providerRegistry)
+	// LLMConfigResolver uses the registry for StrictMode determination (shared by ExtractionService and AnalyzerService)
+	services.LLMConfigResolver.SetRegistry(providerRegistry)
 
 	// Initialize Clerk verifier for JWT validation (hosted mode)
 	var clerkVerifier *auth.ClerkVerifier
@@ -275,7 +281,7 @@ func main() {
 
 	// Clerk webhook (signature verified by handler, not user auth)
 	if cfg.ClerkWebhookSecret != "" {
-		userCleanupSvc := service.NewUserCleanupService(db, logger)
+		userCleanupSvc := service.NewUserCleanupService(db, services.Storage, logger)
 		clerkWebhook := handlers.NewClerkWebhookHandler(cfg, services.Balance, userCleanupSvc, services.TierSync, logger)
 		router.Post("/api/v1/webhooks/clerk", clerkWebhook.HandleWebhook)
 		logger.Info("clerk webhook endpoint enabled")
@@ -303,10 +309,6 @@ func main() {
 
 		// Usage routes
 		huma.Get(protectedAPI, "/api/v1/usage", handlers.NewUsageHandler(services.Usage).GetUsage)
-
-		// LLM config routes (legacy single-provider config)
-		huma.Get(protectedAPI, "/api/v1/llm-config", handlers.NewLLMConfigHandler(services.LLMConfig).GetConfig)
-		huma.Put(protectedAPI, "/api/v1/llm-config", handlers.NewLLMConfigHandler(services.LLMConfig).UpdateConfig)
 
 		// User LLM provider keys and fallback chain routes
 		userLLMHandler := handlers.NewUserLLMHandler(services.UserLLM, services.Admin, providerRegistry)
