@@ -30,10 +30,13 @@ func NewExtractionHandler(extractionSvc *service.ExtractionService, jobSvc *serv
 // ExtractInput represents extraction request.
 type ExtractInput struct {
 	Body struct {
-		URL       string          `json:"url" minLength:"1" doc:"URL to extract data from"`
-		Schema    json.RawMessage `json:"schema" doc:"Schema defining the data structure to extract (JSON or YAML format)"`
-		FetchMode string          `json:"fetch_mode,omitempty" enum:"auto,static,dynamic" default:"auto" doc:"Fetch mode: auto, static, or dynamic"`
-		LLMConfig *LLMConfigInput `json:"llm_config,omitempty" doc:"Optional LLM configuration override"`
+		URL        string          `json:"url" minLength:"1" doc:"URL to extract data from"`
+		Schema     json.RawMessage `json:"schema" doc:"Schema defining the data structure to extract (JSON or YAML format)"`
+		FetchMode  string          `json:"fetch_mode,omitempty" enum:"auto,static,dynamic" default:"auto" doc:"Fetch mode: auto, static, or dynamic"`
+		LLMConfig  *LLMConfigInput `json:"llm_config,omitempty" doc:"Optional LLM configuration override"`
+		WebhookID  string          `json:"webhook_id,omitempty" doc:"ID of a saved webhook to call on completion"`
+		Webhook    *InlineWebhookInput `json:"webhook,omitempty" doc:"Inline ephemeral webhook configuration"`
+		WebhookURL string          `json:"webhook_url,omitempty" format:"uri" doc:"Simple webhook URL (backward compatible)"`
 	}
 }
 
@@ -43,6 +46,31 @@ type LLMConfigInput struct {
 	APIKey   string `json:"api_key,omitempty" doc:"API key for the provider"`
 	BaseURL  string `json:"base_url,omitempty" doc:"Custom base URL (for Ollama)"`
 	Model    string `json:"model,omitempty" doc:"Model to use"`
+}
+
+// WebhookHeaderInput represents a custom header in webhook requests.
+type WebhookHeaderInput struct {
+	Name  string `json:"name" minLength:"1" maxLength:"256" doc:"Header name"`
+	Value string `json:"value" maxLength:"4096" doc:"Header value"`
+}
+
+// InlineWebhookInput represents an ephemeral webhook configuration.
+type InlineWebhookInput struct {
+	URL     string               `json:"url" format:"uri" minLength:"1" doc:"Webhook URL"`
+	Secret  string               `json:"secret,omitempty" maxLength:"256" doc:"Secret for HMAC-SHA256 signature"`
+	Events  []string             `json:"events,omitempty" doc:"Event types to subscribe to (empty for all)"`
+	Headers []WebhookHeaderInput `json:"headers,omitempty" maxItems:"10" doc:"Custom headers"`
+}
+
+// WebhookOptions represents webhook configuration for a request.
+// Supports three modes:
+// 1. webhook_id - reference to a saved webhook
+// 2. webhook - inline ephemeral webhook configuration
+// 3. webhook_url - simple URL (backward compatible)
+type WebhookOptions struct {
+	WebhookID  string              `json:"webhook_id,omitempty" doc:"ID of a saved webhook to use"`
+	Webhook    *InlineWebhookInput `json:"webhook,omitempty" doc:"Inline ephemeral webhook configuration"`
+	WebhookURL string              `json:"webhook_url,omitempty" format:"uri" doc:"Simple webhook URL (backward compatible)"`
 }
 
 // ExtractOutput represents extraction response.
@@ -81,10 +109,15 @@ func (h *ExtractionHandler) Extract(ctx context.Context, input *ExtractInput) (*
 		return nil, huma.Error401Unauthorized("unauthorized")
 	}
 
-	// Get user's tier from claims for tier-specific fallback chain
+	// Get user's tier and BYOK eligibility from claims
 	tier := "free"
-	if claims := mw.GetUserClaims(ctx); claims != nil && claims.Tier != "" {
-		tier = claims.Tier
+	byokAllowed := false
+	if claims := mw.GetUserClaims(ctx); claims != nil {
+		if claims.Tier != "" {
+			tier = claims.Tier
+		}
+		// Check if user has the "provider_byok" feature from Clerk Commerce
+		byokAllowed = claims.HasFeature("provider_byok")
 	}
 
 	var llmCfg *service.LLMConfigInput
@@ -117,10 +150,11 @@ func (h *ExtractionHandler) Extract(ctx context.Context, input *ExtractInput) (*
 		}
 	}
 
-	// Use ExtractWithContext to pass tier information
+	// Use ExtractWithContext to pass tier and BYOK eligibility information
 	ectx := &service.ExtractContext{
-		UserID: userID,
-		Tier:   tier,
+		UserID:      userID,
+		Tier:        tier,
+		BYOKAllowed: byokAllowed,
 	}
 
 	result, err := h.extractionSvc.ExtractWithContext(ctx, userID, service.ExtractInput{

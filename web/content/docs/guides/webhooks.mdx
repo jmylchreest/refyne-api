@@ -1,0 +1,242 @@
+---
+title: Webhooks
+description: Receive real-time notifications when jobs complete or fail
+---
+
+Webhooks allow you to receive HTTP POST notifications when events occur, such as job completion or failure. This enables real-time integrations without polling.
+
+## Overview
+
+<Refyne /> supports two types of webhooks:
+
+1. **Persistent Webhooks** - Saved webhook configurations that apply to all your jobs
+2. **Ephemeral Webhooks** - One-time webhooks specified inline with a job request
+
+## Creating a Webhook
+
+### Via Dashboard
+
+1. Navigate to **Settings > Webhooks** in your dashboard
+2. Click **Create Webhook**
+3. Configure:
+   - **Name** - A descriptive name (e.g., "Production Notifications")
+   - **URL** - Your endpoint that will receive POST requests
+   - **Secret** - Optional HMAC-SHA256 signing secret for verification
+   - **Events** - Which events to subscribe to (or all events)
+   - **Headers** - Custom headers to include in requests
+
+### Via API
+
+```bash
+curl -X POST https://api.refyne.uk/api/v1/webhooks \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Production Notifications",
+    "url": "https://your-server.com/webhook",
+    "secret": "your-signing-secret",
+    "events": ["job.completed", "job.failed"],
+    "is_active": true
+  }'
+```
+
+## Using Webhooks with Jobs
+
+### Reference a Saved Webhook
+
+Use `webhook_id` to reference a saved webhook:
+
+```bash
+curl -X POST https://api.refyne.uk/api/v1/crawl \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com/products",
+    "schema": {"name": "string", "price": "number"},
+    "webhook_id": "01HXYZ..."
+  }'
+```
+
+### Inline Ephemeral Webhook
+
+For one-time webhooks, use the `webhook` object:
+
+```bash
+curl -X POST https://api.refyne.uk/api/v1/crawl \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com/products",
+    "schema": {"name": "string", "price": "number"},
+    "webhook": {
+      "url": "https://your-server.com/webhook",
+      "secret": "optional-secret",
+      "headers": [
+        {"name": "X-Custom-Header", "value": "custom-value"}
+      ]
+    }
+  }'
+```
+
+### Simple URL (Backward Compatible)
+
+For basic use cases, use `webhook_url`:
+
+```bash
+curl -X POST https://api.refyne.uk/api/v1/crawl \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com/products",
+    "schema": {"name": "string", "price": "number"},
+    "webhook_url": "https://your-server.com/webhook"
+  }'
+```
+
+## Event Types
+
+| Event | Description |
+|-------|-------------|
+| `*` | All events (wildcard) |
+| `job.started` | Job has started processing |
+| `job.completed` | Job completed successfully |
+| `job.failed` | Job failed with an error |
+| `job.progress` | Job progress update (for crawls) |
+
+## Payload Format
+
+Webhook requests are sent as HTTP POST with JSON body:
+
+```json
+{
+  "event": "job.completed",
+  "timestamp": "2024-01-15T10:30:00Z",
+  "job_id": "01HXYZ...",
+  "data": {
+    "status": "completed",
+    "page_count": 25,
+    "cost_usd": 0.0234,
+    "results": [...]
+  }
+}
+```
+
+### Headers
+
+Every webhook request includes these headers:
+
+| Header | Description |
+|--------|-------------|
+| `Content-Type` | `application/json` |
+| `X-Refyne-Event` | Event type (e.g., `job.completed`) |
+| `X-Refyne-Delivery` | Unique delivery ID |
+| `X-Refyne-Signature` | HMAC-SHA256 signature (if secret configured) |
+
+## Signature Verification
+
+If you configure a secret, <Refyne /> signs the payload with HMAC-SHA256. Verify signatures to ensure requests are authentic.
+
+### Verification Example (Node.js)
+
+```javascript
+const crypto = require('crypto');
+
+function verifySignature(payload, signature, secret) {
+  const expected = crypto
+    .createHmac('sha256', secret)
+    .update(payload)
+    .digest('hex');
+
+  return crypto.timingSafeEqual(
+    Buffer.from(signature),
+    Buffer.from(expected)
+  );
+}
+
+// In your webhook handler
+app.post('/webhook', (req, res) => {
+  const signature = req.headers['x-refyne-signature'];
+  const payload = JSON.stringify(req.body);
+
+  if (!verifySignature(payload, signature, process.env.WEBHOOK_SECRET)) {
+    return res.status(401).send('Invalid signature');
+  }
+
+  // Process the webhook...
+  console.log('Event:', req.body.event);
+  res.status(200).send('OK');
+});
+```
+
+### Verification Example (Python)
+
+```python
+import hmac
+import hashlib
+
+def verify_signature(payload: bytes, signature: str, secret: str) -> bool:
+    expected = hmac.new(
+        secret.encode(),
+        payload,
+        hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(signature, expected)
+
+# In your webhook handler
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    signature = request.headers.get('X-Refyne-Signature')
+    payload = request.get_data()
+
+    if not verify_signature(payload, signature, os.environ['WEBHOOK_SECRET']):
+        return 'Invalid signature', 401
+
+    data = request.get_json()
+    print(f"Event: {data['event']}")
+    return 'OK', 200
+```
+
+## Delivery & Retries
+
+<Refyne /> automatically retries failed webhook deliveries with exponential backoff:
+
+| Attempt | Delay |
+|---------|-------|
+| 1 | Immediate |
+| 2 | 1 minute |
+| 3 | 5 minutes |
+
+After 3 failed attempts, the delivery is marked as failed.
+
+### Viewing Delivery History
+
+Check delivery status in the dashboard under **Webhooks > [Your Webhook] > Deliveries**, or via API:
+
+```bash
+# Deliveries for a specific webhook
+curl https://api.refyne.uk/api/v1/webhooks/WEBHOOK_ID/deliveries \
+  -H "Authorization: Bearer YOUR_API_KEY"
+
+# Deliveries for a specific job
+curl https://api.refyne.uk/api/v1/jobs/JOB_ID/webhook-deliveries \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+## Best Practices
+
+1. **Always verify signatures** - Use the `secret` field and verify `X-Refyne-Signature`
+2. **Respond quickly** - Return 2xx within 30 seconds; do heavy processing asynchronously
+3. **Handle duplicates** - Use `X-Refyne-Delivery` header to deduplicate
+4. **Use HTTPS** - Always use HTTPS endpoints in production
+5. **Monitor deliveries** - Check delivery history for failures
+
+## Webhook Management API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/v1/webhooks` | List all webhooks |
+| `POST` | `/api/v1/webhooks` | Create a webhook |
+| `GET` | `/api/v1/webhooks/{id}` | Get webhook details |
+| `PUT` | `/api/v1/webhooks/{id}` | Update a webhook |
+| `DELETE` | `/api/v1/webhooks/{id}` | Delete a webhook |
+| `GET` | `/api/v1/webhooks/{id}/deliveries` | List webhook deliveries |

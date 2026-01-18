@@ -57,6 +57,7 @@ const (
 type Job struct {
 	ID               string     `json:"id"`
 	UserID           string     `json:"user_id"` // Clerk user ID
+	Tier             string     `json:"tier"`    // User's tier at job creation time (for tier-specific processing)
 	Type             JobType    `json:"type"`
 	Status           JobStatus  `json:"status"`
 	URL              string     `json:"url"`
@@ -66,6 +67,7 @@ type Job struct {
 	ErrorMessage     string     `json:"error_message,omitempty"`  // User-visible error (sanitized for non-BYOK)
 	ErrorDetails     string     `json:"error_details,omitempty"`  // Full error details (admin/BYOK only)
 	ErrorCategory    string     `json:"error_category,omitempty"` // Error classification
+	BYOKAllowed      bool       `json:"byok_allowed"`             // True if user had the "byok" feature at job creation
 	IsBYOK           bool       `json:"is_byok"`                  // True if user's own API key was used
 	LLMProvider      string     `json:"llm_provider,omitempty"`   // Last provider attempted
 	LLMModel         string     `json:"llm_model,omitempty"`      // Last model attempted
@@ -216,4 +218,68 @@ type UserFallbackChainEntry struct {
 	IsEnabled   bool      `json:"is_enabled"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// WebhookEventType represents the type of webhook event.
+type WebhookEventType string
+
+const (
+	WebhookEventAll            WebhookEventType = "*"
+	WebhookEventJobStarted     WebhookEventType = "job.started"
+	WebhookEventJobCompleted   WebhookEventType = "job.completed"
+	WebhookEventJobFailed      WebhookEventType = "job.failed"
+	WebhookEventJobProgress    WebhookEventType = "job.progress"
+	WebhookEventExtractSuccess WebhookEventType = "extract.success"
+	WebhookEventExtractFailed  WebhookEventType = "extract.failed"
+)
+
+// WebhookDeliveryStatus represents the status of a webhook delivery.
+type WebhookDeliveryStatus string
+
+const (
+	WebhookDeliveryStatusPending  WebhookDeliveryStatus = "pending"
+	WebhookDeliveryStatusSuccess  WebhookDeliveryStatus = "success"
+	WebhookDeliveryStatusFailed   WebhookDeliveryStatus = "failed"
+	WebhookDeliveryStatusRetrying WebhookDeliveryStatus = "retrying"
+)
+
+// Webhook represents a user-defined webhook endpoint.
+type Webhook struct {
+	ID              string    `json:"id"`
+	UserID          string    `json:"user_id"`
+	Name            string    `json:"name"`
+	URL             string    `json:"url"`
+	SecretEncrypted string    `json:"-"`        // Encrypted webhook secret for HMAC signing
+	Events          []string  `json:"events"`   // Event types to subscribe to (["*"] for all)
+	Headers         []Header  `json:"headers"`  // Custom headers to include
+	IsActive        bool      `json:"is_active"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// Header represents a custom HTTP header for webhook requests.
+type Header struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+// WebhookDelivery represents a single webhook delivery attempt.
+type WebhookDelivery struct {
+	ID              string                `json:"id"`
+	WebhookID       *string               `json:"webhook_id,omitempty"` // nil for ephemeral webhooks
+	JobID           string                `json:"job_id"`
+	EventType       string                `json:"event_type"`
+	URL             string                `json:"url"`
+	PayloadJSON     string                `json:"payload_json"`
+	RequestHeaders  []Header              `json:"request_headers,omitempty"`
+	StatusCode      *int                  `json:"status_code,omitempty"`
+	ResponseBody    string                `json:"response_body,omitempty"`
+	ResponseTimeMs  *int                  `json:"response_time_ms,omitempty"`
+	Status          WebhookDeliveryStatus `json:"status"`
+	ErrorMessage    string                `json:"error_message,omitempty"`
+	AttemptNumber   int                   `json:"attempt_number"`
+	MaxAttempts     int                   `json:"max_attempts"`
+	NextRetryAt     *time.Time            `json:"next_retry_at,omitempty"`
+	CreatedAt       time.Time             `json:"created_at"`
+	DeliveredAt     *time.Time            `json:"delivered_at,omitempty"`
 }

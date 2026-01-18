@@ -16,13 +16,14 @@ type TierSettingsJSON struct {
 
 // TierLimitsJSON represents tier limits in JSON format.
 type TierLimitsJSON struct {
-	MonthlyExtractions int  `json:"monthly_extractions"`
-	MaxPagesPerCrawl   int  `json:"max_pages_per_crawl"`
-	MaxConcurrentJobs  int  `json:"max_concurrent_jobs"`
-	RequestsPerMinute  int  `json:"requests_per_minute"`
-	WebhooksEnabled    bool `json:"webhooks_enabled"`
-	BYOKEnabled        bool `json:"byok_enabled"`
-	AntiBotEnabled     bool `json:"anti_bot_enabled"`
+	MonthlyExtractions     int  `json:"monthly_extractions"`
+	MonthlyBYOKExtractions int  `json:"monthly_byok_extractions"`
+	MaxPagesPerCrawl       int  `json:"max_pages_per_crawl"`
+	MaxConcurrentJobs      int  `json:"max_concurrent_jobs"`
+	RequestsPerMinute      int  `json:"requests_per_minute"`
+	WebhooksEnabled        bool `json:"webhooks_enabled"`
+	BYOKEnabled            bool `json:"byok_enabled"`
+	AntiBotEnabled         bool `json:"anti_bot_enabled"`
 }
 
 // TierSettingsLoader provides S3-backed tier settings with caching.
@@ -99,7 +100,16 @@ func (t *TierSettingsLoader) refresh(ctx context.Context) {
 	// Convert to TierLimits
 	newTiers := make(map[string]TierLimits)
 	for name, limits := range settings.Tiers {
-		newTiers[name] = TierLimits(limits)
+		newTiers[name] = TierLimits{
+			MonthlyExtractions:     limits.MonthlyExtractions,
+			MonthlyBYOKExtractions: limits.MonthlyBYOKExtractions,
+			MaxPagesPerCrawl:       limits.MaxPagesPerCrawl,
+			MaxConcurrentJobs:      limits.MaxConcurrentJobs,
+			RequestsPerMinute:      limits.RequestsPerMinute,
+			WebhooksEnabled:        limits.WebhooksEnabled,
+			BYOKEnabled:            limits.BYOKEnabled,
+			AntiBotEnabled:         limits.AntiBotEnabled,
+		}
 	}
 
 	t.mu.Lock()

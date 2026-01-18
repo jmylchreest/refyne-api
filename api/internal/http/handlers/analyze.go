@@ -77,10 +77,15 @@ func (h *AnalyzeHandler) Analyze(ctx context.Context, input *AnalyzeInput) (*Ana
 		return nil, huma.Error401Unauthorized("unauthorized")
 	}
 
-	// Get user's tier from claims
+	// Get user's tier and BYOK eligibility from claims
 	tier := "free"
-	if claims := mw.GetUserClaims(ctx); claims != nil && claims.Tier != "" {
-		tier = claims.Tier
+	byokAllowed := false
+	if claims := mw.GetUserClaims(ctx); claims != nil {
+		if claims.Tier != "" {
+			tier = claims.Tier
+		}
+		// Check if user has the "provider_byok" feature from Clerk Commerce
+		byokAllowed = claims.HasFeature("provider_byok")
 	}
 
 	// Create job record to track this analysis
@@ -105,7 +110,7 @@ func (h *AnalyzeHandler) Analyze(ctx context.Context, input *AnalyzeInput) (*Ana
 		URL:       input.Body.URL,
 		Depth:     input.Body.Depth,
 		FetchMode: input.Body.FetchMode,
-	}, tier)
+	}, tier, byokAllowed)
 
 	if err != nil {
 		// Update job with failure

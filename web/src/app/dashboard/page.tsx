@@ -9,6 +9,7 @@ import {
   analyze,
   createCrawlJob,
   getJobResults,
+  getJobResultsRaw,
   listSchemas,
   listSavedSites,
   createSavedSite,
@@ -22,6 +23,7 @@ import {
   Schema,
   SavedSite,
   ApiError,
+  OutputFormat,
 } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -48,7 +50,7 @@ import { toast } from 'sonner';
 import { Loader2, Sparkles, Save, BookOpen, Globe, Clock, ChevronDown, ChevronUp, Play, Copy, Check, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { ProgressAvatarDialog, defaultStages, AvatarStage } from '@/components/ui/progress-avatar';
 import { CrawlModeSection, CrawlOptions, ExtractionMode } from '@/components/crawl-mode-section';
-import { cn } from '@/lib/utils';
+import { cn, parseClerkFeatures } from '@/lib/utils';
 
 // Extraction-specific stages
 const extractionStages: AvatarStage[] = [
@@ -78,16 +80,6 @@ interface CrawlProgressUrl {
   error?: string;
   errorCategory?: string;
   errorDetails?: string; // Full error details (BYOK users only)
-}
-
-function parseClerkFeatures(feaClaim: string | undefined): string[] {
-  if (!feaClaim) return [];
-  return feaClaim.split(',').map(f => {
-    const trimmed = f.trim();
-    if (trimmed.startsWith('u:')) return trimmed.slice(2);
-    if (trimmed.startsWith('o:')) return trimmed.slice(2);
-    return trimmed;
-  }).filter(Boolean);
 }
 
 // Get user-friendly error message based on error category
@@ -205,12 +197,61 @@ export default function DashboardPage() {
   const [schemaCopied, setSchemaCopied] = useState(false);
   const [resultsCopied, setResultsCopied] = useState(false);
 
+  // Output format state
+  const [outputFormat, setOutputFormat] = useState<OutputFormat>('json');
+  const [formattedOutput, setFormattedOutput] = useState<string>('');
+
   // Auto-scroll to latest crawl URL
   useEffect(() => {
     if (crawlUrls.length > 0) {
       resultsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [crawlUrls.length]);
+
+  // Format results when output format changes or results update
+  useEffect(() => {
+    const formatResults = async () => {
+      // Determine the data to format
+      let dataToFormat: unknown = null;
+      if (crawlFinalResult) {
+        dataToFormat = crawlFinalResult;
+      } else if (result) {
+        dataToFormat = result.data;
+      }
+
+      if (!dataToFormat) {
+        setFormattedOutput('');
+        return;
+      }
+
+      if (outputFormat === 'json') {
+        setFormattedOutput(JSON.stringify(dataToFormat, null, 2));
+      } else if (outputFormat === 'jsonl') {
+        // JSONL: one line per item
+        if (Array.isArray(dataToFormat)) {
+          setFormattedOutput(dataToFormat.map(item => JSON.stringify(item)).join('\n'));
+        } else if (typeof dataToFormat === 'object' && dataToFormat !== null) {
+          // For objects with items array, output each item as a line
+          const obj = dataToFormat as Record<string, unknown>;
+          if (Array.isArray(obj.items)) {
+            setFormattedOutput(obj.items.map(item => JSON.stringify(item)).join('\n'));
+          } else {
+            // Single object as single line
+            setFormattedOutput(JSON.stringify(dataToFormat));
+          }
+        }
+      } else if (outputFormat === 'yaml') {
+        // Use js-yaml to convert to YAML
+        try {
+          setFormattedOutput(yaml.dump(dataToFormat, { indent: 2, lineWidth: -1 }));
+        } catch {
+          setFormattedOutput('# Error converting to YAML\n' + JSON.stringify(dataToFormat, null, 2));
+        }
+      }
+    };
+
+    formatResults();
+  }, [outputFormat, crawlFinalResult, result]);
 
   // Update crawl options when analysis result has follow patterns
   // Auto-populate with ALL suggested selectors, replacing any existing ones
@@ -807,13 +848,7 @@ export default function DashboardPage() {
   };
 
   const copyResults = async () => {
-    let content = '';
-    if (crawlFinalResult) {
-      content = JSON.stringify(crawlFinalResult, null, 2);
-    } else if (result) {
-      content = JSON.stringify(result.data, null, 2);
-    }
-    await navigator.clipboard.writeText(content);
+    await navigator.clipboard.writeText(formattedOutput);
     setResultsCopied(true);
     setTimeout(() => setResultsCopied(false), 2000);
   };
@@ -1083,19 +1118,31 @@ export default function DashboardPage() {
                 </>
               )}
               {(result || crawlFinalResult) && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={copyResults}
-                  className="h-8 w-8"
-                  title="Copy results"
-                >
-                  {resultsCopied ? (
-                    <Check className="h-3 w-3 text-green-500" />
-                  ) : (
-                    <Copy className="h-3 w-3" />
-                  )}
-                </Button>
+                <>
+                  <Select value={outputFormat} onValueChange={(v) => setOutputFormat(v as OutputFormat)}>
+                    <SelectTrigger className="h-7 w-[80px] text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="json">JSON</SelectItem>
+                      <SelectItem value="jsonl">JSONL</SelectItem>
+                      <SelectItem value="yaml">YAML</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={copyResults}
+                    className="h-8 w-8"
+                    title="Copy results"
+                  >
+                    {resultsCopied ? (
+                      <Check className="h-3 w-3 text-green-500" />
+                    ) : (
+                      <Copy className="h-3 w-3" />
+                    )}
+                  </Button>
+                </>
               )}
             </div>
           </div>
@@ -1183,7 +1230,7 @@ export default function DashboardPage() {
                   <>
                     <div className="flex-1 overflow-auto bg-zinc-950 min-h-0">
                       <pre className="p-4 text-sm text-zinc-300 min-h-full">
-                        {JSON.stringify(crawlFinalResult, null, 2)}
+                        {formattedOutput}
                       </pre>
                     </div>
                     {crawlUrls.length > 0 && (
@@ -1300,7 +1347,7 @@ export default function DashboardPage() {
               // Single extraction result
               <div className="flex-1 overflow-auto bg-zinc-950 min-h-0">
                 <pre className="p-4 text-sm text-zinc-300 min-h-full">
-                  {JSON.stringify(result.data, null, 2)}
+                  {formattedOutput}
                 </pre>
               </div>
             ) : null}

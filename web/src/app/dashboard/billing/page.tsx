@@ -14,7 +14,27 @@ export default function BillingPage() {
 
       {/* Clerk Billing PricingTable */}
       <PricingTable
-        newSubscriptionRedirectUrl="/dashboard"
+        newSubscriptionRedirectUrl="/dashboard/billing"
+        checkoutProps={{
+          appearance: {
+            elements: {
+              // Position drawer below the fixed header with even spacing
+              // Header is 4rem, add 0.75rem padding top and bottom
+              drawerRoot: {
+                top: 'calc(4rem + 0.75rem)',
+                height: 'calc(100vh - 4rem - 1.5rem)',
+              },
+              drawerContent: {
+                top: 'calc(4rem + 0.75rem)',
+                maxHeight: 'calc(100vh - 4rem - 1.5rem)',
+                borderRadius: '0.5rem',
+              },
+              drawerBackdrop: {
+                top: '4rem',
+              },
+            },
+          },
+        }}
         fallback={
           <div className="flex items-center justify-center py-12">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-zinc-900 dark:border-white" />

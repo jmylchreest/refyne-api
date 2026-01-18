@@ -12,15 +12,17 @@ import {
   UserServiceKey,
   UserFallbackChainEntry,
 } from '@/lib/api';
-import { useUser } from '@clerk/nextjs';
+import { useUser, useAuth } from '@clerk/nextjs';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { FallbackChainEditor, ChainEntry, SavedChainEntry } from '@/components/fallback-chain-editor';
 import { toast } from 'sonner';
-import { Trash2, Eye, EyeOff } from 'lucide-react';
+import { Trash2, Eye, EyeOff, AlertCircle } from 'lucide-react';
+import { parseClerkFeatures } from '@/lib/utils';
 
 const LLM_PROVIDERS = [
   { value: 'openrouter', label: 'OpenRouter' },
@@ -33,8 +35,13 @@ type Provider = typeof LLM_PROVIDERS[number]['value'];
 
 export default function SettingsPage() {
   const { user } = useUser();
+  const { sessionClaims } = useAuth();
   const [isLoading, setIsLoading] = useState(true);
   const [usage, setUsage] = useState<UsageSummary | null>(null);
+
+  // Check if BYOK feature is enabled for this user
+  const features = parseClerkFeatures(sessionClaims?.fea as string | undefined);
+  const byokEnabled = features.includes('provider_byok');
 
   // Provider keys state
   const [providerKeys, setProviderKeys] = useState<UserServiceKey[]>([]);
@@ -221,12 +228,23 @@ export default function SettingsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
+          {!byokEnabled && (
+            <Alert className="mb-3">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription className="text-sm">
+                BYOK (Bring Your Own Key) is only available on paid plans.{' '}
+                <a href="/dashboard/billing" className="underline font-medium hover:text-zinc-900 dark:hover:text-zinc-100">
+                  Upgrade to enable this feature.
+                </a>
+              </AlertDescription>
+            </Alert>
+          )}
           {LLM_PROVIDERS.map((provider) => {
             const key = getKeyForProvider(provider.value);
             const isEditing = editingProvider === provider.value;
 
             return (
-              <div key={provider.value} className="border rounded-md p-3">
+              <div key={provider.value} className={`border rounded-md p-3 ${!byokEnabled ? 'opacity-60' : ''}`}>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className="font-medium text-sm">{provider.label}</span>
@@ -238,7 +256,7 @@ export default function SettingsPage() {
                       <Badge variant="outline" className="text-xs">Not configured</Badge>
                     )}
                   </div>
-                  {!isEditing && (
+                  {!isEditing && byokEnabled && (
                     <div className="flex gap-1">
                       <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => startEditing(provider.value)}>
                         {key ? 'Update' : 'Configure'}
@@ -271,7 +289,7 @@ export default function SettingsPage() {
                   <p className="text-xs text-zinc-500 mt-1">Base URL: {key.base_url}</p>
                 )}
 
-                {isEditing && (
+                {isEditing && byokEnabled && (
                   <div className="mt-3 space-y-3">
                     <div className="space-y-1">
                       <Label className="text-xs">API Key</Label>
@@ -329,13 +347,26 @@ export default function SettingsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <FallbackChainEditor
-            chain={chain as SavedChainEntry[]}
-            configuredProviders={configuredProviders}
-            onSave={handleSaveChain}
-            useUserEndpoint
-            compact
-          />
+          {!byokEnabled && (
+            <Alert className="mb-3">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription className="text-sm">
+                BYOK (Bring Your Own Key) is only available on paid plans.{' '}
+                <a href="/dashboard/billing" className="underline font-medium hover:text-zinc-900 dark:hover:text-zinc-100">
+                  Upgrade to enable this feature.
+                </a>
+              </AlertDescription>
+            </Alert>
+          )}
+          <div className={!byokEnabled ? 'opacity-60 pointer-events-none' : ''}>
+            <FallbackChainEditor
+              chain={chain as SavedChainEntry[]}
+              configuredProviders={configuredProviders}
+              onSave={handleSaveChain}
+              useUserEndpoint
+              compact
+            />
+          </div>
         </CardContent>
       </Card>
     </div>

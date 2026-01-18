@@ -10,6 +10,7 @@
     "llm",
     "schemas",
     "sites",
-    "usage"
+    "usage",
+    "webhooks"
   ]
 }

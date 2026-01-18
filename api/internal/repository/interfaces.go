@@ -222,6 +222,30 @@ type UserFallbackChainRepository interface {
 	ReplaceAll(ctx context.Context, userID string, entries []*models.UserFallbackChainEntry) error
 }
 
+// WebhookRepository defines methods for webhook data access.
+// Webhooks allow users to receive notifications when job events occur.
+type WebhookRepository interface {
+	Create(ctx context.Context, webhook *models.Webhook) error
+	GetByID(ctx context.Context, id string) (*models.Webhook, error)
+	GetByUserID(ctx context.Context, userID string) ([]*models.Webhook, error)
+	GetActiveByUserID(ctx context.Context, userID string) ([]*models.Webhook, error)
+	GetByUserAndName(ctx context.Context, userID, name string) (*models.Webhook, error)
+	Update(ctx context.Context, webhook *models.Webhook) error
+	Delete(ctx context.Context, id string) error
+}
+
+// WebhookDeliveryRepository defines methods for webhook delivery tracking.
+// Tracks all webhook delivery attempts including successes, failures, and retries.
+type WebhookDeliveryRepository interface {
+	Create(ctx context.Context, delivery *models.WebhookDelivery) error
+	Update(ctx context.Context, delivery *models.WebhookDelivery) error
+	GetByID(ctx context.Context, id string) (*models.WebhookDelivery, error)
+	GetByJobID(ctx context.Context, jobID string) ([]*models.WebhookDelivery, error)
+	GetByWebhookID(ctx context.Context, webhookID string, limit, offset int) ([]*models.WebhookDelivery, error)
+	GetPendingRetries(ctx context.Context, limit int) ([]*models.WebhookDelivery, error)
+	DeleteByJobIDs(ctx context.Context, jobIDs []string) error
+}
+
 // Repositories holds all repository instances.
 type Repositories struct {
 	APIKey            APIKeyRepository
@@ -241,6 +265,8 @@ type Repositories struct {
 	SavedSites        SavedSitesRepository
 	UserServiceKey    UserServiceKeyRepository
 	UserFallbackChain UserFallbackChainRepository
+	Webhook           WebhookRepository
+	WebhookDelivery   WebhookDeliveryRepository
 }
 
 // NewRepositories creates all repository instances.
@@ -263,5 +289,7 @@ func NewRepositories(db *sql.DB) *Repositories {
 		SavedSites:        NewSQLiteSavedSitesRepository(db),
 		UserServiceKey:    NewSQLiteUserServiceKeyRepository(db),
 		UserFallbackChain: NewSQLiteUserFallbackChainRepository(db),
+		Webhook:           NewSQLiteWebhookRepository(db),
+		WebhookDelivery:   NewSQLiteWebhookDeliveryRepository(db),
 	}
 }

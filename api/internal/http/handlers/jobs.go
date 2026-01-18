@@ -18,8 +18,9 @@ import (
 
 // JobHandler handles job endpoints.
 type JobHandler struct {
-	jobSvc     *service.JobService
-	storageSvc *service.StorageService
+	jobSvc      *service.JobService
+	storageSvc  *service.StorageService
+	webhookSvc  *service.WebhookService
 }
 
 // NewJobHandler creates a new job handler.
@@ -27,6 +28,15 @@ func NewJobHandler(jobSvc *service.JobService, storageSvc *service.StorageServic
 	return &JobHandler{
 		jobSvc:     jobSvc,
 		storageSvc: storageSvc,
+	}
+}
+
+// NewJobHandlerWithWebhook creates a new job handler with webhook service.
+func NewJobHandlerWithWebhook(jobSvc *service.JobService, storageSvc *service.StorageService, webhookSvc *service.WebhookService) *JobHandler {
+	return &JobHandler{
+		jobSvc:     jobSvc,
+		storageSvc: storageSvc,
+		webhookSvc: webhookSvc,
 	}
 }
 
@@ -43,6 +53,20 @@ func NewJobHandler(jobSvc *service.JobService, storageSvc *service.StorageServic
 //
 // Example (async): POST /api/v1/crawl
 // Example (sync):  POST /api/v1/crawl?wait=true
+// CrawlWebhookHeaderInput represents a custom header in webhook requests.
+type CrawlWebhookHeaderInput struct {
+	Name  string `json:"name" minLength:"1" maxLength:"256" doc:"Header name"`
+	Value string `json:"value" maxLength:"4096" doc:"Header value"`
+}
+
+// CrawlInlineWebhookInput represents an ephemeral webhook configuration for crawl jobs.
+type CrawlInlineWebhookInput struct {
+	URL     string                    `json:"url" format:"uri" minLength:"1" doc:"Webhook URL"`
+	Secret  string                    `json:"secret,omitempty" maxLength:"256" doc:"Secret for HMAC-SHA256 signature"`
+	Events  []string                  `json:"events,omitempty" doc:"Event types to subscribe to (empty for all)"`
+	Headers []CrawlWebhookHeaderInput `json:"headers,omitempty" maxItems:"10" doc:"Custom headers"`
+}
+
 type CreateCrawlJobInput struct {
 	Wait    bool `query:"wait" default:"false" doc:"Block until job completes and return results directly. Max wait time is 2 minutes. Returns 202 if timeout exceeded."`
 	Timeout int  `query:"timeout" default:"120" minimum:"10" maximum:"120" doc:"Maximum seconds to wait when wait=true (default 120s, max 120s/2min). For longer jobs, use async mode."`
@@ -50,7 +74,9 @@ type CreateCrawlJobInput struct {
 		URL        string          `json:"url" minLength:"1" example:"https://example.com/products" doc:"Seed URL to start crawling from"`
 		Schema     json.RawMessage `json:"schema" doc:"JSON Schema defining the data structure to extract. Example: {\"name\":\"string\",\"price\":\"number\",\"description\":\"string\"}"`
 		Options    CrawlOptions    `json:"options,omitempty" doc:"Crawl configuration options"`
-		WebhookURL string          `json:"webhook_url,omitempty" format:"uri" example:"https://my-app.com/webhook/crawl-complete" doc:"URL to receive POST webhook on completion (async mode)"`
+		WebhookID  string          `json:"webhook_id,omitempty" doc:"ID of a saved webhook to call on job events"`
+		Webhook    *CrawlInlineWebhookInput `json:"webhook,omitempty" doc:"Inline ephemeral webhook configuration"`
+		WebhookURL string          `json:"webhook_url,omitempty" format:"uri" example:"https://my-app.com/webhook/crawl-complete" doc:"Simple webhook URL (backward compatible)"`
 		LLMConfig  *LLMConfigInput `json:"llm_config,omitempty" doc:"Optional LLM configuration override (BYOK)"`
 	}
 }
@@ -124,6 +150,17 @@ func (h *JobHandler) CreateCrawlJob(ctx context.Context, input *CreateCrawlJobIn
 		return nil, huma.Error401Unauthorized("unauthorized")
 	}
 
+	// Get user's tier and BYOK eligibility from claims
+	tier := "free"
+	byokAllowed := false
+	if claims := mw.GetUserClaims(ctx); claims != nil {
+		if claims.Tier != "" {
+			tier = claims.Tier
+		}
+		// Check if user has the "provider_byok" feature from Clerk Commerce
+		byokAllowed = claims.HasFeature("provider_byok")
+	}
+
 	result, err := h.jobSvc.CreateCrawlJob(ctx, userID, service.CreateCrawlJobInput{
 		URL:    input.Body.URL,
 		Schema: input.Body.Schema,
@@ -140,7 +177,9 @@ func (h *JobHandler) CreateCrawlJob(ctx context.Context, input *CreateCrawlJobIn
 			ExtractFromSeeds: input.Body.Options.ExtractFromSeeds,
 			UseSitemap:       input.Body.Options.UseSitemap,
 		},
-		WebhookURL: input.Body.WebhookURL,
+		WebhookURL:  input.Body.WebhookURL,
+		Tier:        tier,
+		BYOKAllowed: byokAllowed,
 	})
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to create crawl job: " + err.Error())
@@ -726,8 +765,9 @@ func (h *JobHandler) GetCrawlMap(ctx context.Context, input *GetCrawlMapInput) (
 
 // GetJobResultsInput represents job results request.
 type GetJobResultsInput struct {
-	ID    string `path:"id" doc:"Job ID"`
-	Merge bool   `query:"merge" default:"false" doc:"Merge all results into a single object"`
+	ID     string `path:"id" doc:"Job ID"`
+	Merge  bool   `query:"merge" default:"false" doc:"Merge all results into a single object"`
+	Format string `query:"format" default:"json" enum:"json,jsonl,yaml" doc:"Output format: json (default), jsonl (one result per line), or yaml"`
 }
 
 // JobResultEntry represents a single result in the response.
@@ -1017,6 +1057,210 @@ func dedupeArrayByURL(arr []any) []any {
 	result = append(result, nonURLItems...)
 
 	return result
+}
+
+// GetJobWebhookDeliveriesInput represents job webhook deliveries request.
+type GetJobWebhookDeliveriesInput struct {
+	ID string `path:"id" doc:"Job ID"`
+}
+
+// JobWebhookDeliveryResponse represents a webhook delivery in job responses.
+type JobWebhookDeliveryResponse struct {
+	ID             string  `json:"id" doc:"Delivery ID"`
+	WebhookID      *string `json:"webhook_id,omitempty" doc:"Webhook ID (null for ephemeral)"`
+	EventType      string  `json:"event_type" doc:"Event type that triggered this delivery"`
+	URL            string  `json:"url" doc:"Destination URL"`
+	StatusCode     *int    `json:"status_code,omitempty" doc:"HTTP status code received"`
+	ResponseTimeMs *int    `json:"response_time_ms,omitempty" doc:"Response time in milliseconds"`
+	Status         string  `json:"status" doc:"Delivery status (pending, success, failed, retrying)"`
+	ErrorMessage   string  `json:"error_message,omitempty" doc:"Error message if failed"`
+	AttemptNumber  int     `json:"attempt_number" doc:"Current attempt number"`
+	MaxAttempts    int     `json:"max_attempts" doc:"Maximum retry attempts"`
+	CreatedAt      string  `json:"created_at" doc:"Creation timestamp"`
+	DeliveredAt    *string `json:"delivered_at,omitempty" doc:"Successful delivery timestamp"`
+}
+
+// GetJobWebhookDeliveriesOutput represents job webhook deliveries response.
+type GetJobWebhookDeliveriesOutput struct {
+	Body struct {
+		JobID      string                       `json:"job_id" doc:"Job ID"`
+		Deliveries []JobWebhookDeliveryResponse `json:"deliveries" doc:"Webhook deliveries for this job"`
+	}
+}
+
+// GetJobWebhookDeliveries returns webhook deliveries for a job.
+func (h *JobHandler) GetJobWebhookDeliveries(ctx context.Context, input *GetJobWebhookDeliveriesInput) (*GetJobWebhookDeliveriesOutput, error) {
+	userID := getUserID(ctx)
+	if userID == "" {
+		return nil, huma.Error401Unauthorized("unauthorized")
+	}
+
+	// Verify job exists and belongs to user
+	job, err := h.jobSvc.GetJob(ctx, userID, input.ID)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to get job: " + err.Error())
+	}
+	if job == nil {
+		return nil, huma.Error404NotFound("job not found")
+	}
+
+	// Get webhook deliveries
+	var deliveries []*models.WebhookDelivery
+	if h.webhookSvc != nil {
+		deliveries, err = h.webhookSvc.GetDeliveriesForJob(ctx, input.ID)
+		if err != nil {
+			return nil, huma.Error500InternalServerError("failed to get webhook deliveries: " + err.Error())
+		}
+	}
+
+	responses := make([]JobWebhookDeliveryResponse, 0, len(deliveries))
+	for _, d := range deliveries {
+		var deliveredAt *string
+		if d.DeliveredAt != nil {
+			s := d.DeliveredAt.Format(time.RFC3339)
+			deliveredAt = &s
+		}
+
+		responses = append(responses, JobWebhookDeliveryResponse{
+			ID:             d.ID,
+			WebhookID:      d.WebhookID,
+			EventType:      d.EventType,
+			URL:            d.URL,
+			StatusCode:     d.StatusCode,
+			ResponseTimeMs: d.ResponseTimeMs,
+			Status:         string(d.Status),
+			ErrorMessage:   d.ErrorMessage,
+			AttemptNumber:  d.AttemptNumber,
+			MaxAttempts:    d.MaxAttempts,
+			CreatedAt:      d.CreatedAt.Format(time.RFC3339),
+			DeliveredAt:    deliveredAt,
+		})
+	}
+
+	return &GetJobWebhookDeliveriesOutput{
+		Body: struct {
+			JobID      string                       `json:"job_id" doc:"Job ID"`
+			Deliveries []JobWebhookDeliveryResponse `json:"deliveries" doc:"Webhook deliveries for this job"`
+		}{
+			JobID:      input.ID,
+			Deliveries: responses,
+		},
+	}, nil
+}
+
+// GetJobResultsRaw handles job results with format-aware responses.
+// This is a raw HTTP handler (not Huma) to support different Content-Types.
+func (h *JobHandler) GetJobResultsRaw(w http.ResponseWriter, r *http.Request) {
+	// Get user from context (set by auth middleware)
+	claims := mw.GetUserClaims(r.Context())
+	if claims == nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	userID := claims.UserID
+
+	// Get job ID from URL
+	jobID := chi.URLParam(r, "id")
+	if jobID == "" {
+		http.Error(w, `{"error":"job ID required"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Parse query parameters
+	merge := r.URL.Query().Get("merge") == "true"
+	format := ParseOutputFormat(r.URL.Query().Get("format"))
+
+	// Verify job exists and belongs to user
+	job, err := h.jobSvc.GetJob(r.Context(), userID, jobID)
+	if err != nil {
+		http.Error(w, `{"error":"failed to get job"}`, http.StatusInternalServerError)
+		return
+	}
+	if job == nil {
+		http.Error(w, `{"error":"job not found"}`, http.StatusNotFound)
+		return
+	}
+
+	// Get results
+	results, err := h.jobSvc.GetJobResults(r.Context(), userID, jobID)
+	if err != nil {
+		http.Error(w, `{"error":"failed to get results"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// For JSON format, return full structured response (same as before)
+	if format == FormatJSON {
+		w.Header().Set("Content-Type", format.ContentType())
+
+		if merge {
+			resp := struct {
+				JobID     string         `json:"job_id"`
+				Status    string         `json:"status"`
+				PageCount int            `json:"page_count"`
+				Merged    map[string]any `json:"merged"`
+			}{
+				JobID:     job.ID,
+				Status:    string(job.Status),
+				PageCount: len(results),
+				Merged:    collectAllResults(results),
+			}
+			if err := json.NewEncoder(w).Encode(resp); err != nil {
+				http.Error(w, `{"error":"failed to encode response"}`, http.StatusInternalServerError)
+			}
+		} else {
+			var entries []JobResultEntry
+			for _, r := range results {
+				entries = append(entries, JobResultEntry{
+					ID:   r.ID,
+					URL:  r.URL,
+					Data: json.RawMessage(r.DataJSON),
+				})
+			}
+			resp := struct {
+				JobID     string           `json:"job_id"`
+				Status    string           `json:"status"`
+				PageCount int              `json:"page_count"`
+				Results   []JobResultEntry `json:"results"`
+			}{
+				JobID:     job.ID,
+				Status:    string(job.Status),
+				PageCount: len(results),
+				Results:   entries,
+			}
+			if err := json.NewEncoder(w).Encode(resp); err != nil {
+				http.Error(w, `{"error":"failed to encode response"}`, http.StatusInternalServerError)
+			}
+		}
+		return
+	}
+
+	// For JSONL and YAML formats, output just the data
+	w.Header().Set("Content-Type", format.ContentType())
+
+	if merge {
+		merged := collectAllResults(results)
+		data, err := FormatMergedResults(merged, format)
+		if err != nil {
+			http.Error(w, `{"error":"failed to format results"}`, http.StatusInternalServerError)
+			return
+		}
+		w.Write(data)
+	} else {
+		var entries []JobResultEntry
+		for _, r := range results {
+			entries = append(entries, JobResultEntry{
+				ID:   r.ID,
+				URL:  r.URL,
+				Data: json.RawMessage(r.DataJSON),
+			})
+		}
+		data, err := FormatResults(entries, format)
+		if err != nil {
+			http.Error(w, `{"error":"failed to format results"}`, http.StatusInternalServerError)
+			return
+		}
+		w.Write(data)
+	}
 }
 
 // GetJobResultsDownloadInput represents job results download request.

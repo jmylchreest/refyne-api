@@ -8,6 +8,7 @@ import {
 import { notFound } from 'next/navigation';
 import defaultMdxComponents from 'fumadocs-ui/mdx';
 import { APIPage } from '@/components/api-page';
+import { RefyneText } from '@/components/refyne-logo';
 
 export default async function Page(props: {
   params: Promise<{ slug?: string[] }>;
@@ -23,7 +24,7 @@ export default async function Page(props: {
       <DocsTitle>{page.data.title}</DocsTitle>
       <DocsDescription>{page.data.description}</DocsDescription>
       <DocsBody>
-        <MDX components={{ ...defaultMdxComponents, APIPage }} />
+        <MDX components={{ ...defaultMdxComponents, APIPage, Refyne: RefyneText }} />
       </DocsBody>
     </DocsPage>
   );

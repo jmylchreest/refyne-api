@@ -159,9 +159,43 @@ export interface JobResultsResponse {
   merged?: Record<string, unknown>;
 }
 
-export async function getJobResults(id: string, merge = false) {
-  const query = merge ? '?merge=true' : '';
+export type OutputFormat = 'json' | 'jsonl' | 'yaml';
+
+export async function getJobResults(id: string, merge = false, format: OutputFormat = 'json') {
+  const params = new URLSearchParams();
+  if (merge) params.set('merge', 'true');
+  if (format !== 'json') params.set('format', format);
+  const query = params.toString() ? `?${params.toString()}` : '';
   return request<JobResultsResponse>('GET', `/api/v1/jobs/${id}/results${query}`);
+}
+
+// Get job results as raw text (for JSONL/YAML formats)
+export async function getJobResultsRaw(id: string, merge = false, format: OutputFormat = 'json'): Promise<string> {
+  const headers: Record<string, string> = {};
+
+  if (getToken) {
+    const token = await getToken();
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+  }
+
+  const params = new URLSearchParams();
+  if (merge) params.set('merge', 'true');
+  params.set('format', format);
+  const query = `?${params.toString()}`;
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/jobs/${id}/results${query}`, {
+    method: 'GET',
+    headers,
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw { error: error.error || `Request failed (${response.status})`, status: response.status } as ApiError;
+  }
+
+  return response.text();
 }
 
 // API Keys
@@ -231,14 +265,38 @@ export interface Job {
   type: 'extract' | 'crawl';
   status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
   url: string;
+  urls_queued: number;
   page_count: number;
   token_usage_input: number;
   token_usage_output: number;
-  cost_credits: number;
+  cost_usd: number;
   error_message?: string;
+  error_category?: string;
   started_at?: string;
   completed_at?: string;
   created_at: string;
+}
+
+export interface JobWebhookDelivery {
+  id: string;
+  webhook_id?: string;
+  event_type: string;
+  url: string;
+  status_code?: number;
+  response_time_ms?: number;
+  status: 'pending' | 'success' | 'failed' | 'retrying';
+  error_message?: string;
+  attempt_number: number;
+  max_attempts: number;
+  created_at: string;
+  delivered_at?: string;
+}
+
+export async function getJobWebhookDeliveries(jobId: string) {
+  return request<{ job_id: string; deliveries: JobWebhookDelivery[] }>(
+    'GET',
+    `/api/v1/jobs/${jobId}/webhook-deliveries`
+  );
 }
 
 export interface CreateCrawlJobInput {
@@ -639,5 +697,83 @@ export async function updateSavedSite(id: string, data: UpdateSavedSiteInput) {
 
 export async function deleteSavedSite(id: string) {
   return request<{ success: boolean }>('DELETE', `/api/v1/sites/${id}`);
+}
+
+// Webhooks
+export interface Webhook {
+  id: string;
+  name: string;
+  url: string;
+  has_secret: boolean;
+  events: string[];
+  headers?: WebhookHeader[];
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WebhookHeader {
+  name: string;
+  value: string;
+}
+
+export interface WebhookInput {
+  name: string;
+  url: string;
+  secret?: string;
+  events?: string[];
+  headers?: WebhookHeader[];
+  is_active: boolean;
+}
+
+export interface WebhookDelivery {
+  id: string;
+  webhook_id?: string;
+  job_id: string;
+  event_type: string;
+  url: string;
+  status_code?: number;
+  response_time_ms?: number;
+  status: 'pending' | 'success' | 'failed' | 'retrying';
+  error_message?: string;
+  attempt_number: number;
+  max_attempts: number;
+  next_retry_at?: string;
+  created_at: string;
+  delivered_at?: string;
+}
+
+export async function listWebhooks() {
+  return request<{ webhooks: Webhook[] }>('GET', '/api/v1/webhooks');
+}
+
+export async function getWebhook(id: string) {
+  return request<Webhook>('GET', `/api/v1/webhooks/${id}`);
+}
+
+export async function createWebhook(data: WebhookInput) {
+  return request<Webhook>('POST', '/api/v1/webhooks', data);
+}
+
+export async function updateWebhook(id: string, data: WebhookInput) {
+  return request<Webhook>('PUT', `/api/v1/webhooks/${id}`, data);
+}
+
+export async function deleteWebhook(id: string) {
+  return request<{ success: boolean }>('DELETE', `/api/v1/webhooks/${id}`);
+}
+
+export async function listWebhookDeliveries(webhookId: string, limit = 50, offset = 0) {
+  return request<{ deliveries: WebhookDelivery[] }>(
+    'GET',
+    `/api/v1/webhooks/${webhookId}/deliveries?limit=${limit}&offset=${offset}`
+  );
+}
+
+export async function listJobWebhookDeliveries(jobId: string) {
+  return request<{ deliveries: WebhookDelivery[] }>(
+    'GET',
+    `/api/v1/jobs/${jobId}/webhook-deliveries`
+  );
 }
 

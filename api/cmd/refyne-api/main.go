@@ -22,6 +22,7 @@ import (
 	"github.com/jmylchreest/refyne-api/internal/auth"
 	"github.com/jmylchreest/refyne-api/internal/config"
 	"github.com/jmylchreest/refyne-api/internal/constants"
+	"github.com/jmylchreest/refyne-api/internal/crypto"
 	"github.com/jmylchreest/refyne-api/internal/database"
 	"github.com/jmylchreest/refyne-api/internal/http/handlers"
 	"github.com/jmylchreest/refyne-api/internal/http/mw"
@@ -281,14 +282,15 @@ func main() {
 		protectedAPI := humachi.New(r, protectedConfig)
 
 		// Job list and status routes (no quota check needed)
-		jobHandler := handlers.NewJobHandler(services.Job, services.Storage)
+		jobHandler := handlers.NewJobHandlerWithWebhook(services.Job, services.Storage, services.Webhook)
 		huma.Get(protectedAPI, "/api/v1/jobs", jobHandler.ListJobs)
 		huma.Get(protectedAPI, "/api/v1/jobs/{id}", jobHandler.GetJob)
-		huma.Get(protectedAPI, "/api/v1/jobs/{id}/results", jobHandler.GetJobResults)
 		huma.Get(protectedAPI, "/api/v1/jobs/{id}/crawl-map", jobHandler.GetCrawlMap)
 		huma.Get(protectedAPI, "/api/v1/jobs/{id}/download", jobHandler.GetJobResultsDownload)
+		huma.Get(protectedAPI, "/api/v1/jobs/{id}/webhooks", jobHandler.GetJobWebhookDeliveries)
 
-		// SSE streaming for job results
+		// Raw HTTP handlers for format-aware responses (non-JSON content types)
+		r.Get("/api/v1/jobs/{id}/results", jobHandler.GetJobResultsRaw)
 		r.Get("/api/v1/jobs/{id}/stream", jobHandler.StreamResults)
 
 		// Usage routes
@@ -348,6 +350,19 @@ func main() {
 		huma.Post(protectedAPI, "/api/v1/sites", savedSitesHandler.CreateSavedSite)
 		huma.Put(protectedAPI, "/api/v1/sites/{id}", savedSitesHandler.UpdateSavedSite)
 		huma.Delete(protectedAPI, "/api/v1/sites/{id}", savedSitesHandler.DeleteSavedSite)
+
+		// Webhook management routes
+		var webhookEncryptor *crypto.Encryptor
+		if len(cfg.EncryptionKey) > 0 {
+			webhookEncryptor, _ = crypto.NewEncryptor(cfg.EncryptionKey)
+		}
+		webhookHandler := handlers.NewWebhookHandler(repos.Webhook, repos.WebhookDelivery, webhookEncryptor)
+		huma.Get(protectedAPI, "/api/v1/webhooks", webhookHandler.ListWebhooks)
+		huma.Get(protectedAPI, "/api/v1/webhooks/{id}", webhookHandler.GetWebhook)
+		huma.Post(protectedAPI, "/api/v1/webhooks", webhookHandler.CreateWebhook)
+		huma.Put(protectedAPI, "/api/v1/webhooks/{id}", webhookHandler.UpdateWebhook)
+		huma.Delete(protectedAPI, "/api/v1/webhooks/{id}", webhookHandler.DeleteWebhook)
+		huma.Get(protectedAPI, "/api/v1/webhooks/{id}/deliveries", webhookHandler.ListWebhookDeliveries)
 	})
 
 	// Schema routes that require schema_custom feature

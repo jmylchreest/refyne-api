@@ -109,7 +109,8 @@ type llmCallResult struct {
 }
 
 // Analyze fetches and analyzes a URL to generate schema suggestions.
-func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input AnalyzeInput, tier string) (*AnalyzeOutput, error) {
+// The byokAllowed parameter comes from JWT claims and indicates if user has the "byok" feature.
+func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input AnalyzeInput, tier string, byokAllowed bool) (*AnalyzeOutput, error) {
 	startTime := time.Now()
 	requestID := ulid.Make().String()
 
@@ -122,12 +123,13 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 		"url", targetURL,
 		"depth", input.Depth,
 		"tier", tier,
+		"byok_allowed", byokAllowed,
 		"cleaner", "noop (fallback: trafilatura->html)",
 	)
 
 	// Get LLM config for analysis early (needed for error recording)
-	s.logger.Debug("resolving LLM config", "request_id", requestID, "user_id", userID, "tier", tier)
-	llmConfig, isBYOK := s.resolveLLMConfig(ctx, userID, tier, requestID)
+	s.logger.Debug("resolving LLM config", "request_id", requestID, "user_id", userID, "tier", tier, "byok_allowed", byokAllowed)
+	llmConfig, isBYOK := s.resolveLLMConfig(ctx, userID, tier, requestID, byokAllowed)
 	s.logger.Debug("LLM config resolved",
 		"request_id", requestID,
 		"user_id", userID,
@@ -1055,7 +1057,18 @@ func (s *AnalyzerService) parsePageType(pt string) models.PageType {
 
 // resolveLLMConfig determines which LLM configuration to use for analysis.
 // Returns (config, isBYOK) where isBYOK is true if using user's own key.
-func (s *AnalyzerService) resolveLLMConfig(ctx context.Context, userID, tier, requestID string) (*LLMConfigInput, bool) {
+// The byokAllowed parameter comes from JWT claims and indicates if user has the "byok" feature.
+func (s *AnalyzerService) resolveLLMConfig(ctx context.Context, userID, tier, requestID string, byokAllowed bool) (*LLMConfigInput, bool) {
+	// BYOK is only allowed if the user has the feature from their JWT claims
+	if !byokAllowed {
+		s.logger.Debug("BYOK not allowed for user (no byok feature) for analysis, using system config",
+			"request_id", requestID,
+			"user_id", userID,
+			"tier", tier,
+		)
+		return s.getDefaultAnalysisConfig(tier), false
+	}
+
 	// 1. Check user's fallback chain first (new system)
 	config := s.buildUserFallbackChainConfig(ctx, userID)
 	if config != nil {

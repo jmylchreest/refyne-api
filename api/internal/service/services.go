@@ -39,7 +39,6 @@ func NewServices(cfg *config.Config, repos *repository.Repositories, logger *slo
 	jobSvc := NewJobService(cfg, repos, logger)
 	apiKeySvc := NewAPIKeyService(repos, logger)
 	usageSvc := NewUsageService(repos, logger)
-	webhookSvc := NewWebhookService(logger)
 	schemaSvc := NewSchemaService(repos, logger)
 
 	// Create billing config with defaults
@@ -73,6 +72,10 @@ func NewServices(cfg *config.Config, repos *repository.Repositories, logger *slo
 	if len(cfg.EncryptionKey) > 0 {
 		encryptor, _ = crypto.NewEncryptor(cfg.EncryptionKey)
 	}
+
+	// Create webhook service with tracking and encryption support
+	webhookSvc := NewWebhookService(logger, repos.Webhook, repos.WebhookDelivery, encryptor)
+
 	adminSvc := NewAdminServiceWithClerk(repos, encryptor, cfg.ClerkSecretKey, logger)
 	analyzerSvc := NewAnalyzerServiceWithBilling(cfg, repos, billingSvc, logger)
 	userLLMSvc := NewUserLLMService(repos, encryptor, logger)

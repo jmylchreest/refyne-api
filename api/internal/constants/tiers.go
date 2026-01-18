@@ -20,6 +20,9 @@ const (
 type TierLimits struct {
 	// MonthlyExtractions is the max extractions per month (0 = unlimited)
 	MonthlyExtractions int
+	// MonthlyBYOKExtractions is the max BYOK extractions per month (0 = unlimited)
+	// Only applies when BYOKEnabled is true
+	MonthlyBYOKExtractions int
 	// MaxPagesPerCrawl is the max pages per crawl job (0 = unlimited)
 	MaxPagesPerCrawl int
 	// MaxConcurrentJobs is the max concurrent jobs (0 = unlimited)
@@ -38,40 +41,44 @@ type TierLimits struct {
 // To change tier limits, modify this map.
 var Tiers = map[string]TierLimits{
 	TierFree: {
-		MonthlyExtractions: 100,
-		MaxPagesPerCrawl:   10,
-		MaxConcurrentJobs:  1,
-		RequestsPerMinute:  10,
-		WebhooksEnabled:    false,
-		BYOKEnabled:        false,
-		AntiBotEnabled:     false,
+		MonthlyExtractions:     100,
+		MonthlyBYOKExtractions: 0, // BYOK not available on free tier
+		MaxPagesPerCrawl:       10,
+		MaxConcurrentJobs:      1,
+		RequestsPerMinute:      10,
+		WebhooksEnabled:        false,
+		BYOKEnabled:            false,
+		AntiBotEnabled:         false,
 	},
 	TierStandard: {
-		MonthlyExtractions: 1000,
-		MaxPagesPerCrawl:   50,
-		MaxConcurrentJobs:  3,
-		RequestsPerMinute:  60,
-		WebhooksEnabled:    true,
-		BYOKEnabled:        true,
-		AntiBotEnabled:     false,
+		MonthlyExtractions:     1000,
+		MonthlyBYOKExtractions: 0, // Unlimited BYOK extractions
+		MaxPagesPerCrawl:       50,
+		MaxConcurrentJobs:      3,
+		RequestsPerMinute:      60,
+		WebhooksEnabled:        true,
+		BYOKEnabled:            true,
+		AntiBotEnabled:         false,
 	},
 	TierPro: {
-		MonthlyExtractions: 0, // Unlimited
-		MaxPagesPerCrawl:   500,
-		MaxConcurrentJobs:  10,
-		RequestsPerMinute:  60,
-		WebhooksEnabled:    true,
-		BYOKEnabled:        true,
-		AntiBotEnabled:     true,
+		MonthlyExtractions:     0, // Unlimited
+		MonthlyBYOKExtractions: 0, // Unlimited
+		MaxPagesPerCrawl:       500,
+		MaxConcurrentJobs:      10,
+		RequestsPerMinute:      60,
+		WebhooksEnabled:        true,
+		BYOKEnabled:            true,
+		AntiBotEnabled:         true,
 	},
 	TierSelfHosted: {
-		MonthlyExtractions: 0, // Unlimited
-		MaxPagesPerCrawl:   0, // Unlimited
-		MaxConcurrentJobs:  0, // Unlimited
-		RequestsPerMinute:  0, // Unlimited
-		WebhooksEnabled:    true,
-		BYOKEnabled:        true,
-		AntiBotEnabled:     true,
+		MonthlyExtractions:     0, // Unlimited
+		MonthlyBYOKExtractions: 0, // Unlimited
+		MaxPagesPerCrawl:       0, // Unlimited
+		MaxConcurrentJobs:      0, // Unlimited
+		RequestsPerMinute:      0, // Unlimited
+		WebhooksEnabled:        true,
+		BYOKEnabled:            true,
+		AntiBotEnabled:         true,
 	},
 }
 

@@ -3,6 +3,7 @@
   "pages": [
     "extraction",
     "crawling",
-    "schemas"
+    "schemas",
+    "webhooks"
   ]
 }

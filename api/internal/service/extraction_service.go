@@ -98,10 +98,11 @@ type ExtractMeta struct {
 
 // ExtractContext holds context for billing tracking.
 type ExtractContext struct {
-	UserID   string
-	Tier     string // From JWT claims
-	SchemaID string
-	IsBYOK   bool
+	UserID      string
+	Tier        string // From JWT claims
+	SchemaID    string
+	IsBYOK      bool
+	BYOKAllowed bool // From JWT claims - whether user has the "byok" feature
 }
 
 // Extract performs a single-page extraction.
@@ -140,7 +141,8 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 	}
 
 	// Get the list of LLM configs to try (using tier-specific chain)
-	llmConfigs, isBYOK := s.resolveLLMConfigsWithFallback(ctx, userID, input.LLMConfig, ectx.Tier)
+	// BYOKAllowed comes from JWT claims - this is the authoritative check for BYOK eligibility
+	llmConfigs, isBYOK := s.resolveLLMConfigsWithFallback(ctx, userID, input.LLMConfig, ectx.Tier, ectx.BYOKAllowed)
 	ectx.IsBYOK = isBYOK
 
 	// Estimate cost (triggers pricing cache refresh if needed) and check balance for non-BYOK
@@ -382,8 +384,19 @@ func (s *ExtractionService) handleSuccessfulExtraction(
 // resolveLLMConfigsWithFallback returns the list of LLM configs to try, in order.
 // Returns (configs, isBYOK) where isBYOK is true if user provided their own config.
 // The tier parameter is used to select a tier-specific fallback chain if configured.
-func (s *ExtractionService) resolveLLMConfigsWithFallback(ctx context.Context, userID string, override *LLMConfigInput, tier string) ([]*LLMConfigInput, bool) {
-	// If override provided with provider, use it directly (no fallback)
+// The byokAllowed parameter comes from JWT claims and indicates if user has the "byok" feature.
+func (s *ExtractionService) resolveLLMConfigsWithFallback(ctx context.Context, userID string, override *LLMConfigInput, tier string, byokAllowed bool) ([]*LLMConfigInput, bool) {
+	// BYOK is only allowed if the user has the feature from their JWT claims
+	// This handles cases like downgrades where they may have keys configured but no longer have access
+	if !byokAllowed {
+		s.logger.Debug("BYOK not allowed for user (no byok feature), using system config",
+			"user_id", userID,
+			"tier", tier,
+		)
+		return s.getDefaultLLMConfigsForTier(tier), false
+	}
+
+	// If override provided with provider, use it directly (user has BYOK feature)
 	if override != nil && override.Provider != "" {
 		return []*LLMConfigInput{override}, true
 	}
@@ -539,11 +552,13 @@ func (s *ExtractionService) buildUserFallbackChain(ctx context.Context, userID s
 
 // CrawlInput represents crawl input.
 type CrawlInput struct {
-	JobID    string          `json:"job_id,omitempty"`    // Job ID for logging/tracking
-	URL      string          `json:"url"`
-	SeedURLs []string        `json:"seed_urls,omitempty"` // Additional seed URLs (from sitemap discovery)
-	Schema   json.RawMessage `json:"schema"`
-	Options  CrawlOptions    `json:"options"`
+	JobID       string          `json:"job_id,omitempty"`    // Job ID for logging/tracking
+	URL         string          `json:"url"`
+	SeedURLs    []string        `json:"seed_urls,omitempty"` // Additional seed URLs (from sitemap discovery)
+	Schema      json.RawMessage `json:"schema"`
+	Options     CrawlOptions    `json:"options"`
+	Tier        string          `json:"tier,omitempty"`         // User's tier for tier-specific processing
+	BYOKAllowed bool            `json:"byok_allowed,omitempty"` // Whether user has the "byok" feature
 }
 
 // Note: CrawlOptions is defined in job_service.go to avoid duplication
@@ -582,8 +597,8 @@ type CrawlResult struct {
 
 // Crawl performs a multi-page crawl extraction.
 func (s *ExtractionService) Crawl(ctx context.Context, userID string, input CrawlInput) (*CrawlResult, error) {
-	// Resolve LLM configuration
-	llmCfg, isBYOK, err := s.resolveLLMConfig(ctx, userID, nil)
+	// Resolve LLM configuration with BYOK eligibility check
+	llmCfg, isBYOK, err := s.resolveLLMConfigWithBYOK(ctx, userID, nil, input.Tier, input.BYOKAllowed)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve LLM config: %w", err)
 	}
@@ -788,8 +803,8 @@ type CrawlCallbacks struct {
 // This allows incremental processing of results (e.g., saving to database as they come in)
 // and tracking of URL discovery for progress reporting.
 func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string, input CrawlInput, callbacks CrawlCallbacks) (*CrawlResult, error) {
-	// Resolve LLM configuration
-	llmCfg, isBYOK, err := s.resolveLLMConfig(ctx, userID, nil)
+	// Resolve LLM configuration with BYOK eligibility check
+	llmCfg, isBYOK, err := s.resolveLLMConfigWithBYOK(ctx, userID, nil, input.Tier, input.BYOKAllowed)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve LLM config: %w", err)
 	}
@@ -1166,8 +1181,26 @@ func (s *ExtractionService) handleLLMError(err error, llmCfg *LLMConfigInput, is
 // resolveLLMConfig determines which LLM configuration to use.
 // This is a simpler version that returns a single config (for Crawl operations).
 // Returns (config, isBYOK, error) where isBYOK is true if the user is using their own API key.
+// Note: This version does NOT check BYOK eligibility - use resolveLLMConfigWithBYOK for that.
 func (s *ExtractionService) resolveLLMConfig(ctx context.Context, userID string, override *LLMConfigInput) (*LLMConfigInput, bool, error) {
-	// If override provided with provider, use it (assume BYOK since user provided it)
+	// Default to not allowing BYOK when no context available
+	return s.resolveLLMConfigWithBYOK(ctx, userID, override, "", false)
+}
+
+// resolveLLMConfigWithBYOK determines which LLM configuration to use with BYOK eligibility checking.
+// Returns (config, isBYOK, error) where isBYOK is true if the user is using their own API key.
+// The byokAllowed parameter comes from JWT claims and indicates if user has the "byok" feature.
+func (s *ExtractionService) resolveLLMConfigWithBYOK(ctx context.Context, userID string, override *LLMConfigInput, tier string, byokAllowed bool) (*LLMConfigInput, bool, error) {
+	// BYOK is only allowed if the user has the feature from their JWT claims
+	if !byokAllowed {
+		s.logger.Debug("BYOK not allowed for user (no byok feature) for crawl, using system config",
+			"user_id", userID,
+			"tier", tier,
+		)
+		return s.getDefaultLLMConfig(), false, nil
+	}
+
+	// If override provided with provider, use it (user has BYOK feature)
 	if override != nil && override.Provider != "" {
 		return override, true, nil
 	}
