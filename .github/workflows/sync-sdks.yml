@@ -1,0 +1,69 @@
+# Sync SDK repositories when OpenAPI spec changes
+# Triggers each SDK repo to regenerate types from the updated spec
+name: Sync SDKs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/openapi.json'
+  workflow_dispatch:
+    inputs:
+      sdk:
+        description: 'SDK to sync (all, ts, go, python, rust)'
+        required: false
+        default: 'all'
+
+jobs:
+  trigger-sdk-sync:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        sdk: [refyne-sdk-ts, refyne-sdk-go, refyne-sdk-python, refyne-sdk-rust]
+    steps:
+      - name: Check if SDK should be triggered
+        id: check
+        run: |
+          SDK="${{ matrix.sdk }}"
+          INPUT="${{ github.event.inputs.sdk }}"
+
+          # If workflow_dispatch, check if this SDK should run
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ "$INPUT" = "all" ]; then
+              echo "should_run=true" >> $GITHUB_OUTPUT
+            elif [ "$INPUT" = "ts" ] && [ "$SDK" = "refyne-sdk-ts" ]; then
+              echo "should_run=true" >> $GITHUB_OUTPUT
+            elif [ "$INPUT" = "go" ] && [ "$SDK" = "refyne-sdk-go" ]; then
+              echo "should_run=true" >> $GITHUB_OUTPUT
+            elif [ "$INPUT" = "python" ] && [ "$SDK" = "refyne-sdk-python" ]; then
+              echo "should_run=true" >> $GITHUB_OUTPUT
+            elif [ "$INPUT" = "rust" ] && [ "$SDK" = "refyne-sdk-rust" ]; then
+              echo "should_run=true" >> $GITHUB_OUTPUT
+            else
+              echo "should_run=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            # Push event - trigger all
+            echo "should_run=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Trigger SDK workflow
+        if: steps.check.outputs.should_run == 'true'
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.SDK_SYNC_TOKEN }}
+          repository: jmylchreest/${{ matrix.sdk }}
+          event-type: openapi-updated
+          client-payload: |
+            {
+              "ref": "${{ github.ref }}",
+              "sha": "${{ github.sha }}",
+              "api_version": "${{ github.event.repository.default_branch }}"
+            }
+
+      - name: Log trigger
+        if: steps.check.outputs.should_run == 'true'
+        run: |
+          echo "Triggered sync for ${{ matrix.sdk }}"
+          echo "  Ref: ${{ github.ref }}"
+          echo "  SHA: ${{ github.sha }}"

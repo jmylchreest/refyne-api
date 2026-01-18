@@ -218,10 +218,13 @@ func main() {
 		AllowedOrigins:   cfg.CORSOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-ID"},
-		ExposedHeaders:   []string{"Link", "X-Request-ID", "X-RateLimit-Limit", "X-RateLimit-Remaining", "Retry-After", "Cache-Control"},
+		ExposedHeaders:   []string{"Link", "X-Request-ID", "X-RateLimit-Limit", "X-RateLimit-Remaining", "Retry-After", "Cache-Control", "X-API-Version"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
+
+	// API version header (for SDK compatibility checks)
+	router.Use(mw.APIVersion())
 
 	// Cache-Control headers for response caching
 	router.Use(mw.Cache(mw.DefaultCacheConfig()))
