@@ -4,9 +4,11 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 
+	"github.com/jmylchreest/refyne-api/internal/auth"
 	"github.com/jmylchreest/refyne-api/internal/config"
 	"github.com/jmylchreest/refyne-api/internal/crypto"
 	"github.com/jmylchreest/refyne-api/internal/llm"
@@ -31,6 +33,7 @@ type Services struct {
 	UserLLM    *UserLLMService
 	Sitemap    *SitemapService
 	Pricing    *PricingService
+	TierSync   *TierSyncService
 }
 
 // NewServices creates all service instances.
@@ -89,6 +92,19 @@ func NewServices(cfg *config.Config, repos *repository.Repositories, logger *slo
 	// Create sitemap service for URL discovery
 	sitemapSvc := NewSitemapService(logger)
 
+	// Create tier sync service for syncing visibility/display names from Clerk
+	var tierSyncSvc *TierSyncService
+	if cfg.ClerkSecretKey != "" {
+		clerkClient := auth.NewClerkBackendClient(cfg.ClerkSecretKey)
+		tierSyncSvc = NewTierSyncService(clerkClient, logger)
+
+		// Sync tier metadata from Clerk on startup
+		if err := tierSyncSvc.SyncFromClerk(context.Background()); err != nil {
+			// Log but don't fail startup - we have hardcoded defaults
+			logger.Warn("failed to sync tier metadata from Clerk on startup", "error", err)
+		}
+	}
+
 	return &Services{
 		Auth:       authSvc,
 		Extraction: extractionSvc,
@@ -106,6 +122,7 @@ func NewServices(cfg *config.Config, repos *repository.Repositories, logger *slo
 		UserLLM:    userLLMSvc,
 		Sitemap:    sitemapSvc,
 		Pricing:    pricingSvc,
+		TierSync:   tierSyncSvc,
 	}, nil
 }
 

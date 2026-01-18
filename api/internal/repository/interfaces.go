@@ -65,6 +65,8 @@ type UsageRepository interface {
 	Create(ctx context.Context, record *models.UsageRecord) error
 	GetByUserID(ctx context.Context, userID string, startDate, endDate string) ([]*models.UsageRecord, error)
 	GetSummary(ctx context.Context, userID string, period string) (*UsageSummary, error)
+	// GetSummaryByDateRange returns usage summary for a specific date range (used for subscription periods)
+	GetSummaryByDateRange(ctx context.Context, userID string, startDate, endDate time.Time) (*UsageSummary, error)
 	GetMonthlySpend(ctx context.Context, userID string, month time.Time) (float64, error)
 	CountByUserAndDateRange(ctx context.Context, userID string, startDate, endDate string) (int, error)
 }
@@ -89,6 +91,8 @@ type BalanceRepository interface {
 	Upsert(ctx context.Context, balance *models.UserBalance) error
 	// GetAvailableBalance returns balance considering expired credits
 	GetAvailableBalance(ctx context.Context, userID string, now time.Time) (float64, error)
+	// UpdateSubscriptionPeriod updates the subscription billing period dates
+	UpdateSubscriptionPeriod(ctx context.Context, userID string, periodStart, periodEnd time.Time) error
 }
 
 // CreditTransactionRepository defines methods for credit transaction data access.

@@ -9,11 +9,13 @@ import "time"
 
 // UserBalance tracks a user's USD balance for API usage.
 type UserBalance struct {
-	UserID        string    `json:"user_id"`
-	BalanceUSD    float64   `json:"balance_usd"`
-	LifetimeAdded float64   `json:"lifetime_added"`
-	LifetimeSpent float64   `json:"lifetime_spent"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	UserID        string     `json:"user_id"`
+	BalanceUSD    float64    `json:"balance_usd"`
+	LifetimeAdded float64    `json:"lifetime_added"`
+	LifetimeSpent float64    `json:"lifetime_spent"`
+	PeriodStart   *time.Time `json:"period_start,omitempty"` // Current billing period start (from Clerk subscription)
+	PeriodEnd     *time.Time `json:"period_end,omitempty"`   // Current billing period end (from Clerk subscription)
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 // ========================================

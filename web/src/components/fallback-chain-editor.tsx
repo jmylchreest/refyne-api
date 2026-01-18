@@ -1,20 +1,15 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { ModelSelector } from '@/components/model-selector';
 import { getModelDefaults } from '@/lib/model-defaults';
-import { ChevronUp, ChevronDown, Trash2, Plus, Settings2 } from 'lucide-react';
-
-const LLM_PROVIDERS = [
-  { value: 'openrouter', label: 'OpenRouter' },
-  { value: 'anthropic', label: 'Anthropic' },
-  { value: 'openai', label: 'OpenAI' },
-  { value: 'ollama', label: 'Ollama' },
-] as const;
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { ChevronUp, ChevronDown, Trash2, Plus, Settings2, AlertCircle } from 'lucide-react';
+import type { LLMProvider } from '@/lib/api';
 
 const DEFAULT_MODELS: Record<string, string> = {
   openrouter: 'google/gemini-2.0-flash-001',
@@ -23,10 +18,8 @@ const DEFAULT_MODELS: Record<string, string> = {
   ollama: 'llama3.2',
 };
 
-type Provider = typeof LLM_PROVIDERS[number]['value'];
-
 export interface ChainEntry {
-  provider: Provider;
+  provider: string;
   model: string;
   temperature?: number;
   max_tokens?: number;
@@ -53,6 +46,10 @@ interface FallbackChainEditorProps {
   getModelStatusBadge?: (provider: string, model: string) => React.ReactNode;
   /** Compact mode for smaller display */
   compact?: boolean;
+  /** Disable editing (show read-only view with locked state) */
+  disabled?: boolean;
+  /** Available providers from API (based on user features) */
+  availableProviders?: LLMProvider[];
 }
 
 export function FallbackChainEditor({
@@ -62,25 +59,45 @@ export function FallbackChainEditor({
   useUserEndpoint = false,
   getModelStatusBadge,
   compact = false,
+  disabled = false,
+  availableProviders = [],
 }: FallbackChainEditorProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState<ChainEntry[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [expandedSettings, setExpandedSettings] = useState<Set<number>>(new Set());
 
-  const getProviderLabel = (provider: string) => {
-    const p = LLM_PROVIDERS.find(lp => lp.value === provider);
-    return p ? p.label : provider;
+  // Create a set of available provider names for quick lookup
+  const availableProviderNames = new Set(availableProviders.map(p => p.name));
+
+  const getProviderLabel = (providerName: string) => {
+    const p = availableProviders.find(lp => lp.name === providerName);
+    return p ? p.display_name : providerName;
+  };
+
+  const isProviderAvailable = (providerName: string) => {
+    return availableProviders.length === 0 || availableProviderNames.has(providerName);
+  };
+
+  const getProviderUnavailableReason = (providerName: string) => {
+    // If no providers loaded yet, don't show as unavailable
+    if (availableProviders.length === 0) return null;
+    if (availableProviderNames.has(providerName)) return null;
+    return `The ${providerName} provider is not available on your current plan. Upgrade to re-enable this entry.`;
   };
 
   const startEditing = () => {
-    setDraft(chain.map(e => ({
-      provider: e.provider as Provider,
-      model: e.model,
-      temperature: e.temperature,
-      max_tokens: e.max_tokens,
-      is_enabled: e.is_enabled,
-    })));
+    // Filter out entries for unavailable providers when starting to edit
+    const editableEntries = chain
+      .filter(e => isProviderAvailable(e.provider))
+      .map(e => ({
+        provider: e.provider,
+        model: e.model,
+        temperature: e.temperature,
+        max_tokens: e.max_tokens,
+        is_enabled: e.is_enabled,
+      }));
+    setDraft(editableEntries);
     setExpandedSettings(new Set());
     setIsEditing(true);
   };
@@ -92,10 +109,12 @@ export function FallbackChainEditor({
   };
 
   const addEntry = () => {
-    const defaults = getModelDefaults('openrouter', DEFAULT_MODELS.openrouter);
+    // Use the first available provider, fallback to openrouter
+    const defaultProvider = availableProviders.length > 0 ? availableProviders[0].name : 'openrouter';
+    const defaultModel = DEFAULT_MODELS[defaultProvider] || ''; // Empty if no known default
     setDraft([...draft, {
-      provider: 'openrouter',
-      model: DEFAULT_MODELS.openrouter,
+      provider: defaultProvider,
+      model: defaultModel,
       temperature: undefined, // Use defaults
       max_tokens: undefined,
       is_enabled: true,
@@ -141,10 +160,11 @@ export function FallbackChainEditor({
 
       // If provider changed, reset to default model and clear custom settings
       if (updates.provider && updates.provider !== entry.provider) {
+        const newProvider = updates.provider;
         return {
           ...entry,
-          provider: updates.provider,
-          model: DEFAULT_MODELS[updates.provider],
+          provider: newProvider,
+          model: DEFAULT_MODELS[newProvider] || '', // Empty if no known default, ModelSelector will show available models
           temperature: undefined,
           max_tokens: undefined,
         };
@@ -191,54 +211,79 @@ export function FallbackChainEditor({
   // Read-only display
   if (!isEditing) {
     return (
-      <div className="space-y-2">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-sm text-zinc-500">
-            {chain.length === 0 ? 'No chain configured' : `${chain.length} entries`}
-          </span>
-          <Button variant="outline" size="sm" className={compact ? "h-7 text-xs" : ""} onClick={startEditing}>
-            Edit Chain
-          </Button>
-        </div>
-
-        {chain.length > 0 && (
-          <div className="space-y-1">
-            {chain.map((entry, index) => {
-              const settings = getEffectiveSettings(entry);
-              return (
-                <div
-                  key={entry.id}
-                  className={`flex items-center gap-2 p-2 border rounded text-sm ${
-                    entry.is_enabled ? '' : 'opacity-50'
-                  }`}
-                >
-                  <span className="text-xs text-zinc-500 w-5">{index + 1}.</span>
-                  <span className="font-medium">{getProviderLabel(entry.provider)}</span>
-                  <code className="text-xs bg-zinc-100 dark:bg-zinc-800 px-1 rounded truncate max-w-[200px]">
-                    {entry.model}
-                  </code>
-                  {getModelStatusBadge?.(entry.provider, entry.model)}
-                  {configuredProviders && !configuredProviders.has(entry.provider) && (
-                    <Badge variant="destructive" className="text-xs">No key</Badge>
-                  )}
-                  <span className="text-xs text-zinc-400 ml-auto">
-                    T:{settings.temperature} / {settings.maxTokens}tok
-                  </span>
-                  <Badge variant={entry.is_enabled ? 'default' : 'secondary'} className="text-xs">
-                    {entry.is_enabled ? 'On' : 'Off'}
-                  </Badge>
-                </div>
-              );
-            })}
+      <TooltipProvider>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm text-zinc-500">
+              {chain.length === 0 ? 'No chain configured' : `${chain.length} entries`}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className={compact ? "h-7 text-xs" : ""}
+              onClick={startEditing}
+              disabled={disabled}
+            >
+              Edit Chain
+            </Button>
           </div>
-        )}
 
-        {chain.length === 0 && (
-          <p className="text-sm text-zinc-500 text-center py-4">
-            No fallback chain configured. System defaults will be used.
-          </p>
-        )}
-      </div>
+          {chain.length > 0 && (
+            <div className="space-y-1">
+              {chain.map((entry, index) => {
+                const settings = getEffectiveSettings(entry);
+                const providerAvailable = isProviderAvailable(entry.provider);
+                const unavailableReason = getProviderUnavailableReason(entry.provider);
+
+                return (
+                  <div
+                    key={entry.id}
+                    className={`flex items-center gap-2 p-2 border rounded text-sm ${
+                      !providerAvailable ? 'opacity-50 bg-zinc-50 dark:bg-zinc-900/50' :
+                      entry.is_enabled ? '' : 'opacity-50'
+                    }`}
+                  >
+                    <span className="text-xs text-zinc-500 w-5">{index + 1}.</span>
+                    <span className="font-medium">{getProviderLabel(entry.provider)}</span>
+                    <code className="text-xs bg-zinc-100 dark:bg-zinc-800 px-1 rounded truncate max-w-[200px]">
+                      {entry.model}
+                    </code>
+                    {getModelStatusBadge?.(entry.provider, entry.model)}
+                    {!providerAvailable && unavailableReason && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Badge variant="outline" className="text-xs gap-1 cursor-help text-amber-600 border-amber-300">
+                            <AlertCircle className="h-3 w-3" />
+                            Unavailable
+                          </Badge>
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-[250px]">
+                          <p>{unavailableReason}</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
+                    {providerAvailable && configuredProviders && !configuredProviders.has(entry.provider) && (
+                      <Badge variant="destructive" className="text-xs">No key</Badge>
+                    )}
+                    <span className="text-xs text-zinc-400 ml-auto">
+                      T:{settings.temperature} / {settings.maxTokens}tok
+                    </span>
+                    <Badge variant={entry.is_enabled && providerAvailable ? 'default' : 'secondary'} className="text-xs">
+                      {providerAvailable ? (entry.is_enabled ? 'On' : 'Off') : 'Skipped'}
+                    </Badge>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {chain.length === 0 && (
+            <p className="text-sm text-zinc-500 text-center py-4">
+              No fallback chain configured. System defaults will be used.
+            </p>
+          )}
+        </div>
+      </TooltipProvider>
     );
   }
 
@@ -277,11 +322,11 @@ export function FallbackChainEditor({
 
               <select
                 value={entry.provider}
-                onChange={(e) => updateEntry(index, { provider: e.target.value as Provider })}
+                onChange={(e) => updateEntry(index, { provider: e.target.value })}
                 className="h-8 px-2 text-sm border rounded bg-white dark:bg-zinc-900"
               >
-                {LLM_PROVIDERS.map(p => (
-                  <option key={p.value} value={p.value}>{p.label}</option>
+                {availableProviders.map(p => (
+                  <option key={p.name} value={p.name}>{p.display_name}</option>
                 ))}
               </select>
 

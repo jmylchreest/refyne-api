@@ -12,12 +12,16 @@ import (
 
 // AdminHandler handles admin endpoints.
 type AdminHandler struct {
-	adminSvc *service.AdminService
+	adminSvc    *service.AdminService
+	tierSyncSvc *service.TierSyncService
 }
 
 // NewAdminHandler creates a new admin handler.
-func NewAdminHandler(adminSvc *service.AdminService) *AdminHandler {
-	return &AdminHandler{adminSvc: adminSvc}
+func NewAdminHandler(adminSvc *service.AdminService, tierSyncSvc *service.TierSyncService) *AdminHandler {
+	return &AdminHandler{
+		adminSvc:    adminSvc,
+		tierSyncSvc: tierSyncSvc,
+	}
 }
 
 // ServiceKeyInput represents a service key in API requests.
@@ -530,5 +534,35 @@ func (h *AdminHandler) ValidateTiers(ctx context.Context, input *ValidateTiersIn
 		Body: struct {
 			Results []TierValidationResponse `json:"results"`
 		}{Results: responses},
+	}, nil
+}
+
+// SyncTiersOutput represents the sync tiers response.
+type SyncTiersOutput struct {
+	Body struct {
+		Message string `json:"message" doc:"Sync result message"`
+	}
+}
+
+// SyncTiers triggers a manual sync of tier metadata from Clerk Commerce.
+// This is useful for local development where webhooks can't reach the API.
+func (h *AdminHandler) SyncTiers(ctx context.Context, input *struct{}) (*SyncTiersOutput, error) {
+	claims := mw.GetUserClaims(ctx)
+	if claims == nil || !claims.GlobalSuperadmin {
+		return nil, huma.Error403Forbidden("superadmin access required")
+	}
+
+	if h.tierSyncSvc == nil {
+		return nil, huma.Error500InternalServerError("tier sync service not configured - check CLERK_SECRET_KEY")
+	}
+
+	if err := h.tierSyncSvc.SyncFromClerk(ctx); err != nil {
+		return nil, huma.Error500InternalServerError("failed to sync tiers: " + err.Error())
+	}
+
+	return &SyncTiersOutput{
+		Body: struct {
+			Message string `json:"message" doc:"Sync result message"`
+		}{Message: "tier metadata synced from Clerk Commerce"},
 	}, nil
 }

@@ -30,13 +30,14 @@ func NewClerkBackendClient(secretKey string) *ClerkBackendClient {
 
 // SubscriptionProduct represents a Clerk billing plan (tier).
 type SubscriptionProduct struct {
-	ID          string `json:"id"`           // e.g., "cplan_xxx"
-	Name        string `json:"name"`         // e.g., "Pro Plan"
-	Slug        string `json:"slug"`         // e.g., "pro" - used as tier name
-	Description string `json:"description"`
-	IsDefault   bool   `json:"is_default"`   // Default plan for new users
-	CreatedAt   int64  `json:"created_at"`
-	UpdatedAt   int64  `json:"updated_at"`
+	ID              string `json:"id"`               // e.g., "cplan_xxx"
+	Name            string `json:"name"`             // e.g., "Pro Plan"
+	Slug            string `json:"slug"`             // e.g., "pro" - used as tier name
+	Description     string `json:"description"`
+	IsDefault       bool   `json:"is_default"`       // Default plan for new users
+	PubliclyVisible bool   `json:"publicly_visible"` // Whether plan is displayed in pricing components
+	CreatedAt       int64  `json:"created_at"`
+	UpdatedAt       int64  `json:"updated_at"`
 }
 
 // ListPlansResponse represents the response from Clerk's billing plans API.

@@ -150,15 +150,17 @@ func (h *JobHandler) CreateCrawlJob(ctx context.Context, input *CreateCrawlJobIn
 		return nil, huma.Error401Unauthorized("unauthorized")
 	}
 
-	// Get user's tier and BYOK eligibility from claims
+	// Get user's tier and feature eligibility from claims
 	tier := "free"
 	byokAllowed := false
+	modelsCustomAllowed := false
 	if claims := mw.GetUserClaims(ctx); claims != nil {
 		if claims.Tier != "" {
 			tier = claims.Tier
 		}
-		// Check if user has the "provider_byok" feature from Clerk Commerce
+		// Check if user has features from Clerk Commerce
 		byokAllowed = claims.HasFeature("provider_byok")
+		modelsCustomAllowed = claims.HasFeature("models_custom")
 	}
 
 	result, err := h.jobSvc.CreateCrawlJob(ctx, userID, service.CreateCrawlJobInput{
@@ -177,9 +179,10 @@ func (h *JobHandler) CreateCrawlJob(ctx context.Context, input *CreateCrawlJobIn
 			ExtractFromSeeds: input.Body.Options.ExtractFromSeeds,
 			UseSitemap:       input.Body.Options.UseSitemap,
 		},
-		WebhookURL:  input.Body.WebhookURL,
-		Tier:        tier,
-		BYOKAllowed: byokAllowed,
+		WebhookURL:          input.Body.WebhookURL,
+		Tier:                tier,
+		BYOKAllowed:         byokAllowed,
+		ModelsCustomAllowed: modelsCustomAllowed,
 	})
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to create crawl job: " + err.Error())

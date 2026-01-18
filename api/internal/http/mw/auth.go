@@ -32,9 +32,51 @@ type UserClaims struct {
 }
 
 // HasFeature checks if the user has a specific feature.
-func (c *UserClaims) HasFeature(feature string) bool {
+// Supports wildcard patterns with trailing asterisk (e.g., "provider_*", "selfhosted_*").
+func (c *UserClaims) HasFeature(pattern string) bool {
+	if c == nil || len(c.Features) == 0 {
+		return false
+	}
+
+	// Wildcard match (e.g., "provider_*", "selfhosted_*")
+	if strings.HasSuffix(pattern, "_*") {
+		prefix := strings.TrimSuffix(pattern, "*")
+		for _, f := range c.Features {
+			if strings.HasPrefix(f, prefix) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Exact match
 	for _, f := range c.Features {
-		if f == feature {
+		if f == pattern {
+			return true
+		}
+	}
+	return false
+}
+
+// HasAllFeatures checks if the user has ALL specified features.
+// Each feature can be an exact match or wildcard pattern.
+func (c *UserClaims) HasAllFeatures(features []string) bool {
+	if len(features) == 0 {
+		return true
+	}
+	for _, f := range features {
+		if !c.HasFeature(f) {
+			return false
+		}
+	}
+	return true
+}
+
+// HasAnyFeature checks if the user has ANY of the specified features.
+// Each feature can be an exact match or wildcard pattern.
+func (c *UserClaims) HasAnyFeature(features []string) bool {
+	for _, f := range features {
+		if c.HasFeature(f) {
 			return true
 		}
 	}

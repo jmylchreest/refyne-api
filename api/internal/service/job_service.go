@@ -47,13 +47,14 @@ type CrawlOptions struct {
 
 // CreateCrawlJobInput represents input for creating a crawl job.
 type CreateCrawlJobInput struct {
-	URL         string          `json:"url"`
-	Schema      json.RawMessage `json:"schema"`
-	Options     CrawlOptions    `json:"options,omitempty"`
-	WebhookURL  string          `json:"webhook_url,omitempty"`
-	LLMConfig   *LLMConfigInput `json:"llm_config,omitempty"`
-	Tier        string          `json:"tier,omitempty"`         // User's tier at job creation time
-	BYOKAllowed bool            `json:"byok_allowed,omitempty"` // Whether user has the "byok" feature
+	URL                 string          `json:"url"`
+	Schema              json.RawMessage `json:"schema"`
+	Options             CrawlOptions    `json:"options,omitempty"`
+	WebhookURL          string          `json:"webhook_url,omitempty"`
+	LLMConfig           *LLMConfigInput `json:"llm_config,omitempty"`
+	Tier                string          `json:"tier,omitempty"`                  // User's tier at job creation time
+	BYOKAllowed         bool            `json:"byok_allowed,omitempty"`          // Whether user has the "provider_byok" feature
+	ModelsCustomAllowed bool            `json:"models_custom_allowed,omitempty"` // Whether user has the "models_custom" feature
 }
 
 // CreateCrawlJobOutput represents output from creating a crawl job.
@@ -107,18 +108,19 @@ func (s *JobService) CreateCrawlJob(ctx context.Context, userID string, input Cr
 
 	now := time.Now()
 	job := &models.Job{
-		ID:               ulid.Make().String(),
-		UserID:           userID,
-		Tier:             input.Tier,        // User's tier at job creation time
-		BYOKAllowed:      input.BYOKAllowed, // Whether user had BYOK feature at job creation
-		Type:             models.JobTypeCrawl,
-		Status:           models.JobStatusPending,
-		URL:              input.URL,
-		SchemaJSON:       string(input.Schema),
-		CrawlOptionsJSON: string(optionsJSON),
-		WebhookURL:       input.WebhookURL,
-		CreatedAt:        now,
-		UpdatedAt:        now,
+		ID:                  ulid.Make().String(),
+		UserID:              userID,
+		Tier:                input.Tier,                // User's tier at job creation time
+		BYOKAllowed:         input.BYOKAllowed,         // Whether user had provider_byok feature at job creation
+		ModelsCustomAllowed: input.ModelsCustomAllowed, // Whether user had models_custom feature at job creation
+		Type:                models.JobTypeCrawl,
+		Status:              models.JobStatusPending,
+		URL:                 input.URL,
+		SchemaJSON:          string(input.Schema),
+		CrawlOptionsJSON:    string(optionsJSON),
+		WebhookURL:          input.WebhookURL,
+		CreatedAt:           now,
+		UpdatedAt:           now,
 	}
 
 	if err := s.repos.Job.Create(ctx, job); err != nil {

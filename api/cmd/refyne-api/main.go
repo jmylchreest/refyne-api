@@ -96,6 +96,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Initialize LLM provider registry
+	providerRegistry := llm.InitRegistry(cfg)
+	logger.Info("provider registry initialized", "providers", providerRegistry.AllProviderNames())
+
 	// Initialize Clerk verifier for JWT validation (hosted mode)
 	var clerkVerifier *auth.ClerkVerifier
 	if cfg.ClerkIssuerURL != "" {
@@ -261,6 +265,9 @@ func main() {
 	// Health check (public, shown in docs)
 	huma.Get(api, "/api/v1/health", handlers.HealthCheck)
 
+	// Public pricing/tier info (for dynamic pricing pages)
+	huma.Get(api, "/api/v1/pricing/tiers", handlers.ListTierLimits)
+
 	// Kubernetes probes (hidden from docs - internal use only)
 	huma.Get(hiddenAPI, "/healthz", handlers.Livez)
 	readyzHandler := handlers.NewReadyzHandler(db)
@@ -268,7 +275,8 @@ func main() {
 
 	// Clerk webhook (signature verified by handler, not user auth)
 	if cfg.ClerkWebhookSecret != "" {
-		clerkWebhook := handlers.NewClerkWebhookHandler(cfg, services.Balance, logger)
+		userCleanupSvc := service.NewUserCleanupService(db, logger)
+		clerkWebhook := handlers.NewClerkWebhookHandler(cfg, services.Balance, userCleanupSvc, services.TierSync, logger)
 		router.Post("/api/v1/webhooks/clerk", clerkWebhook.HandleWebhook)
 		logger.Info("clerk webhook endpoint enabled")
 	}
@@ -301,7 +309,8 @@ func main() {
 		huma.Put(protectedAPI, "/api/v1/llm-config", handlers.NewLLMConfigHandler(services.LLMConfig).UpdateConfig)
 
 		// User LLM provider keys and fallback chain routes
-		userLLMHandler := handlers.NewUserLLMHandler(services.UserLLM, services.Admin)
+		userLLMHandler := handlers.NewUserLLMHandler(services.UserLLM, services.Admin, providerRegistry)
+		huma.Get(protectedAPI, "/api/v1/llm/providers", userLLMHandler.ListProviders)
 		huma.Get(protectedAPI, "/api/v1/llm/keys", userLLMHandler.ListServiceKeys)
 		huma.Put(protectedAPI, "/api/v1/llm/keys", userLLMHandler.UpsertServiceKey)
 		huma.Delete(protectedAPI, "/api/v1/llm/keys/{id}", userLLMHandler.DeleteServiceKey)
@@ -317,7 +326,7 @@ func main() {
 		}
 
 		// Superadmin routes (requires global_superadmin in Clerk public_metadata)
-		adminHandler := handlers.NewAdminHandler(services.Admin)
+		adminHandler := handlers.NewAdminHandler(services.Admin, services.TierSync)
 		huma.Get(protectedAPI, "/api/v1/admin/service-keys", adminHandler.ListServiceKeys)
 		huma.Put(protectedAPI, "/api/v1/admin/service-keys", adminHandler.UpsertServiceKey)
 		huma.Delete(protectedAPI, "/api/v1/admin/service-keys/{provider}", adminHandler.DeleteServiceKey)
@@ -333,6 +342,7 @@ func main() {
 		// Subscription tiers (from Clerk)
 		huma.Get(protectedAPI, "/api/v1/admin/tiers", adminHandler.ListTiers)
 		huma.Post(protectedAPI, "/api/v1/admin/tiers/validate", adminHandler.ValidateTiers)
+		huma.Post(protectedAPI, "/api/v1/admin/tiers/sync", adminHandler.SyncTiers)
 
 		// Admin schema catalog management
 		schemaCatalogHandler := handlers.NewSchemaCatalogHandler(repos.SchemaCatalog)

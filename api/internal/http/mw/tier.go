@@ -52,6 +52,8 @@ func TierGate(usageSvc *service.UsageService) func(http.Handler) http.Handler {
 
 // RequireUsageQuota returns middleware that checks if the user has remaining quota.
 // This should be applied to extraction/crawl endpoints.
+// Usage is calculated based on the user's subscription billing period (anniversary dates),
+// falling back to calendar month if no subscription period is set.
 func RequireUsageQuota(usageSvc *service.UsageService) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -70,8 +72,8 @@ func RequireUsageQuota(usageSvc *service.UsageService) func(http.Handler) http.H
 				return
 			}
 
-			// Check current monthly usage
-			usage, err := usageSvc.GetMonthlyUsage(r.Context(), claims.UserID)
+			// Check current billing period usage (uses subscription anniversary dates)
+			usage, err := usageSvc.GetBillingPeriodUsage(r.Context(), claims.UserID)
 			if err != nil {
 				slog.Error("failed to check usage quota",
 					"user_id", claims.UserID,
@@ -83,7 +85,7 @@ func RequireUsageQuota(usageSvc *service.UsageService) func(http.Handler) http.H
 
 			// Check if over quota
 			if usage.TotalJobs >= limits.MonthlyExtractions {
-				slog.Debug("monthly quota exceeded",
+				slog.Debug("billing period quota exceeded",
 					"user_id", claims.UserID,
 					"tier", claims.Tier,
 					"limit", limits.MonthlyExtractions,

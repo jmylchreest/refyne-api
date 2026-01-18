@@ -825,6 +825,20 @@ func (r *SQLiteUsageRepository) GetSummary(ctx context.Context, userID string, p
 	return &summary, nil
 }
 
+// GetSummaryByDateRange returns usage summary for a specific date range.
+// This is used for subscription-anniversary billing where the period is
+// determined by the user's subscription dates rather than calendar months.
+func (r *SQLiteUsageRepository) GetSummaryByDateRange(ctx context.Context, userID string, startDate, endDate time.Time) (*UsageSummary, error) {
+	query := `SELECT COUNT(*), COALESCE(SUM(total_charged_usd), 0), COALESCE(SUM(CASE WHEN is_byok = 1 THEN 1 ELSE 0 END), 0)
+		FROM usage_records WHERE user_id = ? AND date >= ? AND date < ?`
+	var summary UsageSummary
+	err := r.db.QueryRowContext(ctx, query, userID, startDate.Format("2006-01-02"), endDate.Format("2006-01-02")).Scan(&summary.TotalJobs, &summary.TotalChargedUSD, &summary.BYOKJobs)
+	if err != nil {
+		return nil, err
+	}
+	return &summary, nil
+}
+
 func (r *SQLiteUsageRepository) GetMonthlySpend(ctx context.Context, userID string, month time.Time) (float64, error) {
 	startDate := month.Format("2006-01") + "-01"
 	endDate := month.AddDate(0, 1, 0).Format("2006-01") + "-01"

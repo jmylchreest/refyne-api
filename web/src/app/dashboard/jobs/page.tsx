@@ -591,12 +591,26 @@ export default function JobsPage() {
                     <div className="px-4 py-2 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between shrink-0">
                       <span className="text-sm font-medium">Results</span>
                       <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 text-xs"
+                          onClick={() => loadJobResults(selectedJob.id)}
+                          disabled={isLoadingResults || showResults}
+                        >
+                          {isLoadingResults ? (
+                            <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                          ) : (
+                            <Eye className="h-3.5 w-3.5 mr-1.5" />
+                          )}
+                          Load Results
+                        </Button>
                         <Select
                           value={outputFormat}
                           onValueChange={(v) => setOutputFormat(v as OutputFormat)}
                           disabled={!showResults}
                         >
-                          <SelectTrigger className={cn("h-7 w-[80px] text-xs", !showResults && "opacity-50")}>
+                          <SelectTrigger className={cn("h-8 w-[80px] text-xs", !showResults && "opacity-50")}>
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -608,29 +622,29 @@ export default function JobsPage() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          className={cn("h-7 w-7", !showResults && "opacity-50")}
+                          className={cn("h-8 w-8", !showResults && "opacity-50")}
                           onClick={copyResults}
                           disabled={!showResults}
                           title="Copy to clipboard"
                         >
                           {resultsCopied ? (
-                            <Check className="h-3.5 w-3.5 text-green-500" />
+                            <Check className="h-4 w-4 text-green-500" />
                           ) : (
-                            <Copy className="h-3.5 w-3.5" />
+                            <Copy className="h-4 w-4" />
                           )}
                         </Button>
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-7 w-7"
+                          className="h-8 w-8"
                           onClick={() => handleDownloadResults(selectedJob.id)}
                           disabled={isDownloading}
                           title={`Download as ${outputFormat.toUpperCase()}`}
                         >
                           {isDownloading ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            <Loader2 className="h-4 w-4 animate-spin" />
                           ) : (
-                            <Download className="h-3.5 w-3.5" />
+                            <Download className="h-4 w-4" />
                           )}
                         </Button>
                       </div>
@@ -639,18 +653,8 @@ export default function JobsPage() {
                     {/* Results content */}
                     <div className="flex-1 overflow-auto min-h-0">
                       {!showResults ? (
-                        <div className="flex items-center justify-center h-full">
-                          <Button
-                            onClick={() => loadJobResults(selectedJob.id)}
-                            disabled={isLoadingResults}
-                          >
-                            {isLoadingResults ? (
-                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                            ) : (
-                              <Eye className="h-4 w-4 mr-2" />
-                            )}
-                            View Results
-                          </Button>
+                        <div className="flex items-center justify-center h-full text-zinc-400">
+                          <p className="text-sm">Click &quot;Load Results&quot; to view extracted data</p>
                         </div>
                       ) : formattedOutput ? (
                         <div className="bg-zinc-950 h-full">

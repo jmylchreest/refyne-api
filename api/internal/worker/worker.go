@@ -320,12 +320,13 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 	}
 
 	result, err := w.extractionSvc.CrawlWithCallback(ctx, job.UserID, service.CrawlInput{
-		JobID:       job.ID,
-		URL:         job.URL,
-		SeedURLs:    sitemapURLs, // URLs from sitemap discovery (empty if not using sitemap)
-		Schema:      json.RawMessage(job.SchemaJSON),
-		Tier:        job.Tier,        // User's tier at job creation time
-		BYOKAllowed: job.BYOKAllowed, // Whether user had BYOK feature at job creation
+		JobID:               job.ID,
+		URL:                 job.URL,
+		SeedURLs:            sitemapURLs, // URLs from sitemap discovery (empty if not using sitemap)
+		Schema:              json.RawMessage(job.SchemaJSON),
+		Tier:                job.Tier,                // User's tier at job creation time
+		BYOKAllowed:         job.BYOKAllowed,         // Whether user had provider_byok feature at job creation
+		ModelsCustomAllowed: job.ModelsCustomAllowed, // Whether user had models_custom feature at job creation
 		Options: service.CrawlOptions{
 			FollowSelector:   options.FollowSelector,
 			FollowPattern:    options.FollowPattern,

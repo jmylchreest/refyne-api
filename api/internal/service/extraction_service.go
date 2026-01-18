@@ -98,11 +98,12 @@ type ExtractMeta struct {
 
 // ExtractContext holds context for billing tracking.
 type ExtractContext struct {
-	UserID      string
-	Tier        string // From JWT claims
-	SchemaID    string
-	IsBYOK      bool
-	BYOKAllowed bool // From JWT claims - whether user has the "byok" feature
+	UserID              string
+	Tier                string // From JWT claims
+	SchemaID            string
+	IsBYOK              bool
+	BYOKAllowed         bool // From JWT claims - whether user has the "provider_byok" feature
+	ModelsCustomAllowed bool // From JWT claims - whether user has the "models_custom" feature
 }
 
 // Extract performs a single-page extraction.
@@ -142,7 +143,8 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 
 	// Get the list of LLM configs to try (using tier-specific chain)
 	// BYOKAllowed comes from JWT claims - this is the authoritative check for BYOK eligibility
-	llmConfigs, isBYOK := s.resolveLLMConfigsWithFallback(ctx, userID, input.LLMConfig, ectx.Tier, ectx.BYOKAllowed)
+	// ModelsCustomAllowed controls whether user's custom model chain is used
+	llmConfigs, isBYOK := s.resolveLLMConfigsWithFallback(ctx, userID, input.LLMConfig, ectx.Tier, ectx.BYOKAllowed, ectx.ModelsCustomAllowed)
 	ectx.IsBYOK = isBYOK
 
 	// Estimate cost (triggers pricing cache refresh if needed) and check balance for non-BYOK
@@ -382,75 +384,114 @@ func (s *ExtractionService) handleSuccessfulExtraction(
 }
 
 // resolveLLMConfigsWithFallback returns the list of LLM configs to try, in order.
-// Returns (configs, isBYOK) where isBYOK is true if user provided their own config.
-// The tier parameter is used to select a tier-specific fallback chain if configured.
-// The byokAllowed parameter comes from JWT claims and indicates if user has the "byok" feature.
-func (s *ExtractionService) resolveLLMConfigsWithFallback(ctx context.Context, userID string, override *LLMConfigInput, tier string, byokAllowed bool) ([]*LLMConfigInput, bool) {
-	// BYOK is only allowed if the user has the feature from their JWT claims
-	// This handles cases like downgrades where they may have keys configured but no longer have access
-	if !byokAllowed {
-		s.logger.Debug("BYOK not allowed for user (no byok feature), using system config",
-			"user_id", userID,
-			"tier", tier,
-		)
-		return s.getDefaultLLMConfigsForTier(tier), false
-	}
-
-	// If override provided with provider, use it directly (user has BYOK feature)
+// Returns (configs, isBYOK) where isBYOK is true if user provided their own API key.
+//
+// Feature matrix:
+//   - BYOK + models_custom: user keys + user chain
+//   - BYOK only: user keys + system chain
+//   - models_custom only: system keys + user chain
+//   - Neither: system keys + system chain
+//
+// The byokAllowed parameter comes from JWT claims "provider_byok" feature.
+// The modelsCustomAllowed parameter comes from JWT claims "models_custom" feature.
+func (s *ExtractionService) resolveLLMConfigsWithFallback(ctx context.Context, userID string, override *LLMConfigInput, tier string, byokAllowed bool, modelsCustomAllowed bool) ([]*LLMConfigInput, bool) {
+	// Handle override provided with provider (requires BYOK)
 	if override != nil && override.Provider != "" {
+		if !byokAllowed {
+			s.logger.Debug("BYOK not allowed, ignoring override config",
+				"user_id", userID,
+				"tier", tier,
+			)
+			return s.getDefaultLLMConfigsForTier(tier), false
+		}
 		return []*LLMConfigInput{override}, true
 	}
 
-	// Check if user has a custom fallback chain configured
-	configs := s.buildUserFallbackChain(ctx, userID)
-	if len(configs) > 0 {
-		// Log which providers/models are in the user's chain
-		providerModels := make([]string, len(configs))
-		for i, c := range configs {
-			providerModels[i] = c.Provider + ":" + c.Model
+	// Check if user has a custom chain configured (only if models_custom feature enabled)
+	var userChain []*models.UserFallbackChainEntry
+	if modelsCustomAllowed && s.repos.UserFallbackChain != nil {
+		chain, err := s.repos.UserFallbackChain.GetEnabledByUserID(ctx, userID)
+		if err == nil && len(chain) > 0 {
+			userChain = chain
 		}
-		s.logger.Info("using user fallback chain (BYOK)",
-			"user_id", userID,
-			"entries", len(configs),
-			"chain", providerModels,
-		)
-		return configs, true
-	}
-	s.logger.Debug("no user fallback chain found, checking legacy config",
-		"user_id", userID,
-	)
-
-	// Check user's legacy saved config (single provider)
-	savedCfg, err := s.repos.LLMConfig.GetByUserID(ctx, userID)
-	if err != nil {
-		s.logger.Warn("failed to get user LLM config", "user_id", userID, "error", err)
 	}
 
-	if savedCfg != nil && savedCfg.Provider != "" {
-		// Decrypt API key if present
-		var apiKey string
-		if savedCfg.APIKeyEncrypted != "" && s.encryptor != nil {
-			decrypted, err := s.encryptor.Decrypt(savedCfg.APIKeyEncrypted)
-			if err != nil {
-				s.logger.Warn("failed to decrypt API key", "user_id", userID, "error", err)
-			} else {
-				apiKey = decrypted
+	// Case 1: BYOK + models_custom = user keys + user chain
+	if byokAllowed && len(userChain) > 0 {
+		configs := s.buildUserFallbackChain(ctx, userID)
+		if len(configs) > 0 {
+			providerModels := make([]string, len(configs))
+			for i, c := range configs {
+				providerModels[i] = c.Provider + ":" + c.Model
+			}
+			s.logger.Info("using user fallback chain with user keys (BYOK + models_custom)",
+				"user_id", userID,
+				"entries", len(configs),
+				"chain", providerModels,
+			)
+			return configs, true
+		}
+	}
+
+	// Case 2: models_custom only (no BYOK) = system keys + user chain
+	if !byokAllowed && len(userChain) > 0 {
+		configs := s.buildUserChainWithSystemKeys(ctx, userID, tier)
+		if len(configs) > 0 {
+			providerModels := make([]string, len(configs))
+			for i, c := range configs {
+				providerModels[i] = c.Provider + ":" + c.Model
+			}
+			s.logger.Info("using user fallback chain with system keys (models_custom only)",
+				"user_id", userID,
+				"entries", len(configs),
+				"chain", providerModels,
+			)
+			return configs, false // Not BYOK since using system keys
+		}
+	}
+
+	// Case 3: BYOK only (no models_custom) = user keys + system chain
+	// Check for legacy single-provider config first
+	if byokAllowed {
+		// Check user's legacy saved config (single provider)
+		savedCfg, err := s.repos.LLMConfig.GetByUserID(ctx, userID)
+		if err != nil {
+			s.logger.Debug("failed to get user LLM config", "user_id", userID, "error", err)
+		}
+
+		if savedCfg != nil && savedCfg.Provider != "" {
+			// Decrypt API key if present
+			var apiKey string
+			if savedCfg.APIKeyEncrypted != "" && s.encryptor != nil {
+				decrypted, err := s.encryptor.Decrypt(savedCfg.APIKeyEncrypted)
+				if err != nil {
+					s.logger.Warn("failed to decrypt API key", "user_id", userID, "error", err)
+				} else {
+					apiKey = decrypted
+				}
+			}
+
+			if apiKey != "" {
+				s.logger.Info("using legacy user config with system chain (BYOK only)",
+					"user_id", userID,
+					"provider", savedCfg.Provider,
+				)
+				return []*LLMConfigInput{{
+					Provider: savedCfg.Provider,
+					APIKey:   apiKey,
+					BaseURL:  savedCfg.BaseURL,
+					Model:    savedCfg.Model,
+				}}, true
 			}
 		}
-
-		// User has BYOK config, use it directly (no fallback)
-		return []*LLMConfigInput{{
-			Provider: savedCfg.Provider,
-			APIKey:   apiKey,
-			BaseURL:  savedCfg.BaseURL,
-			Model:    savedCfg.Model,
-		}}, true
 	}
 
-	// No user config - use the tier-specific fallback chain
-	s.logger.Info("using system fallback chain",
+	// Case 4: Neither feature = system keys + system chain
+	s.logger.Info("using system fallback chain with system keys",
 		"user_id", userID,
 		"tier", tier,
+		"byok_allowed", byokAllowed,
+		"models_custom_allowed", modelsCustomAllowed,
 	)
 	return s.getDefaultLLMConfigsForTier(tier), false
 }
@@ -550,15 +591,70 @@ func (s *ExtractionService) buildUserFallbackChain(ctx context.Context, userID s
 	return configs
 }
 
+// buildUserChainWithSystemKeys builds LLM configs from user's chain using SYSTEM API keys.
+// This is for users with models_custom feature but without provider_byok.
+// Only includes entries for providers where system keys are available.
+func (s *ExtractionService) buildUserChainWithSystemKeys(ctx context.Context, userID string, tier string) []*LLMConfigInput {
+	if s.repos.UserFallbackChain == nil {
+		s.logger.Debug("user fallback chain repo not initialized", "user_id", userID)
+		return nil
+	}
+
+	chain, err := s.repos.UserFallbackChain.GetEnabledByUserID(ctx, userID)
+	if err != nil || len(chain) == 0 {
+		return nil
+	}
+
+	serviceKeys := s.getServiceKeys()
+	configs := make([]*LLMConfigInput, 0, len(chain))
+
+	for _, entry := range chain {
+		// Get model settings (including strict mode)
+		_, _, strictMode := llm.GetModelSettings(entry.Provider, entry.Model, entry.Temperature, entry.MaxTokens, entry.StrictMode)
+
+		config := &LLMConfigInput{
+			Provider:   entry.Provider,
+			Model:      entry.Model,
+			StrictMode: strictMode,
+		}
+
+		// Use SYSTEM keys based on provider
+		switch entry.Provider {
+		case "openrouter":
+			config.APIKey = serviceKeys.OpenRouterKey
+		case "anthropic":
+			config.APIKey = serviceKeys.AnthropicKey
+		case "openai":
+			config.APIKey = serviceKeys.OpenAIKey
+		case "ollama":
+			// Ollama doesn't need an API key
+		}
+
+		// Only include entry if we have a key (or it's Ollama)
+		if config.APIKey != "" || entry.Provider == "ollama" {
+			configs = append(configs, config)
+		} else {
+			s.logger.Debug("skipping chain entry - no system key available",
+				"user_id", userID,
+				"provider", entry.Provider,
+				"model", entry.Model,
+			)
+		}
+	}
+
+	return configs
+}
+
 // CrawlInput represents crawl input.
 type CrawlInput struct {
-	JobID       string          `json:"job_id,omitempty"`    // Job ID for logging/tracking
-	URL         string          `json:"url"`
-	SeedURLs    []string        `json:"seed_urls,omitempty"` // Additional seed URLs (from sitemap discovery)
-	Schema      json.RawMessage `json:"schema"`
-	Options     CrawlOptions    `json:"options"`
-	Tier        string          `json:"tier,omitempty"`         // User's tier for tier-specific processing
-	BYOKAllowed bool            `json:"byok_allowed,omitempty"` // Whether user has the "byok" feature
+	JobID               string          `json:"job_id,omitempty"`              // Job ID for logging/tracking
+	URL                 string          `json:"url"`
+	SeedURLs            []string        `json:"seed_urls,omitempty"`           // Additional seed URLs (from sitemap discovery)
+	Schema              json.RawMessage `json:"schema"`
+	Options             CrawlOptions    `json:"options"`
+	Tier                string          `json:"tier,omitempty"`                // User's tier for tier-specific processing
+	BYOKAllowed         bool            `json:"byok_allowed,omitempty"`        // Whether user has the "provider_byok" feature
+	ModelsCustomAllowed bool            `json:"models_custom_allowed,omitempty"` // Whether user has the "models_custom" feature
 }
 
 // Note: CrawlOptions is defined in job_service.go to avoid duplication
@@ -597,8 +693,23 @@ type CrawlResult struct {
 
 // Crawl performs a multi-page crawl extraction.
 func (s *ExtractionService) Crawl(ctx context.Context, userID string, input CrawlInput) (*CrawlResult, error) {
+	// Enforce MaxPagesPerCrawl tier limit
+	tierLimits := constants.GetTierLimitsWithS3(ctx, input.Tier)
+	if tierLimits.MaxPagesPerCrawl > 0 {
+		// User's max_pages is clamped to their tier's limit (0 = no limit)
+		if input.Options.MaxPages == 0 || input.Options.MaxPages > tierLimits.MaxPagesPerCrawl {
+			s.logger.Debug("clamping max_pages to tier limit",
+				"user_id", userID,
+				"tier", input.Tier,
+				"requested", input.Options.MaxPages,
+				"tier_limit", tierLimits.MaxPagesPerCrawl,
+			)
+			input.Options.MaxPages = tierLimits.MaxPagesPerCrawl
+		}
+	}
+
 	// Resolve LLM configuration with BYOK eligibility check
-	llmCfg, isBYOK, err := s.resolveLLMConfigWithBYOK(ctx, userID, nil, input.Tier, input.BYOKAllowed)
+	llmCfg, isBYOK, err := s.resolveLLMConfigWithBYOK(ctx, userID, nil, input.Tier, input.BYOKAllowed, input.ModelsCustomAllowed)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve LLM config: %w", err)
 	}
@@ -704,7 +815,7 @@ func (s *ExtractionService) Crawl(ctx context.Context, userID string, input Craw
 		var pageLLMCost, pageUserCost float64
 		if s.billing != nil {
 			pageLLMCost = s.billing.GetActualCostFromProvider(ctx, llmCfg.Provider, result.GenerationID, llmCfg.APIKey, result.TokenUsage.InputTokens, result.TokenUsage.OutputTokens, llmCfg.Model)
-			pageUserCost, _, _ = s.billing.CalculateTotalCost(pageLLMCost, "")
+			pageUserCost, _, _ = s.billing.CalculateTotalCost(pageLLMCost, input.Tier, isBYOK)
 		}
 
 		// Log successful extraction
@@ -751,7 +862,7 @@ func (s *ExtractionService) Crawl(ctx context.Context, userID string, input Craw
 	var llmCostUSD, userCostUSD float64
 	if s.billing != nil {
 		llmCostUSD = s.billing.GetActualCost(ctx, totalTokensInput, totalTokensOutput, llmCfg.Model, llmCfg.Provider)
-		userCostUSD, _, _ = s.billing.CalculateTotalCost(llmCostUSD, "")
+		userCostUSD, _, _ = s.billing.CalculateTotalCost(llmCostUSD, input.Tier, isBYOK)
 	}
 
 	s.logger.Info("crawl completed",
@@ -803,8 +914,23 @@ type CrawlCallbacks struct {
 // This allows incremental processing of results (e.g., saving to database as they come in)
 // and tracking of URL discovery for progress reporting.
 func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string, input CrawlInput, callbacks CrawlCallbacks) (*CrawlResult, error) {
+	// Enforce MaxPagesPerCrawl tier limit
+	tierLimits := constants.GetTierLimitsWithS3(ctx, input.Tier)
+	if tierLimits.MaxPagesPerCrawl > 0 {
+		// User's max_pages is clamped to their tier's limit (0 = no limit)
+		if input.Options.MaxPages == 0 || input.Options.MaxPages > tierLimits.MaxPagesPerCrawl {
+			s.logger.Debug("clamping max_pages to tier limit",
+				"user_id", userID,
+				"tier", input.Tier,
+				"requested", input.Options.MaxPages,
+				"tier_limit", tierLimits.MaxPagesPerCrawl,
+			)
+			input.Options.MaxPages = tierLimits.MaxPagesPerCrawl
+		}
+	}
+
 	// Resolve LLM configuration with BYOK eligibility check
-	llmCfg, isBYOK, err := s.resolveLLMConfigWithBYOK(ctx, userID, nil, input.Tier, input.BYOKAllowed)
+	llmCfg, isBYOK, err := s.resolveLLMConfigWithBYOK(ctx, userID, nil, input.Tier, input.BYOKAllowed, input.ModelsCustomAllowed)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve LLM config: %w", err)
 	}
@@ -951,7 +1077,7 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 			var pageLLMCost, pageUserCost float64
 			if s.billing != nil {
 				pageLLMCost = s.billing.GetActualCostFromProvider(ctx, llmCfg.Provider, result.GenerationID, llmCfg.APIKey, result.TokenUsage.InputTokens, result.TokenUsage.OutputTokens, llmCfg.Model)
-				pageUserCost, _, _ = s.billing.CalculateTotalCost(pageLLMCost, "")
+				pageUserCost, _, _ = s.billing.CalculateTotalCost(pageLLMCost, input.Tier, isBYOK)
 			}
 
 			// Track cumulative cost for balance enforcement
@@ -1037,7 +1163,7 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 	var llmCostUSD, userCostUSD float64
 	if s.billing != nil {
 		llmCostUSD = s.billing.GetActualCost(ctx, totalTokensInput, totalTokensOutput, llmCfg.Model, llmCfg.Provider)
-		userCostUSD, _, _ = s.billing.CalculateTotalCost(llmCostUSD, "")
+		userCostUSD, _, _ = s.billing.CalculateTotalCost(llmCostUSD, input.Tier, isBYOK)
 	}
 
 	s.logger.Info("crawl completed",
@@ -1183,76 +1309,109 @@ func (s *ExtractionService) handleLLMError(err error, llmCfg *LLMConfigInput, is
 // Returns (config, isBYOK, error) where isBYOK is true if the user is using their own API key.
 // Note: This version does NOT check BYOK eligibility - use resolveLLMConfigWithBYOK for that.
 func (s *ExtractionService) resolveLLMConfig(ctx context.Context, userID string, override *LLMConfigInput) (*LLMConfigInput, bool, error) {
-	// Default to not allowing BYOK when no context available
-	return s.resolveLLMConfigWithBYOK(ctx, userID, override, "", false)
+	// Default to not allowing BYOK or custom models when no context available
+	return s.resolveLLMConfigWithBYOK(ctx, userID, override, "", false, false)
 }
 
-// resolveLLMConfigWithBYOK determines which LLM configuration to use with BYOK eligibility checking.
+// resolveLLMConfigWithBYOK determines which LLM configuration to use with feature checking.
 // Returns (config, isBYOK, error) where isBYOK is true if the user is using their own API key.
-// The byokAllowed parameter comes from JWT claims and indicates if user has the "byok" feature.
-func (s *ExtractionService) resolveLLMConfigWithBYOK(ctx context.Context, userID string, override *LLMConfigInput, tier string, byokAllowed bool) (*LLMConfigInput, bool, error) {
-	// BYOK is only allowed if the user has the feature from their JWT claims
-	if !byokAllowed {
-		s.logger.Debug("BYOK not allowed for user (no byok feature) for crawl, using system config",
-			"user_id", userID,
-			"tier", tier,
-		)
-		return s.getDefaultLLMConfig(), false, nil
-	}
-
-	// If override provided with provider, use it (user has BYOK feature)
+//
+// Feature matrix:
+//   - BYOK + models_custom: user keys + user chain
+//   - BYOK only: user keys + system chain
+//   - models_custom only: system keys + user chain
+//   - Neither: system keys + system chain
+//
+// The byokAllowed parameter comes from JWT claims "provider_byok" feature.
+// The modelsCustomAllowed parameter comes from JWT claims "models_custom" feature.
+func (s *ExtractionService) resolveLLMConfigWithBYOK(ctx context.Context, userID string, override *LLMConfigInput, tier string, byokAllowed bool, modelsCustomAllowed bool) (*LLMConfigInput, bool, error) {
+	// Handle override (requires BYOK)
 	if override != nil && override.Provider != "" {
+		if !byokAllowed {
+			s.logger.Debug("BYOK not allowed, ignoring override config for crawl",
+				"user_id", userID,
+			)
+			return s.getDefaultLLMConfig(), false, nil
+		}
 		return override, true, nil
 	}
 
-	// 1. Check user's fallback chain first (new system)
-	configs := s.buildUserFallbackChain(ctx, userID)
-	if len(configs) > 0 {
-		s.logger.Info("using user fallback chain for crawl (BYOK)",
-			"user_id", userID,
-			"provider", configs[0].Provider,
-			"model", configs[0].Model,
-		)
-		return configs[0], true, nil
+	// Check if user has a custom chain configured (only if models_custom feature enabled)
+	var userChain []*models.UserFallbackChainEntry
+	if modelsCustomAllowed && s.repos.UserFallbackChain != nil {
+		chain, err := s.repos.UserFallbackChain.GetEnabledByUserID(ctx, userID)
+		if err == nil && len(chain) > 0 {
+			userChain = chain
+		}
 	}
 
-	// 2. Check user's legacy saved config
-	savedCfg, err := s.repos.LLMConfig.GetByUserID(ctx, userID)
-	if err != nil {
-		s.logger.Warn("failed to get user LLM config", "user_id", userID, "error", err)
-		// Continue to defaults
+	// Case 1: BYOK + models_custom = user keys + user chain
+	if byokAllowed && len(userChain) > 0 {
+		configs := s.buildUserFallbackChain(ctx, userID)
+		if len(configs) > 0 {
+			s.logger.Info("using user fallback chain with user keys for crawl (BYOK + models_custom)",
+				"user_id", userID,
+				"provider", configs[0].Provider,
+				"model", configs[0].Model,
+			)
+			return configs[0], true, nil
+		}
 	}
 
-	if savedCfg != nil && savedCfg.Provider != "" {
-		// Decrypt API key if present
-		var apiKey string
-		if savedCfg.APIKeyEncrypted != "" && s.encryptor != nil {
-			decrypted, err := s.encryptor.Decrypt(savedCfg.APIKeyEncrypted)
-			if err != nil {
-				s.logger.Warn("failed to decrypt API key", "user_id", userID, "error", err)
-				// Continue without API key
-			} else {
-				apiKey = decrypted
-			}
+	// Case 2: models_custom only (no BYOK) = system keys + user chain
+	if !byokAllowed && len(userChain) > 0 {
+		configs := s.buildUserChainWithSystemKeys(ctx, userID, tier)
+		if len(configs) > 0 {
+			s.logger.Info("using user fallback chain with system keys for crawl (models_custom only)",
+				"user_id", userID,
+				"provider", configs[0].Provider,
+				"model", configs[0].Model,
+			)
+			return configs[0], false, nil // Not BYOK since using system keys
+		}
+	}
+
+	// Case 3: BYOK only (no models_custom) = user keys + system chain
+	if byokAllowed {
+		savedCfg, err := s.repos.LLMConfig.GetByUserID(ctx, userID)
+		if err != nil {
+			s.logger.Debug("failed to get user LLM config", "user_id", userID, "error", err)
 		}
 
-		s.logger.Info("using legacy user config for crawl (BYOK)",
-			"user_id", userID,
-			"provider", savedCfg.Provider,
-		)
-		return &LLMConfigInput{
-			Provider: savedCfg.Provider,
-			APIKey:   apiKey,
-			BaseURL:  savedCfg.BaseURL,
-			Model:    savedCfg.Model,
-		}, true, nil // BYOK = true for user's legacy config
+		if savedCfg != nil && savedCfg.Provider != "" {
+			var apiKey string
+			if savedCfg.APIKeyEncrypted != "" && s.encryptor != nil {
+				decrypted, err := s.encryptor.Decrypt(savedCfg.APIKeyEncrypted)
+				if err != nil {
+					s.logger.Warn("failed to decrypt API key", "user_id", userID, "error", err)
+				} else {
+					apiKey = decrypted
+				}
+			}
+
+			if apiKey != "" {
+				s.logger.Info("using legacy user config for crawl (BYOK only)",
+					"user_id", userID,
+					"provider", savedCfg.Provider,
+				)
+				return &LLMConfigInput{
+					Provider: savedCfg.Provider,
+					APIKey:   apiKey,
+					BaseURL:  savedCfg.BaseURL,
+					Model:    savedCfg.Model,
+				}, true, nil
+			}
+		}
 	}
 
-	// 3. Default to service keys or free tier
+	// Case 4: Neither feature = system keys + system chain
 	s.logger.Info("using system config for crawl",
 		"user_id", userID,
+		"tier", tier,
+		"byok_allowed", byokAllowed,
+		"models_custom_allowed", modelsCustomAllowed,
 	)
-	return s.getDefaultLLMConfig(), false, nil // BYOK = false for system config
+	return s.getDefaultLLMConfig(), false, nil
 }
 
 // getDefaultLLMConfigs returns the fallback chain of LLM configurations for users without custom config.

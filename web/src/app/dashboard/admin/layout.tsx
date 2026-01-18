@@ -9,6 +9,7 @@ import { Card, CardContent } from '@/components/ui/card';
 const adminTabs = [
   { name: 'Extractors', href: '/dashboard/admin/extractors' },
   { name: 'Schema Catalog', href: '/dashboard/admin/schemas' },
+  { name: 'System', href: '/dashboard/admin/system' },
   { name: 'Debug', href: '/dashboard/admin/debug' },
 ];
 

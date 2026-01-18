@@ -15,15 +15,19 @@ type TierSettingsJSON struct {
 }
 
 // TierLimitsJSON represents tier limits in JSON format.
+// Feature availability is controlled by Clerk features, not these limits.
 type TierLimitsJSON struct {
-	MonthlyExtractions     int  `json:"monthly_extractions"`
-	MonthlyBYOKExtractions int  `json:"monthly_byok_extractions"`
-	MaxPagesPerCrawl       int  `json:"max_pages_per_crawl"`
-	MaxConcurrentJobs      int  `json:"max_concurrent_jobs"`
-	RequestsPerMinute      int  `json:"requests_per_minute"`
-	WebhooksEnabled        bool `json:"webhooks_enabled"`
-	BYOKEnabled            bool `json:"byok_enabled"`
-	AntiBotEnabled         bool `json:"anti_bot_enabled"`
+	DisplayName          string  `json:"display_name,omitempty"`
+	Visible              *bool   `json:"visible,omitempty"` // Pointer to detect explicit false vs missing
+	Order                int     `json:"order,omitempty"`
+	MonthlyExtractions   int     `json:"monthly_extractions"`
+	MaxPagesPerCrawl     int     `json:"max_pages_per_crawl"`
+	MaxConcurrentJobs    int     `json:"max_concurrent_jobs"`
+	RequestsPerMinute    int     `json:"requests_per_minute"`
+	CreditAllocationUSD  float64 `json:"credit_allocation_usd,omitempty"`
+	CreditRolloverMonths int     `json:"credit_rollover_months,omitempty"`
+	MarkupPercentage     float64 `json:"markup_percentage,omitempty"`
+	CostPerTransaction   float64 `json:"cost_per_transaction,omitempty"`
 }
 
 // TierSettingsLoader provides S3-backed tier settings with caching.
@@ -100,15 +104,24 @@ func (t *TierSettingsLoader) refresh(ctx context.Context) {
 	// Convert to TierLimits
 	newTiers := make(map[string]TierLimits)
 	for name, limits := range settings.Tiers {
+		// Handle Visible pointer - default to true if not specified
+		visible := true
+		if limits.Visible != nil {
+			visible = *limits.Visible
+		}
+
 		newTiers[name] = TierLimits{
-			MonthlyExtractions:     limits.MonthlyExtractions,
-			MonthlyBYOKExtractions: limits.MonthlyBYOKExtractions,
-			MaxPagesPerCrawl:       limits.MaxPagesPerCrawl,
-			MaxConcurrentJobs:      limits.MaxConcurrentJobs,
-			RequestsPerMinute:      limits.RequestsPerMinute,
-			WebhooksEnabled:        limits.WebhooksEnabled,
-			BYOKEnabled:            limits.BYOKEnabled,
-			AntiBotEnabled:         limits.AntiBotEnabled,
+			DisplayName:          limits.DisplayName,
+			Visible:              visible,
+			Order:                limits.Order,
+			MonthlyExtractions:   limits.MonthlyExtractions,
+			MaxPagesPerCrawl:     limits.MaxPagesPerCrawl,
+			MaxConcurrentJobs:    limits.MaxConcurrentJobs,
+			RequestsPerMinute:    limits.RequestsPerMinute,
+			CreditAllocationUSD:  limits.CreditAllocationUSD,
+			CreditRolloverMonths: limits.CreditRolloverMonths,
+			MarkupPercentage:     limits.MarkupPercentage,
+			CostPerTransaction:   limits.CostPerTransaction,
 		}
 	}
 
@@ -137,7 +150,7 @@ func (t *TierSettingsLoader) GetLimits(tier string) *TierLimits {
 // This is the main function to call - it handles normalization and fallback.
 func GetTierLimitsWithS3(ctx context.Context, tier string) TierLimits {
 	// Normalize first
-	normalized := normalizeTierName(tier)
+	normalized := NormalizeTierName(tier)
 
 	// Check S3 loader if initialized
 	if tierLoader != nil && tierLoader.IsEnabled() {

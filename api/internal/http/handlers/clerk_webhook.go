@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"time"
 
 	svix "github.com/svix/svix-webhooks/go"
 
@@ -18,15 +19,19 @@ import (
 type ClerkWebhookHandler struct {
 	cfg        *config.Config
 	balanceSvc *service.BalanceService
+	cleanupSvc *service.UserCleanupService
+	tierSyncSvc *service.TierSyncService
 	logger     *slog.Logger
 }
 
 // NewClerkWebhookHandler creates a new Clerk webhook handler.
-func NewClerkWebhookHandler(cfg *config.Config, balanceSvc *service.BalanceService, logger *slog.Logger) *ClerkWebhookHandler {
+func NewClerkWebhookHandler(cfg *config.Config, balanceSvc *service.BalanceService, cleanupSvc *service.UserCleanupService, tierSyncSvc *service.TierSyncService, logger *slog.Logger) *ClerkWebhookHandler {
 	return &ClerkWebhookHandler{
-		cfg:        cfg,
-		balanceSvc: balanceSvc,
-		logger:     logger,
+		cfg:         cfg,
+		balanceSvc:  balanceSvc,
+		cleanupSvc:  cleanupSvc,
+		tierSyncSvc: tierSyncSvc,
+		logger:      logger,
 	}
 }
 
@@ -45,6 +50,8 @@ type SubscriptionData struct {
 	Status         string `json:"status"`
 	PlanID         string `json:"plan_id"`
 	PlanName       string `json:"plan_name,omitempty"`
+	PeriodStart    int64  `json:"period_start,omitempty"` // Unix timestamp
+	PeriodEnd      int64  `json:"period_end,omitempty"`   // Unix timestamp
 }
 
 // SubscriptionItemData represents subscription item data from Clerk.
@@ -56,6 +63,8 @@ type SubscriptionItemData struct {
 	Status         string `json:"status"`
 	PlanID         string `json:"plan_id"`
 	PlanName       string `json:"plan_name,omitempty"`
+	PeriodStart    int64  `json:"period_start,omitempty"` // Unix timestamp
+	PeriodEnd      int64  `json:"period_end,omitempty"`   // Unix timestamp
 }
 
 // PaymentAttemptData represents payment attempt data from Clerk.
@@ -135,11 +144,22 @@ func (h *ClerkWebhookHandler) handleEvent(ctx context.Context, event ClerkWebhoo
 	case "subscriptionItem.active":
 		return h.handleSubscriptionItemActive(ctx, event.Data)
 
+	case "subscriptionItem.updated":
+		// Handle period updates on renewal (status stays active but period changes)
+		return h.handleSubscriptionItemUpdated(ctx, event.Data)
+
 	case "paymentAttempt.updated":
 		return h.handlePaymentAttemptUpdated(ctx, event.Data)
 
 	case "subscription.canceled", "subscriptionItem.canceled", "subscriptionItem.ended":
 		return h.handleSubscriptionCanceled(ctx, event.Data)
+
+	case "user.deleted":
+		return h.handleUserDeleted(ctx, event.Data)
+
+	case "plan.created", "plan.updated":
+		// Sync tier visibility/display names when plans change in Clerk
+		return h.handlePlanChanged(ctx)
 
 	default:
 		h.logger.Debug("unhandled webhook event type", "type", event.Type)
@@ -157,6 +177,16 @@ func (h *ClerkWebhookHandler) handleSubscriptionActive(ctx context.Context, data
 	if sub.UserID == "" {
 		h.logger.Warn("subscription missing user_id", "subscription_id", sub.ID)
 		return nil
+	}
+
+	// Update subscription period if provided (Clerk uses milliseconds)
+	if sub.PeriodStart > 0 && sub.PeriodEnd > 0 {
+		periodStart := time.UnixMilli(sub.PeriodStart)
+		periodEnd := time.UnixMilli(sub.PeriodEnd)
+		if err := h.balanceSvc.UpdateSubscriptionPeriod(ctx, sub.UserID, periodStart, periodEnd); err != nil {
+			h.logger.Error("failed to update subscription period", "user_id", sub.UserID, "error", err)
+			// Continue processing - don't fail the webhook for this
+		}
 	}
 
 	// Determine tier from plan
@@ -181,6 +211,7 @@ func (h *ClerkWebhookHandler) handleSubscriptionActive(ctx context.Context, data
 }
 
 // handleSubscriptionItemActive handles subscription item activation (after successful payment).
+// This is also called when subscriptions renew, updating period_start and period_end.
 func (h *ClerkWebhookHandler) handleSubscriptionItemActive(ctx context.Context, data json.RawMessage) error {
 	var item SubscriptionItemData
 	if err := json.Unmarshal(data, &item); err != nil {
@@ -190,6 +221,16 @@ func (h *ClerkWebhookHandler) handleSubscriptionItemActive(ctx context.Context, 
 	if item.UserID == "" {
 		h.logger.Warn("subscription item missing user_id", "item_id", item.ID)
 		return nil
+	}
+
+	// Update subscription period if provided - this is where period dates get updated on renewal (Clerk uses milliseconds)
+	if item.PeriodStart > 0 && item.PeriodEnd > 0 {
+		periodStart := time.UnixMilli(item.PeriodStart)
+		periodEnd := time.UnixMilli(item.PeriodEnd)
+		if err := h.balanceSvc.UpdateSubscriptionPeriod(ctx, item.UserID, periodStart, periodEnd); err != nil {
+			h.logger.Error("failed to update subscription period", "user_id", item.UserID, "error", err)
+			// Continue processing - don't fail the webhook for this
+		}
 	}
 
 	tier := h.planToTier(item.PlanID, item.PlanName)
@@ -208,6 +249,38 @@ func (h *ClerkWebhookHandler) handleSubscriptionItemActive(ctx context.Context, 
 		"item_id", item.ID,
 		"tier", tier,
 	)
+
+	return nil
+}
+
+// handleSubscriptionItemUpdated handles subscription item updates.
+// This is fired when a subscription renews and the period dates change (status stays active).
+func (h *ClerkWebhookHandler) handleSubscriptionItemUpdated(ctx context.Context, data json.RawMessage) error {
+	var item SubscriptionItemData
+	if err := json.Unmarshal(data, &item); err != nil {
+		return err
+	}
+
+	if item.UserID == "" {
+		h.logger.Warn("subscription item update missing user_id", "item_id", item.ID)
+		return nil
+	}
+
+	// Update subscription period if provided (Clerk uses milliseconds)
+	if item.PeriodStart > 0 && item.PeriodEnd > 0 {
+		periodStart := time.UnixMilli(item.PeriodStart)
+		periodEnd := time.UnixMilli(item.PeriodEnd)
+		if err := h.balanceSvc.UpdateSubscriptionPeriod(ctx, item.UserID, periodStart, periodEnd); err != nil {
+			h.logger.Error("failed to update subscription period on item update", "user_id", item.UserID, "error", err)
+			return err
+		}
+		h.logger.Info("subscription period updated on renewal",
+			"user_id", item.UserID,
+			"item_id", item.ID,
+			"period_start", periodStart.Format(time.RFC3339),
+			"period_end", periodEnd.Format(time.RFC3339),
+		)
+	}
 
 	return nil
 }
@@ -278,6 +351,51 @@ func (h *ClerkWebhookHandler) handleSubscriptionCanceled(ctx context.Context, da
 	return nil
 }
 
+// UserDeletedData represents user deletion data from Clerk.
+type UserDeletedData struct {
+	ID      string `json:"id"`
+	Deleted bool   `json:"deleted"`
+}
+
+// handleUserDeleted handles user account deletion.
+// This cleans up all user data when a user deletes their account via Clerk.
+func (h *ClerkWebhookHandler) handleUserDeleted(ctx context.Context, data json.RawMessage) error {
+	var userData UserDeletedData
+	if err := json.Unmarshal(data, &userData); err != nil {
+		return err
+	}
+
+	if userData.ID == "" {
+		h.logger.Warn("user.deleted event missing user id")
+		return nil
+	}
+
+	h.logger.Info("processing user deletion",
+		"user_id", userData.ID,
+	)
+
+	// Delete all user data
+	if h.cleanupSvc != nil {
+		if err := h.cleanupSvc.DeleteAllUserData(ctx, userData.ID); err != nil {
+			h.logger.Error("failed to delete user data",
+				"user_id", userData.ID,
+				"error", err,
+			)
+			return err
+		}
+	} else {
+		h.logger.Warn("user cleanup service not configured, skipping data deletion",
+			"user_id", userData.ID,
+		)
+	}
+
+	h.logger.Info("user data deleted successfully",
+		"user_id", userData.ID,
+	)
+
+	return nil
+}
+
 // planToTier maps Clerk plan IDs/names to our internal tier names.
 func (h *ClerkWebhookHandler) planToTier(planID, planName string) string {
 	// Map based on plan name or ID patterns
@@ -306,4 +424,20 @@ func contains(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// handlePlanChanged triggers a tier sync when plans are created or updated in Clerk.
+func (h *ClerkWebhookHandler) handlePlanChanged(ctx context.Context) error {
+	if h.tierSyncSvc == nil {
+		h.logger.Debug("tier sync service not configured, skipping plan sync")
+		return nil
+	}
+
+	if err := h.tierSyncSvc.SyncFromClerk(ctx); err != nil {
+		h.logger.Error("failed to sync tiers from Clerk", "error", err)
+		return err
+	}
+
+	h.logger.Info("tier metadata synced from Clerk plan webhook")
+	return nil
 }

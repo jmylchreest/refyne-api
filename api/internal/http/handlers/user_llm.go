@@ -5,7 +5,9 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/jmylchreest/refyne-api/internal/constants"
 	"github.com/jmylchreest/refyne-api/internal/http/mw"
+	"github.com/jmylchreest/refyne-api/internal/llm"
 	"github.com/jmylchreest/refyne-api/internal/service"
 )
 
@@ -13,11 +15,12 @@ import (
 type UserLLMHandler struct {
 	userLLMSvc *service.UserLLMService
 	adminSvc   *service.AdminService
+	registry   *llm.Registry
 }
 
 // NewUserLLMHandler creates a new user LLM handler.
-func NewUserLLMHandler(userLLMSvc *service.UserLLMService, adminSvc *service.AdminService) *UserLLMHandler {
-	return &UserLLMHandler{userLLMSvc: userLLMSvc, adminSvc: adminSvc}
+func NewUserLLMHandler(userLLMSvc *service.UserLLMService, adminSvc *service.AdminService, registry *llm.Registry) *UserLLMHandler {
+	return &UserLLMHandler{userLLMSvc: userLLMSvc, adminSvc: adminSvc, registry: registry}
 }
 
 // UserServiceKeyInput represents a service key in API requests.
@@ -78,6 +81,29 @@ func (h *UserLLMHandler) ListServiceKeys(ctx context.Context, input *struct{}) (
 	}, nil
 }
 
+// ListProvidersOutput represents the list providers response.
+type ListProvidersOutput struct {
+	Body struct {
+		Providers []llm.ProviderInfo `json:"providers"`
+	}
+}
+
+// ListProviders returns all LLM providers available to the user.
+func (h *UserLLMHandler) ListProviders(ctx context.Context, input *struct{}) (*ListProvidersOutput, error) {
+	claims := mw.GetUserClaims(ctx)
+	if claims == nil {
+		return nil, huma.Error401Unauthorized("authentication required")
+	}
+
+	providers := h.registry.ListProviders(claims)
+
+	return &ListProvidersOutput{
+		Body: struct {
+			Providers []llm.ProviderInfo `json:"providers"`
+		}{Providers: providers},
+	}, nil
+}
+
 // UpsertUserServiceKeyInput represents the upsert service key request.
 type UpsertUserServiceKeyInput struct {
 	Body UserServiceKeyInput
@@ -89,10 +115,25 @@ type UpsertUserServiceKeyOutput struct {
 }
 
 // UpsertServiceKey creates or updates a user service key.
+// Requires the provider_byok feature and access to the specific provider.
 func (h *UserLLMHandler) UpsertServiceKey(ctx context.Context, input *UpsertUserServiceKeyInput) (*UpsertUserServiceKeyOutput, error) {
 	claims := mw.GetUserClaims(ctx)
 	if claims == nil {
 		return nil, huma.Error401Unauthorized("authentication required")
+	}
+
+	// Gate by provider_byok feature
+	if !claims.HasFeature(constants.FeatureProviderBYOK) {
+		return nil, huma.Error403Forbidden(constants.FeatureNotAvailableMessage(constants.FeatureProviderBYOK))
+	}
+
+	// Check provider access via registry
+	if !h.registry.IsProviderAllowed(input.Body.Provider, claims) {
+		missing := h.registry.GetMissingFeatures(input.Body.Provider, claims)
+		if len(missing) > 0 {
+			return nil, huma.Error403Forbidden(constants.FeatureNotAvailableMessage(missing[0]))
+		}
+		return nil, huma.Error403Forbidden("provider not available on your current plan")
 	}
 
 	key, err := h.userLLMSvc.UpsertServiceKey(ctx, claims.UserID, service.UserServiceKeyInput{
@@ -131,10 +172,16 @@ type DeleteUserServiceKeyOutput struct {
 }
 
 // DeleteServiceKey removes a user service key.
+// Requires the provider_byok feature.
 func (h *UserLLMHandler) DeleteServiceKey(ctx context.Context, input *DeleteUserServiceKeyInput) (*DeleteUserServiceKeyOutput, error) {
 	claims := mw.GetUserClaims(ctx)
 	if claims == nil {
 		return nil, huma.Error401Unauthorized("authentication required")
+	}
+
+	// Gate by provider_byok feature
+	if !claims.HasFeature(constants.FeatureProviderBYOK) {
+		return nil, huma.Error403Forbidden(constants.FeatureNotAvailableMessage(constants.FeatureProviderBYOK))
 	}
 
 	if err := h.userLLMSvc.DeleteServiceKey(ctx, claims.UserID, input.ID); err != nil {
@@ -226,10 +273,27 @@ type SetUserFallbackChainOutput struct {
 }
 
 // SetFallbackChain replaces the user's fallback chain configuration.
+// Requires the models_custom feature. Provider access is validated for each entry.
 func (h *UserLLMHandler) SetFallbackChain(ctx context.Context, input *SetUserFallbackChainInput) (*SetUserFallbackChainOutput, error) {
 	claims := mw.GetUserClaims(ctx)
 	if claims == nil {
 		return nil, huma.Error401Unauthorized("authentication required")
+	}
+
+	// Gate by models_custom feature
+	if !claims.HasFeature(constants.FeatureModelsCustom) {
+		return nil, huma.Error403Forbidden(constants.FeatureNotAvailableMessage(constants.FeatureModelsCustom))
+	}
+
+	// Validate provider access for each chain entry
+	for _, e := range input.Body.Chain {
+		if !h.registry.IsProviderAllowed(e.Provider, claims) {
+			missing := h.registry.GetMissingFeatures(e.Provider, claims)
+			if len(missing) > 0 {
+				return nil, huma.Error403Forbidden(constants.FeatureNotAvailableMessage(missing[0]))
+			}
+			return nil, huma.Error403Forbidden("provider '" + e.Provider + "' not available on your current plan")
+		}
 	}
 
 	// Convert to service input
@@ -293,10 +357,20 @@ type UserListModelsOutput struct {
 }
 
 // ListModels returns available models for a provider.
+// Checks provider access before returning models.
 func (h *UserLLMHandler) ListModels(ctx context.Context, input *UserListModelsInput) (*UserListModelsOutput, error) {
 	claims := mw.GetUserClaims(ctx)
 	if claims == nil {
 		return nil, huma.Error401Unauthorized("authentication required")
+	}
+
+	// Check provider access via registry
+	if !h.registry.IsProviderAllowed(input.Provider, claims) {
+		missing := h.registry.GetMissingFeatures(input.Provider, claims)
+		if len(missing) > 0 {
+			return nil, huma.Error403Forbidden(constants.FeatureNotAvailableMessage(missing[0]))
+		}
+		return nil, huma.Error403Forbidden("provider not available on your current plan")
 	}
 
 	models, err := h.adminSvc.ListModels(ctx, input.Provider)

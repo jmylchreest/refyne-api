@@ -3,6 +3,7 @@
   "pages": [
     "index",
     "quickstart",
+    "plans-limits",
     "authentication",
     "guides",
     "api-reference",

@@ -23,29 +23,72 @@ func NewSQLiteBalanceRepository(db *sql.DB) *SQLiteBalanceRepository {
 }
 
 func (r *SQLiteBalanceRepository) Get(ctx context.Context, userID string) (*models.UserBalance, error) {
-	query := `SELECT user_id, balance_usd, lifetime_added, lifetime_spent, updated_at FROM user_balances WHERE user_id = ?`
+	query := `SELECT user_id, balance_usd, lifetime_added, lifetime_spent, period_start, period_end, updated_at FROM user_balances WHERE user_id = ?`
 	var balance models.UserBalance
+	var periodStart, periodEnd sql.NullString
 	var updatedAt string
-	err := r.db.QueryRowContext(ctx, query, userID).Scan(&balance.UserID, &balance.BalanceUSD, &balance.LifetimeAdded, &balance.LifetimeSpent, &updatedAt)
+	err := r.db.QueryRowContext(ctx, query, userID).Scan(&balance.UserID, &balance.BalanceUSD, &balance.LifetimeAdded, &balance.LifetimeSpent, &periodStart, &periodEnd, &updatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
+	if periodStart.Valid {
+		t, _ := time.Parse(time.RFC3339, periodStart.String)
+		balance.PeriodStart = &t
+	}
+	if periodEnd.Valid {
+		t, _ := time.Parse(time.RFC3339, periodEnd.String)
+		balance.PeriodEnd = &t
+	}
 	balance.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
 	return &balance, nil
 }
 
 func (r *SQLiteBalanceRepository) Upsert(ctx context.Context, balance *models.UserBalance) error {
-	query := `INSERT INTO user_balances (user_id, balance_usd, lifetime_added, lifetime_spent, updated_at)
-		VALUES (?, ?, ?, ?, ?)
+	query := `INSERT INTO user_balances (user_id, balance_usd, lifetime_added, lifetime_spent, period_start, period_end, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(user_id) DO UPDATE SET
 			balance_usd = excluded.balance_usd,
 			lifetime_added = excluded.lifetime_added,
 			lifetime_spent = excluded.lifetime_spent,
+			period_start = COALESCE(excluded.period_start, user_balances.period_start),
+			period_end = COALESCE(excluded.period_end, user_balances.period_end),
 			updated_at = excluded.updated_at`
-	_, err := r.db.ExecContext(ctx, query, balance.UserID, balance.BalanceUSD, balance.LifetimeAdded, balance.LifetimeSpent, balance.UpdatedAt.Format(time.RFC3339))
+	var periodStart, periodEnd *string
+	if balance.PeriodStart != nil {
+		s := balance.PeriodStart.Format(time.RFC3339)
+		periodStart = &s
+	}
+	if balance.PeriodEnd != nil {
+		s := balance.PeriodEnd.Format(time.RFC3339)
+		periodEnd = &s
+	}
+	_, err := r.db.ExecContext(ctx, query, balance.UserID, balance.BalanceUSD, balance.LifetimeAdded, balance.LifetimeSpent, periodStart, periodEnd, balance.UpdatedAt.Format(time.RFC3339))
+	return err
+}
+
+// UpdateSubscriptionPeriod updates only the subscription period dates for a user.
+// This is called when we receive Clerk subscription webhooks.
+func (r *SQLiteBalanceRepository) UpdateSubscriptionPeriod(ctx context.Context, userID string, periodStart, periodEnd time.Time) error {
+	// First try to update existing record
+	query := `UPDATE user_balances SET period_start = ?, period_end = ?, updated_at = ? WHERE user_id = ?`
+	result, err := r.db.ExecContext(ctx, query, periodStart.Format(time.RFC3339), periodEnd.Format(time.RFC3339), time.Now().Format(time.RFC3339), userID)
+	if err != nil {
+		return err
+	}
+
+	// If no rows were updated, create a new record
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		insertQuery := `INSERT INTO user_balances (user_id, balance_usd, lifetime_added, lifetime_spent, period_start, period_end, updated_at)
+			VALUES (?, 0, 0, 0, ?, ?, ?)`
+		_, err = r.db.ExecContext(ctx, insertQuery, userID, periodStart.Format(time.RFC3339), periodEnd.Format(time.RFC3339), time.Now().Format(time.RFC3339))
+	}
 	return err
 }
 

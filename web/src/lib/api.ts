@@ -383,7 +383,7 @@ export interface FallbackChainEntry {
 }
 
 export interface FallbackChainEntryInput {
-  provider: 'openrouter' | 'anthropic' | 'openai' | 'ollama';
+  provider: string; // Dynamic providers from registry
   model: string;
   temperature?: number;
   max_tokens?: number;
@@ -424,6 +424,22 @@ export async function listUserServiceKeys() {
   return request<{ keys: UserServiceKey[] }>('GET', '/api/v1/llm/keys');
 }
 
+// LLM Providers (dynamic list based on user features)
+export interface LLMProvider {
+  name: string;
+  display_name: string;
+  description: string;
+  requires_key: boolean;
+  key_placeholder?: string;
+  base_url_hint?: string;
+  docs_url?: string;
+  required_features?: string[];
+}
+
+export async function listLLMProviders() {
+  return request<{ providers: LLMProvider[] }>('GET', '/api/v1/llm/providers');
+}
+
 export async function upsertUserServiceKey(input: UserServiceKeyInput) {
   return request<UserServiceKey>('PUT', '/api/v1/llm/keys', input);
 }
@@ -446,7 +462,7 @@ export interface UserFallbackChainEntry {
 }
 
 export interface UserFallbackChainEntryInput {
-  provider: 'openrouter' | 'anthropic' | 'openai' | 'ollama';
+  provider: string; // Dynamic providers from registry
   model: string;
   temperature?: number;
   max_tokens?: number;
@@ -775,5 +791,28 @@ export async function listJobWebhookDeliveries(jobId: string) {
     'GET',
     `/api/v1/jobs/${jobId}/webhook-deliveries`
   );
+}
+
+// Pricing / Tier Limits (public endpoint)
+// Feature availability (webhooks, BYOK, etc.) is controlled by Clerk features, not tier limits.
+// Only includes limits that are actually enforced by the API.
+export interface TierLimits {
+  name: string;
+  display_name: string;
+  monthly_extractions: number;      // 0 = unlimited
+  max_concurrent_jobs: number;      // 0 = unlimited
+  max_pages_per_crawl: number;      // 0 = unlimited
+  requests_per_minute: number;      // 0 = unlimited
+  credit_allocation_usd: number;    // Monthly USD credit for premium models (0 = none)
+  credit_rollover_months: number;   // -1 = never expires, 0 = current period, N = N additional periods
+}
+
+export async function listTierLimits() {
+  return request<{ tiers: TierLimits[] }>('GET', '/api/v1/pricing/tiers', undefined, false);
+}
+
+// Admin: Sync tier metadata from Clerk Commerce
+export async function syncTiers() {
+  return request<{ message: string }>('POST', '/api/v1/admin/tiers/sync');
 }
 

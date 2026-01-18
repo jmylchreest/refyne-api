@@ -11,6 +11,7 @@ import (
 	"github.com/oklog/ulid/v2"
 
 	"github.com/jmylchreest/refyne-api/internal/config"
+	"github.com/jmylchreest/refyne-api/internal/constants"
 	"github.com/jmylchreest/refyne-api/internal/models"
 	"github.com/jmylchreest/refyne-api/internal/repository"
 )
@@ -68,20 +69,61 @@ func (s *BalanceService) CheckBalance(ctx context.Context, userID string, requir
 }
 
 // AddSubscriptionCredits adds credits for a subscription payment.
-// Uses Stripe payment ID for idempotency.
+// Uses Stripe/Clerk payment ID for idempotency.
+// Credit expiry is determined by the tier's CreditRolloverMonths setting:
+//   - -1: never expires
+//   - 0: expires at end of current billing period
+//   - N: expires N additional periods after current
 func (s *BalanceService) AddSubscriptionCredits(ctx context.Context, userID, stripePaymentID, tier string) error {
+	// Get tier limits which include credit allocation and rollover settings
+	tierLimits := constants.GetTierLimits(tier)
+
 	// Get allocation for the tier
-	allocation := s.billingConfig.GetAllocation(tier)
+	allocation := tierLimits.CreditAllocationUSD
 	if allocation <= 0 {
 		s.logger.Info("no credit allocation for tier", "user_id", userID, "tier", tier)
 		return nil
 	}
 
-	// Calculate expiry date based on rollover config
+	// Calculate expiry date based on tier's rollover setting
+	rolloverMonths := tierLimits.CreditRolloverMonths
 	var expiresAt *time.Time
-	if s.billingConfig.CreditRolloverMonths > 0 {
-		expiry := time.Now().AddDate(0, s.billingConfig.CreditRolloverMonths+1, 0) // +1 for current month
-		expiresAt = &expiry
+
+	if rolloverMonths == -1 {
+		// Never expires - leave expiresAt as nil
+		s.logger.Debug("credits never expire", "user_id", userID, "tier", tier)
+	} else {
+		// Get the user's current billing period
+		balance, err := s.repos.Balance.Get(ctx, userID)
+		if err != nil {
+			s.logger.Warn("failed to get balance for expiry calculation, using fallback",
+				"user_id", userID,
+				"error", err,
+			)
+		}
+
+		if balance != nil && balance.PeriodEnd != nil {
+			// Use subscription period end as base, add rollover months
+			expiry := balance.PeriodEnd.AddDate(0, rolloverMonths, 0)
+			expiresAt = &expiry
+			s.logger.Debug("credit expiry set from subscription period",
+				"user_id", userID,
+				"period_end", balance.PeriodEnd.Format(time.RFC3339),
+				"rollover_months", rolloverMonths,
+				"expires_at", expiry.Format(time.RFC3339),
+			)
+		} else {
+			// Fallback: use calendar month end + rollover
+			// This should only happen if webhook hasn't set period yet
+			now := time.Now()
+			endOfMonth := time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC).Add(-time.Second)
+			expiry := endOfMonth.AddDate(0, rolloverMonths, 0)
+			expiresAt = &expiry
+			s.logger.Warn("using calendar month fallback for credit expiry",
+				"user_id", userID,
+				"expires_at", expiry.Format(time.RFC3339),
+			)
+		}
 	}
 
 	return s.addCredits(ctx, userID, models.TxTypeSubscription, allocation, expiresAt, &stripePaymentID, nil,
@@ -163,7 +205,10 @@ func (s *BalanceService) ExpireOldCredits(ctx context.Context) (int64, error) {
 }
 
 // RecalculateExpiry updates expiry dates for all non-expired subscription credits.
-// Useful when the rollover configuration changes.
+// NOTE: This function is deprecated as rollover is now per-tier and stored in TierLimits.
+// Credit transactions would need to store the tier they were issued for to properly
+// recalculate expiry. Since all tiers currently have CreditRolloverMonths=0, this
+// function sets all credits to expire at end of month as a fallback.
 func (s *BalanceService) RecalculateExpiry(ctx context.Context) error {
 	credits, err := s.repos.CreditTransaction.GetNonExpiredSubscriptionCredits(ctx)
 	if err != nil {
@@ -171,14 +216,14 @@ func (s *BalanceService) RecalculateExpiry(ctx context.Context) error {
 	}
 
 	for _, credit := range credits {
-		var newExpiry *time.Time
-
-		if s.billingConfig.CreditRolloverMonths > 0 {
-			// Calculate new expiry based on creation date + rollover months + 1
-			expiry := credit.CreatedAt.AddDate(0, s.billingConfig.CreditRolloverMonths+1, 0)
-			newExpiry = &expiry
-		}
-		// If rollover is 0, newExpiry stays nil (no expiry)
+		// Since we don't know the tier this credit was issued for,
+		// set expiry to end of the month the credit was created in
+		endOfMonth := time.Date(
+			credit.CreatedAt.Year(),
+			credit.CreatedAt.Month()+1,
+			1, 0, 0, 0, 0, time.UTC,
+		).Add(-time.Second)
+		newExpiry := &endOfMonth
 
 		// Only update if different
 		if !expiryEqual(credit.ExpiresAt, newExpiry) {
@@ -265,6 +310,35 @@ func (s *BalanceService) GetTransactionHistory(ctx context.Context, userID strin
 // GetMonthlySpend retrieves how much a user has spent in a given month.
 func (s *BalanceService) GetMonthlySpend(ctx context.Context, userID string, month time.Time) (float64, error) {
 	return s.repos.Usage.GetMonthlySpend(ctx, userID, month)
+}
+
+// UpdateSubscriptionPeriod updates the user's current billing period dates.
+// This is called when we receive Clerk subscription webhooks with period information.
+func (s *BalanceService) UpdateSubscriptionPeriod(ctx context.Context, userID string, periodStart, periodEnd time.Time) error {
+	if err := s.repos.Balance.UpdateSubscriptionPeriod(ctx, userID, periodStart, periodEnd); err != nil {
+		return fmt.Errorf("failed to update subscription period: %w", err)
+	}
+
+	s.logger.Info("subscription period updated",
+		"user_id", userID,
+		"period_start", periodStart.Format(time.RFC3339),
+		"period_end", periodEnd.Format(time.RFC3339),
+	)
+
+	return nil
+}
+
+// GetSubscriptionPeriod retrieves the user's current billing period.
+// Returns nil times if no period is set.
+func (s *BalanceService) GetSubscriptionPeriod(ctx context.Context, userID string) (*time.Time, *time.Time, error) {
+	balance, err := s.repos.Balance.Get(ctx, userID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get balance: %w", err)
+	}
+	if balance == nil {
+		return nil, nil, nil
+	}
+	return balance.PeriodStart, balance.PeriodEnd, nil
 }
 
 // expiryEqual compares two expiry times, handling nil values.

@@ -1,0 +1,65 @@
+---
+title: Plans & Limits
+description: Understand the limits and restrictions for each subscription tier
+---
+
+Each <Refyne /> subscription tier has specific limits that determine your API usage. These limits are enforced server-side to ensure fair usage across all users.
+
+## Tier Limits
+
+<TierLimitsTable />
+
+## Understanding the Limits
+
+### Monthly Extractions
+
+The total number of extraction requests you can make per billing period. This includes both single-page extractions and each page processed during a crawl job. Your usage resets on your subscription renewal date (the anniversary of when you subscribed).
+
+### Max Pages per Crawl
+
+The maximum number of pages that can be processed in a single crawl or sitemap job. If your crawl discovers more URLs than your limit allows, processing will stop at the limit. For sitemap extractions, this limits how many sitemap URLs are processed.
+
+### Concurrent Jobs
+
+The maximum number of crawl/sitemap jobs that can run simultaneously. Single-page extractions are not limited by this. If you exceed this limit, new job requests will be rejected until existing jobs complete.
+
+### API Rate Limit
+
+The maximum number of API requests within a rolling 1-minute window. This applies to all API endpoints. If you exceed this limit, requests will receive a `429 Too Many Requests` response with a `Retry-After` header.
+
+## Feature Availability
+
+In addition to numeric limits, certain features are only available on specific plans. Features are managed through your subscription and checked in real-time:
+
+| Feature | Free | Standard | Pro |
+|---------|------|----------|-----|
+| Single-page extraction | Yes | Yes | Yes |
+| Multi-page crawling | No | Yes | Yes |
+| Sitemap extraction | No | Yes | Yes |
+| Webhooks | No | Yes | Yes |
+| Bring Your Own Key (BYOK) | No | Yes | Yes |
+| Custom model chains | No | Yes | Yes |
+| Anti-bot bypass | No | No | Yes |
+
+Feature availability is determined by your current subscription and updates immediately when you upgrade or downgrade.
+
+## Handling Limits
+
+When you hit a limit, the API returns an appropriate error response:
+
+```json
+{
+  "error": "Monthly extraction limit exceeded",
+  "error_category": "quota_exceeded"
+}
+```
+
+Common error categories:
+- `quota_exceeded` - Monthly extraction limit reached
+- `rate_limited` - Too many requests per minute
+- `concurrent_limit` - Too many concurrent jobs
+- `feature_disabled` - Feature not available on your plan
+
+## Upgrading Your Plan
+
+To increase your limits or access additional features, visit the [billing page](/dashboard/billing) in your dashboard to upgrade your subscription.

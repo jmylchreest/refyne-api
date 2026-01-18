@@ -10,11 +10,13 @@ import {
   setFallbackChain,
   validateModels,
   listSubscriptionTiers,
+  listLLMProviders,
   ServiceKey,
   ServiceKeyInput,
   FallbackChainEntry,
   ModelValidationResult,
   SubscriptionTier,
+  LLMProvider,
 } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -54,6 +56,7 @@ export default function ExtractorsPage() {
   const [tiers, setTiers] = useState<SubscriptionTier[]>([]);
   const [selectedTier, setSelectedTier] = useState<string>('');
   const [chainsByTier, setChainsByTier] = useState<Record<string, FallbackChainEntry[]>>({});
+  const [availableProviders, setAvailableProviders] = useState<LLMProvider[]>([]);
 
   const isSuperadmin = user?.publicMetadata?.global_superadmin === true;
 
@@ -80,12 +83,14 @@ export default function ExtractorsPage() {
 
   const loadData = async () => {
     try {
-      const [keysRes, tiersRes] = await Promise.all([
+      const [keysRes, tiersRes, providersRes] = await Promise.all([
         listServiceKeys(),
         listSubscriptionTiers(),
+        listLLMProviders(),
       ]);
       setKeys(keysRes.keys || []);
       setTiers(tiersRes.tiers || []);
+      setAvailableProviders(providersRes.providers || []);
 
       if (!selectedTier && tiersRes.tiers && tiersRes.tiers.length > 0) {
         setSelectedTier(tiersRes.tiers[0].slug);
@@ -468,6 +473,7 @@ export default function ExtractorsPage() {
               chain={chain as SavedChainEntry[]}
               onSave={handleSaveChain}
               getModelStatusBadge={getModelStatusBadge}
+              availableProviders={availableProviders}
             />
           ) : (
             <div className="text-sm text-zinc-500 text-center py-4">

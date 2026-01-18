@@ -9,6 +9,7 @@ import { notFound } from 'next/navigation';
 import defaultMdxComponents from 'fumadocs-ui/mdx';
 import { APIPage } from '@/components/api-page';
 import { RefyneText } from '@/components/refyne-logo';
+import { TierLimitsTable } from '@/components/tier-limits-table';
 
 export default async function Page(props: {
   params: Promise<{ slug?: string[] }>;
@@ -24,7 +25,7 @@ export default async function Page(props: {
       <DocsTitle>{page.data.title}</DocsTitle>
       <DocsDescription>{page.data.description}</DocsDescription>
       <DocsBody>
-        <MDX components={{ ...defaultMdxComponents, APIPage, Refyne: RefyneText }} />
+        <MDX components={{ ...defaultMdxComponents, APIPage, Refyne: RefyneText, TierLimitsTable }} />
       </DocsBody>
     </DocsPage>
   );

@@ -109,15 +109,17 @@ func (h *ExtractionHandler) Extract(ctx context.Context, input *ExtractInput) (*
 		return nil, huma.Error401Unauthorized("unauthorized")
 	}
 
-	// Get user's tier and BYOK eligibility from claims
+	// Get user's tier and feature eligibility from claims
 	tier := "free"
 	byokAllowed := false
+	modelsCustomAllowed := false
 	if claims := mw.GetUserClaims(ctx); claims != nil {
 		if claims.Tier != "" {
 			tier = claims.Tier
 		}
-		// Check if user has the "provider_byok" feature from Clerk Commerce
+		// Check if user has features from Clerk Commerce
 		byokAllowed = claims.HasFeature("provider_byok")
+		modelsCustomAllowed = claims.HasFeature("models_custom")
 	}
 
 	var llmCfg *service.LLMConfigInput
@@ -150,11 +152,12 @@ func (h *ExtractionHandler) Extract(ctx context.Context, input *ExtractInput) (*
 		}
 	}
 
-	// Use ExtractWithContext to pass tier and BYOK eligibility information
+	// Use ExtractWithContext to pass tier and feature eligibility information
 	ectx := &service.ExtractContext{
-		UserID:      userID,
-		Tier:        tier,
-		BYOKAllowed: byokAllowed,
+		UserID:              userID,
+		Tier:                tier,
+		BYOKAllowed:         byokAllowed,
+		ModelsCustomAllowed: modelsCustomAllowed,
 	}
 
 	result, err := h.extractionSvc.ExtractWithContext(ctx, userID, service.ExtractInput{

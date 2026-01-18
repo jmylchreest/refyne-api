@@ -18,12 +18,14 @@ import {
   createSchema,
   updateSchema,
   getSchema,
+  listTierLimits,
   ExtractResult,
   AnalyzeResult,
   Schema,
   SavedSite,
   ApiError,
   OutputFormat,
+  TierLimits,
 } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -121,6 +123,12 @@ export default function DashboardPage() {
   const searchParams = useSearchParams();
   const features = parseClerkFeatures(sessionClaims?.fea as string | undefined);
   const canCrawl = features.includes('extraction_crawled');
+
+  // Tier limits for enforcing max pages
+  const [tierLimits, setTierLimits] = useState<TierLimits[]>([]);
+  const userTier = (sessionClaims?.tier as string) || 'free';
+  const currentTierLimits = tierLimits.find(t => t.name === userTier);
+  const maxPagesLimit = currentTierLimits?.max_pages_per_crawl || 0;
 
   // URL and extraction state
   const [url, setUrl] = useState('');
@@ -272,11 +280,21 @@ export default function DashboardPage() {
     }
   }, [analysisResult]);
 
-  // Load schemas and saved sites on mount
+  // Load schemas, saved sites, and tier limits on mount
   useEffect(() => {
     loadSchemas();
     loadSavedSites();
+    loadTierLimits();
   }, []);
+
+  const loadTierLimits = async () => {
+    try {
+      const response = await listTierLimits();
+      setTierLimits(response.tiers || []);
+    } catch {
+      // Tier limits are optional for functionality
+    }
+  };
 
   // Handle URL parameters from catalogue pages
   useEffect(() => {
@@ -995,6 +1013,7 @@ export default function DashboardPage() {
         suggestedSelectors={analysisResult?.follow_patterns}
         canCrawl={canCrawl}
         disabled={isLoading || isAnalyzing}
+        maxPagesLimit={maxPagesLimit}
       />
 
       {/* SECTION 3: Schema Editor */}

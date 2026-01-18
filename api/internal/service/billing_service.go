@@ -9,6 +9,7 @@ import (
 	"github.com/oklog/ulid/v2"
 
 	"github.com/jmylchreest/refyne-api/internal/config"
+	"github.com/jmylchreest/refyne-api/internal/constants"
 	"github.com/jmylchreest/refyne-api/internal/llm"
 	"github.com/jmylchreest/refyne-api/internal/models"
 	"github.com/jmylchreest/refyne-api/internal/repository"
@@ -128,11 +129,21 @@ func (s *BillingService) EstimateCost(pages int, model, provider string) float64
 	return baseCost * 2
 }
 
-// CalculateTotalCost calculates the total cost including markup for a given tier.
-func (s *BillingService) CalculateTotalCost(llmCostUSD float64, tier string) (totalUSD, markupRate, markupUSD float64) {
-	markupRate = s.billingCfg.GetMarkup(tier)
+// CalculateTotalCost calculates the total cost including markup and per-transaction fees.
+// Returns the total, markup percentage, and markup amount.
+// Markup and per-transaction costs are configured per-tier in constants.TierLimits.
+// For BYOK transactions, pass isBYOK=true to skip markup (user pays provider directly).
+func (s *BillingService) CalculateTotalCost(llmCostUSD float64, tier string, isBYOK bool) (totalUSD, markupRate, markupUSD float64) {
+	// BYOK transactions have no markup - user pays provider directly
+	if isBYOK {
+		return llmCostUSD, 0, 0
+	}
+
+	tierLimits := constants.GetTierLimits(tier)
+	markupRate = tierLimits.MarkupPercentage
 	markupUSD = llmCostUSD * markupRate
-	totalUSD = llmCostUSD + markupUSD
+	perTxCost := tierLimits.CostPerTransaction
+	totalUSD = llmCostUSD + markupUSD + perTxCost
 	return
 }
 
@@ -408,7 +419,7 @@ func (s *BillingService) ChargeForUsage(ctx context.Context, input *ChargeForUsa
 
 	// Apply markup for non-BYOK
 	if !input.IsBYOK && result.LLMCostUSD > 0 {
-		result.TotalCostUSD, result.MarkupRate, result.MarkupUSD = s.CalculateTotalCost(result.LLMCostUSD, input.Tier)
+		result.TotalCostUSD, result.MarkupRate, result.MarkupUSD = s.CalculateTotalCost(result.LLMCostUSD, input.Tier, false)
 
 		// Deduct credits
 		jobID := &input.JobID

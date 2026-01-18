@@ -35,6 +35,8 @@ interface CrawlModeSectionProps {
   suggestedSelectors?: FollowPattern[];
   canCrawl: boolean;
   disabled?: boolean;
+  /** Maximum pages allowed by the user's tier (0 = unlimited) */
+  maxPagesLimit?: number;
 }
 
 export function CrawlModeSection({
@@ -45,6 +47,7 @@ export function CrawlModeSection({
   suggestedSelectors,
   canCrawl,
   disabled = false,
+  maxPagesLimit = 0,
 }: CrawlModeSectionProps) {
   const updateOption = <K extends keyof CrawlOptions>(key: K, value: CrawlOptions[K]) => {
     onOptionsChange({ ...crawlOptions, [key]: value });
@@ -266,14 +269,22 @@ export function CrawlModeSection({
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <Label htmlFor="max-pages" className="text-xs text-zinc-600 dark:text-zinc-400">
-                    Max Pages (0 = no limit)
+                    Max Pages {maxPagesLimit > 0 ? `(limit: ${maxPagesLimit})` : '(0 = no limit)'}
                   </Label>
                   <Input
                     id="max-pages"
                     type="number"
                     min={0}
+                    max={maxPagesLimit > 0 ? maxPagesLimit : undefined}
                     value={crawlOptions.maxPages}
-                    onChange={(e) => updateOption('maxPages', parseInt(e.target.value) || 0)}
+                    onChange={(e) => {
+                      let value = parseInt(e.target.value) || 0;
+                      // Clamp to tier limit if set
+                      if (maxPagesLimit > 0 && value > maxPagesLimit) {
+                        value = maxPagesLimit;
+                      }
+                      updateOption('maxPages', value);
+                    }}
                     disabled={disabled}
                     className="h-9"
                   />
@@ -349,14 +360,22 @@ export function CrawlModeSection({
             {/* Max Pages Limit */}
             <div className="space-y-1.5">
               <Label htmlFor="sitemap-max-pages" className="text-xs text-zinc-600 dark:text-zinc-400">
-                Max Pages (0 = no limit)
+                Max Pages {maxPagesLimit > 0 ? `(limit: ${maxPagesLimit})` : '(0 = no limit)'}
               </Label>
               <Input
                 id="sitemap-max-pages"
                 type="number"
                 min={0}
+                max={maxPagesLimit > 0 ? maxPagesLimit : undefined}
                 value={crawlOptions.maxPages}
-                onChange={(e) => updateOption('maxPages', parseInt(e.target.value) || 0)}
+                onChange={(e) => {
+                  let value = parseInt(e.target.value) || 0;
+                  // Clamp to tier limit if set
+                  if (maxPagesLimit > 0 && value > maxPagesLimit) {
+                    value = maxPagesLimit;
+                  }
+                  updateOption('maxPages', value);
+                }}
                 disabled={disabled}
                 className="h-9 w-32"
               />
