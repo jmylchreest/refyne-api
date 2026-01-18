@@ -1,0 +1,12 @@
+[submodule "sdks/rust"]
+	path = sdks/rust
+	url = git@github.com:jmylchreest/refyne-sdk-rust.git
+[submodule "sdks/typescript"]
+	path = sdks/typescript
+	url = git@github.com:jmylchreest/refyne-sdk-ts.git
+[submodule "sdks/python"]
+	path = sdks/python
+	url = git@github.com:jmylchreest/refyne-sdk-python.git
+[submodule "sdks/go"]
+	path = sdks/go
+	url = git@github.com:jmylchreest/refyne-sdk-go.git
