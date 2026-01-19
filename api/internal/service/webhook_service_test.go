@@ -547,9 +547,9 @@ func TestSendForJob_EphemeralAndPersistent(t *testing.T) {
 }
 
 func TestSendForJob_DecryptsSecret(t *testing.T) {
-	var receivedSignature string
+	signatureChan := make(chan string, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedSignature = r.Header.Get("X-Refyne-Signature")
+		signatureChan <- r.Header.Get("X-Refyne-Signature")
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -586,12 +586,15 @@ func TestSendForJob_DecryptsSecret(t *testing.T) {
 	// Send for job
 	svc.SendForJob(context.Background(), "user-1", "job.completed", "job-123", nil, nil)
 
-	// Wait for webhook to be called
-	time.Sleep(500 * time.Millisecond)
-
-	// Verify that signature was generated (meaning secret was decrypted)
-	if receivedSignature == "" {
-		t.Error("expected signature to be set (secret should be decrypted)")
+	// Wait for webhook to be called with proper synchronization
+	select {
+	case receivedSignature := <-signatureChan:
+		// Verify that signature was generated (meaning secret was decrypted)
+		if receivedSignature == "" {
+			t.Error("expected signature to be set (secret should be decrypted)")
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("webhook not called within timeout")
 	}
 }
 
