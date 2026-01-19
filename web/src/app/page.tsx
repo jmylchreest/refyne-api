@@ -96,7 +96,7 @@ export default function Home() {
                 </p>
               </div>
               <div className="bg-zinc-900 dark:bg-zinc-950 rounded-lg border border-zinc-700/50 p-4 sm:p-6 font-mono text-xs sm:text-sm overflow-x-auto">
-                <div className="text-zinc-500 mb-2">// Your schema</div>
+                <div className="text-zinc-500 mb-2">{"// Your schema"}</div>
                 <div className="text-emerald-400">{'{'}</div>
                 <div className="pl-2 sm:pl-4 text-zinc-300">
                   <span className="text-purple-400">&quot;products&quot;</span>: [{'{'}<br />
