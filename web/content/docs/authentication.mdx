@@ -7,8 +7,8 @@ All API requests require authentication using an API key.
 
 ## Getting an API Key
 
-1. Sign in to your [<Refyne /> Dashboard](https://refyne.uk/dashboard)
-2. Navigate to **API Keys**
+1. Sign in to your [<Refyne /> Dashboard](/dashboard/keys)
+2. Navigate to **API Keys** (or use the link above)
 3. Click **Create New Key**
 4. Copy your key - it will only be shown once
 
@@ -43,12 +43,6 @@ API keys can have different scopes:
 
 ## Rate Limits
 
-Rate limits depend on your subscription tier:
-
-| Tier | Requests/min | Concurrent Jobs | Monthly Extractions |
-|------|--------------|-----------------|---------------------|
-| Free | 10 | 1 | 100 |
-| Standard | 60 | 3 | 1,000 |
-| Pro | 60 | 10 | Unlimited |
+Rate limits depend on your subscription tier. See [Plans & Limits](/docs/plans-limits) for full details.
 
 When you exceed a rate limit, the API returns HTTP 429 (Too Many Requests) with details about the limit and when you can retry.

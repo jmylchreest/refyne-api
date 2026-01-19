@@ -1,3 +1,4 @@
+import type { ComponentType } from 'react';
 import { source } from '@/lib/source';
 import {
   DocsPage,
@@ -18,12 +19,29 @@ export default async function Page(props: {
   const page = source.getPage(params.slug ?? []);
   if (!page) notFound();
 
-  const MDX = page.data.body;
+  const { data } = page;
+
+  // Handle dynamic OpenAPI pages (from openapiSource - have type: 'openapi')
+  if (data.type === 'openapi') {
+    const apiPageProps = (data as { getAPIPageProps: () => Parameters<typeof APIPage>[0] }).getAPIPageProps();
+    return (
+      <DocsPage toc={data.toc} full>
+        <DocsTitle>{data.title}</DocsTitle>
+        <DocsDescription>{data.description}</DocsDescription>
+        <DocsBody>
+          <APIPage {...apiPageProps} />
+        </DocsBody>
+      </DocsPage>
+    );
+  }
+
+  // Handle regular MDX pages (including generated API reference)
+  const MDX = (data as { body: ComponentType<{ components: Record<string, unknown> }> }).body;
 
   return (
-    <DocsPage toc={page.data.toc}>
-      <DocsTitle>{page.data.title}</DocsTitle>
-      <DocsDescription>{page.data.description}</DocsDescription>
+    <DocsPage toc={data.toc}>
+      <DocsTitle>{data.title}</DocsTitle>
+      <DocsDescription>{data.description}</DocsDescription>
       <DocsBody>
         <MDX components={{ ...defaultMdxComponents, APIPage, Refyne: RefyneText, TierLimitsTable }} />
       </DocsBody>

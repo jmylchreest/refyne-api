@@ -1453,21 +1453,16 @@ curl -H "Authorization: Bearer rf_your_key" \
 Supported formats via Accept header or ?format= query parameter:
 - **application/json** (default): JSON array of results
 - **application/x-ndjson**: Newline-delimited JSON (one result per line)
-- **text/csv**: CSV format with headers
+- **application/yaml**: YAML formatted results
 
 Query parameters:
 - **merge=true**: Merge all page results into a single array
-- **format=json|jsonl|csv**: Override content type
+- **format=json|jsonl|yaml**: Override content type
 
 Example:
 ` + "```" + `bash
 # JSON format (default)
 curl -H "Authorization: Bearer rf_your_key" \
-     https://api.refyne.dev/api/v1/jobs/{id}/results
-
-# CSV format
-curl -H "Authorization: Bearer rf_your_key" \
-     -H "Accept: text/csv" \
      https://api.refyne.dev/api/v1/jobs/{id}/results
 
 # JSONL format with merge
@@ -1502,10 +1497,10 @@ curl -H "Authorization: Bearer rf_your_key" \
 							Description: "Newline-delimited JSON results",
 						},
 					},
-					"text/csv": {
+					"application/yaml": {
 						Schema: &huma.Schema{
 							Type:        "string",
-							Description: "CSV formatted results",
+							Description: "YAML formatted results",
 						},
 					},
 				},
@@ -1516,7 +1511,7 @@ curl -H "Authorization: Bearer rf_your_key" \
 	}, func(ctx context.Context, input *struct {
 		ID     string `path:"id" doc:"Job ID"`
 		Merge  bool   `query:"merge" default:"false" doc:"Merge all page results into single array"`
-		Format string `query:"format" enum:"json,jsonl,csv" doc:"Output format override"`
+		Format string `query:"format" enum:"json,jsonl,yaml" doc:"Output format override"`
 	}) (*struct{ Body []byte }, error) {
 		// Placeholder handler - actual handling is done by chi router.
 		// This registration is only for OpenAPI schema generation.

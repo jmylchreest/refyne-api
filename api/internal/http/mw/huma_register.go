@@ -78,6 +78,13 @@ func WithOperationID(id string) OperationOption {
 	}
 }
 
+// WithHidden hides the operation from OpenAPI documentation.
+func WithHidden() OperationOption {
+	return func(op *huma.Operation) {
+		op.Hidden = true
+	}
+}
+
 // PublicGet registers a public GET endpoint (no auth required).
 func PublicGet[I, O any](api huma.API, path string, handler func(ctx context.Context, input *I) (*O, error), opts ...OperationOption) {
 	op := huma.Operation{

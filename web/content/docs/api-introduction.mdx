@@ -1,9 +1,9 @@
 ---
-title: API Reference
-description: Complete API reference for Refyne
+title: API Introduction
+description: Getting started with the Refyne API
 ---
 
-Interactive API documentation with code examples and a testing playground.
+Welcome to the <Refyne /> API. This guide covers authentication, rate limits, error handling, and provides an overview of available endpoints.
 
 ## Base URL
 
@@ -19,19 +19,16 @@ All endpoints require authentication via Bearer token:
 Authorization: Bearer YOUR_API_KEY
 ```
 
-Get your API key from the [Dashboard](/dashboard).
+Get your API key from the [Dashboard](/dashboard/keys).
 
 ## Endpoint Categories
 
 <Cards>
   <Card title="Extraction" href="/docs/api-reference/extraction">
-    Extract structured data from single pages
-  </Card>
-  <Card title="Crawling" href="/docs/api-reference/crawling">
-    Multi-page crawling and job creation
+    Extract, crawl, and analyze web pages
   </Card>
   <Card title="Jobs" href="/docs/api-reference/jobs">
-    Job status and results retrieval
+    Job status, results, and streaming
   </Card>
   <Card title="Schemas" href="/docs/api-reference/schemas">
     Schema catalog management
@@ -39,26 +36,37 @@ Get your API key from the [Dashboard](/dashboard).
   <Card title="Sites" href="/docs/api-reference/sites">
     Saved site configuration
   </Card>
-  <Card title="Usage" href="/docs/api-reference/usage">
-    Usage statistics and billing
+  <Card title="Webhooks" href="/docs/api-reference/webhooks">
+    Webhook management and deliveries
   </Card>
   <Card title="API Keys" href="/docs/api-reference/api-keys">
     API key management
   </Card>
-  <Card title="LLM Configuration" href="/docs/api-reference/llm-configuration">
-    LLM provider and fallback chain settings
+  <Card title="LLM Providers" href="/docs/api-reference/llm-providers">
+    Available LLM providers and models
+  </Card>
+  <Card title="LLM Keys" href="/docs/api-reference/llm-keys">
+    User LLM API key management
+  </Card>
+  <Card title="LLM Chain" href="/docs/api-reference/llm-chain">
+    LLM fallback chain configuration
+  </Card>
+  <Card title="Usage" href="/docs/api-reference/usage">
+    Usage statistics and billing
+  </Card>
+  <Card title="Pricing" href="/docs/api-reference/pricing">
+    Pricing and tier information
+  </Card>
+  <Card title="Health" href="/docs/api-reference/health">
+    System health and status
   </Card>
 </Cards>
 
 ## Rate Limits
 
-Rate limits depend on your subscription tier:
+Rate limits depend on your subscription tier. See [Plans & Limits](/docs/plans-limits) for full details.
 
-| Tier | Requests/min | Concurrent Jobs |
-|------|--------------|-----------------|
-| Free | 10 | 1 |
-| Standard | 60 | 5 |
-| Pro | 300 | 20 |
+<TierLimitsTable />
 
 Rate limit info is returned in response headers:
 

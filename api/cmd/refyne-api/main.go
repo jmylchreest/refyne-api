@@ -242,6 +242,8 @@ func main() {
 	// Create Huma API config for main API with OpenAPI docs
 	humaConfig := huma.DefaultConfig("Refyne API", "1.0.0")
 	humaConfig.Info.Description = "LLM-powered web extraction API that transforms unstructured websites into clean, typed JSON."
+	// Disable $schema field in responses - it conflicts with "schema" field in SDK code generators
+	humaConfig.CreateHooks = nil
 	humaConfig.Servers = []*huma.Server{
 		{URL: cfg.BaseURL, Description: "API Server"},
 	}
@@ -252,6 +254,22 @@ func main() {
 			Scheme:       "bearer",
 			Description:  "API key authentication. Include your API key in the Authorization header as `Bearer rf_your_key`.",
 		},
+	}
+
+	// Define OpenAPI tags with display names for documentation
+	humaConfig.OpenAPI.Tags = []*huma.Tag{
+		{Name: "Extraction", Description: "Data extraction, crawling, and analysis endpoints", Extensions: map[string]any{"x-displayName": "Extraction"}},
+		{Name: "Jobs", Description: "Job status and results retrieval", Extensions: map[string]any{"x-displayName": "Jobs"}},
+		{Name: "Schemas", Description: "Schema catalog management", Extensions: map[string]any{"x-displayName": "Schemas"}},
+		{Name: "Sites", Description: "Saved site configuration", Extensions: map[string]any{"x-displayName": "Sites"}},
+		{Name: "Webhooks", Description: "Webhook management for real-time notifications", Extensions: map[string]any{"x-displayName": "Webhooks"}},
+		{Name: "API Keys", Description: "API key management", Extensions: map[string]any{"x-displayName": "API Keys"}},
+		{Name: "LLM Providers", Description: "Available LLM providers and models", Extensions: map[string]any{"x-displayName": "LLM Providers"}},
+		{Name: "LLM Keys", Description: "User LLM API key management", Extensions: map[string]any{"x-displayName": "LLM Keys"}},
+		{Name: "LLM Chain", Description: "LLM fallback chain configuration", Extensions: map[string]any{"x-displayName": "LLM Chain"}},
+		{Name: "Usage", Description: "Usage statistics and billing", Extensions: map[string]any{"x-displayName": "Usage"}},
+		{Name: "Health", Description: "System health and status", Extensions: map[string]any{"x-displayName": "Health"}},
+		{Name: "Pricing", Description: "Pricing and tier information", Extensions: map[string]any{"x-displayName": "Pricing"}},
 	}
 
 	// Single Huma API instance for all routes - this ensures all routes appear in OpenAPI
@@ -354,35 +372,39 @@ func main() {
 		mw.WithSummary("Get usage statistics"),
 		mw.WithOperationID("getUsage"))
 
-	// --- LLM Configuration ---
+	// --- LLM Providers ---
 	mw.ProtectedGet(api, "/api/v1/llm/providers", userLLMHandler.ListProviders,
-		mw.WithTags("LLM"),
+		mw.WithTags("LLM Providers"),
 		mw.WithSummary("List LLM providers"),
 		mw.WithOperationID("listProviders"))
+	mw.ProtectedGet(api, "/api/v1/llm/models/{provider}", userLLMHandler.ListModels,
+		mw.WithTags("LLM Providers"),
+		mw.WithSummary("List models for provider"),
+		mw.WithOperationID("listModels"))
+
+	// --- LLM Keys ---
 	mw.ProtectedGet(api, "/api/v1/llm/keys", userLLMHandler.ListServiceKeys,
-		mw.WithTags("LLM"),
+		mw.WithTags("LLM Keys"),
 		mw.WithSummary("List user LLM keys"),
 		mw.WithOperationID("listLlmKeys"))
 	mw.ProtectedPut(api, "/api/v1/llm/keys", userLLMHandler.UpsertServiceKey,
-		mw.WithTags("LLM"),
+		mw.WithTags("LLM Keys"),
 		mw.WithSummary("Upsert user LLM key"),
 		mw.WithOperationID("upsertLlmKey"))
 	mw.ProtectedDelete(api, "/api/v1/llm/keys/{id}", userLLMHandler.DeleteServiceKey,
-		mw.WithTags("LLM"),
+		mw.WithTags("LLM Keys"),
 		mw.WithSummary("Delete user LLM key"),
 		mw.WithOperationID("deleteLlmKey"))
+
+	// --- LLM Chain ---
 	mw.ProtectedGet(api, "/api/v1/llm/chain", userLLMHandler.GetFallbackChain,
-		mw.WithTags("LLM"),
+		mw.WithTags("LLM Chain"),
 		mw.WithSummary("Get LLM fallback chain"),
 		mw.WithOperationID("getLlmChain"))
 	mw.ProtectedPut(api, "/api/v1/llm/chain", userLLMHandler.SetFallbackChain,
-		mw.WithTags("LLM"),
+		mw.WithTags("LLM Chain"),
 		mw.WithSummary("Set LLM fallback chain"),
 		mw.WithOperationID("setLlmChain"))
-	mw.ProtectedGet(api, "/api/v1/llm/models/{provider}", userLLMHandler.ListModels,
-		mw.WithTags("LLM"),
-		mw.WithSummary("List models for provider"),
-		mw.WithOperationID("listModels"))
 
 	// --- API Keys (hosted mode only) ---
 	if !cfg.IsSelfHosted() {
@@ -401,67 +423,79 @@ func main() {
 			mw.WithOperationID("revokeApiKey"))
 	}
 
-	// --- Admin Routes (require superadmin) ---
+	// --- Admin Routes (require superadmin, hidden from OpenAPI) ---
 	mw.ProtectedGet(api, "/api/v1/admin/service-keys", adminHandler.ListServiceKeys,
 		mw.WithTags("Admin"),
 		mw.WithSummary("List service keys"),
 		mw.WithOperationID("adminListServiceKeys"),
-		mw.WithSuperadmin())
+		mw.WithSuperadmin(),
+		mw.WithHidden())
 	mw.ProtectedPut(api, "/api/v1/admin/service-keys", adminHandler.UpsertServiceKey,
 		mw.WithTags("Admin"),
 		mw.WithSummary("Upsert service key"),
 		mw.WithOperationID("adminUpsertServiceKey"),
-		mw.WithSuperadmin())
+		mw.WithSuperadmin(),
+		mw.WithHidden())
 	mw.ProtectedDelete(api, "/api/v1/admin/service-keys/{provider}", adminHandler.DeleteServiceKey,
 		mw.WithTags("Admin"),
 		mw.WithSummary("Delete service key"),
 		mw.WithOperationID("adminDeleteServiceKey"),
-		mw.WithSuperadmin())
+		mw.WithSuperadmin(),
+		mw.WithHidden())
 	mw.ProtectedGet(api, "/api/v1/admin/fallback-chain", adminHandler.GetFallbackChain,
 		mw.WithTags("Admin"),
 		mw.WithSummary("Get admin fallback chain"),
 		mw.WithOperationID("adminGetFallbackChain"),
-		mw.WithSuperadmin())
+		mw.WithSuperadmin(),
+		mw.WithHidden())
 	mw.ProtectedPut(api, "/api/v1/admin/fallback-chain", adminHandler.SetFallbackChain,
 		mw.WithTags("Admin"),
 		mw.WithSummary("Set admin fallback chain"),
 		mw.WithOperationID("adminSetFallbackChain"),
-		mw.WithSuperadmin())
+		mw.WithSuperadmin(),
+		mw.WithHidden())
 	mw.ProtectedGet(api, "/api/v1/admin/models/{provider}", adminHandler.ListModels,
 		mw.WithTags("Admin"),
 		mw.WithSummary("List models for provider (admin)"),
 		mw.WithOperationID("adminListModels"),
-		mw.WithSuperadmin())
+		mw.WithSuperadmin(),
+		mw.WithHidden())
 	mw.ProtectedPost(api, "/api/v1/admin/models/validate", adminHandler.ValidateModels,
 		mw.WithTags("Admin"),
 		mw.WithSummary("Validate models"),
 		mw.WithOperationID("adminValidateModels"),
-		mw.WithSuperadmin())
+		mw.WithSuperadmin(),
+		mw.WithHidden())
 	mw.ProtectedGet(api, "/api/v1/admin/tiers", adminHandler.ListTiers,
 		mw.WithTags("Admin"),
 		mw.WithSummary("List subscription tiers (admin)"),
 		mw.WithOperationID("adminListTiers"),
-		mw.WithSuperadmin())
+		mw.WithSuperadmin(),
+		mw.WithHidden())
 	mw.ProtectedPost(api, "/api/v1/admin/tiers/validate", adminHandler.ValidateTiers,
 		mw.WithTags("Admin"),
 		mw.WithSummary("Validate tiers"),
 		mw.WithOperationID("adminValidateTiers"),
-		mw.WithSuperadmin())
+		mw.WithSuperadmin(),
+		mw.WithHidden())
 	mw.ProtectedPost(api, "/api/v1/admin/tiers/sync", adminHandler.SyncTiers,
 		mw.WithTags("Admin"),
 		mw.WithSummary("Sync tiers from Clerk"),
 		mw.WithOperationID("adminSyncTiers"),
-		mw.WithSuperadmin())
+		mw.WithSuperadmin(),
+		mw.WithHidden())
 	mw.ProtectedGet(api, "/api/v1/admin/schemas", schemaCatalogHandler.ListAllSchemas,
 		mw.WithTags("Admin"),
 		mw.WithSummary("List all schemas (admin)"),
 		mw.WithOperationID("adminListSchemas"),
-		mw.WithSuperadmin())
+		mw.WithSuperadmin(),
+		mw.WithHidden())
 	mw.ProtectedPost(api, "/api/v1/admin/schemas", schemaCatalogHandler.CreatePlatformSchema,
 		mw.WithTags("Admin"),
 		mw.WithSummary("Create platform schema"),
 		mw.WithOperationID("adminCreatePlatformSchema"),
-		mw.WithSuperadmin())
+		mw.WithSuperadmin(),
+		mw.WithHidden())
 
 	// --- Schemas (read access for all authenticated users) ---
 	mw.ProtectedGet(api, "/api/v1/schemas", schemaCatalogHandler.ListSchemas,
