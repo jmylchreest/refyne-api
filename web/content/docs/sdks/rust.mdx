@@ -1,0 +1,268 @@
+---
+title: Rust SDK
+description: Official Rust client for Refyne
+---
+
+The official Rust SDK for <Refyne /> with async support via tokio.
+
+## Installation
+
+Add to your `Cargo.toml`:
+
+```toml
+[dependencies]
+refyne = "0.1"
+tokio = { version = "1.0", features = ["rt-multi-thread", "macros"] }
+serde_json = "1.0"
+```
+
+## Quick Start
+
+```rust
+use refyne::{Client, ExtractRequest};
+use serde_json::json;
+
+#[tokio::main]
+async fn main() -> Result<(), refyne::Error> {
+    let client = Client::builder(std::env::var("REFYNE_API_KEY")?)
+        .build()?;
+
+    let result = client.extract(ExtractRequest {
+        url: "https://example.com/product".into(),
+        schema: json!({
+            "name": "string",
+            "price": "number",
+            "description": "string",
+        }),
+        ..Default::default()
+    }).await?;
+
+    println!("Data: {:?}", result.data);
+    Ok(())
+}
+```
+
+## Configuration
+
+Use the builder pattern to customize the client:
+
+```rust
+use refyne::Client;
+use std::time::Duration;
+
+let client = Client::builder("your-api-key")
+    .base_url("https://api.refyne.uk")     // Optional
+    .timeout(Duration::from_secs(60))       // Optional
+    .max_retries(3)                         // Optional
+    .cache_enabled(true)                    // Optional
+    .build()?;
+```
+
+## Site Analysis
+
+Analyze a website to discover structure and suggested schemas:
+
+```rust
+use refyne::{Client, AnalyzeRequest, CrawlRequest, CrawlOptions};
+use serde_json::json;
+
+#[tokio::main]
+async fn main() -> Result<(), refyne::Error> {
+    let client = Client::builder(std::env::var("REFYNE_API_KEY")?)
+        .build()?;
+
+    let analysis = client.analyze(AnalyzeRequest {
+        url: "https://example.com/products".into(),
+        depth: Some(1),
+    }).await?;
+
+    println!("Suggested Schema: {:?}", analysis.suggested_schema);
+    println!("Follow Patterns: {:?}", analysis.follow_patterns);
+
+    // Use the analysis results for a crawl
+    let job = client.crawl(CrawlRequest {
+        url: "https://example.com/products".into(),
+        schema: analysis.suggested_schema,
+        options: Some(CrawlOptions {
+            follow_selector: Some(analysis.follow_patterns.join(", ")),
+            max_pages: Some(50),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }).await?;
+
+    println!("Job started: {}", job.job_id);
+    Ok(())
+}
+```
+
+## Crawling
+
+```rust
+use refyne::{Client, CrawlRequest, CrawlOptions, JobStatus};
+use serde_json::json;
+use tokio::time::{sleep, Duration};
+
+#[tokio::main]
+async fn main() -> Result<(), refyne::Error> {
+    let client = Client::builder(std::env::var("REFYNE_API_KEY")?)
+        .build()?;
+
+    // Start a crawl job
+    let job = client.crawl(CrawlRequest {
+        url: "https://example.com/products".into(),
+        schema: json!({
+            "name": "string",
+            "price": "number",
+        }),
+        options: Some(CrawlOptions {
+            follow_selector: Some("a.product-link".into()),
+            max_pages: Some(20),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }).await?;
+
+    println!("Job started: {}", job.job_id);
+
+    // Poll for completion
+    loop {
+        let status = client.get_job(&job.job_id).await?;
+        match status.status {
+            JobStatus::Completed => break,
+            JobStatus::Failed => {
+                return Err(refyne::Error::Api {
+                    message: status.error_message.unwrap_or_default(),
+                    status: 500,
+                    detail: None,
+                });
+            }
+            _ => {
+                sleep(Duration::from_secs(2)).await;
+            }
+        }
+    }
+
+    // Get results
+    let results = client.get_job_results(&job.job_id, false).await?;
+    println!("Results: {:?}", results);
+
+    // Get merged results
+    let merged = client.get_job_results(&job.job_id, true).await?;
+    println!("Merged: {:?}", merged.merged);
+
+    Ok(())
+}
+```
+
+## Typed Results
+
+Use Rust structs for type-safe deserialization:
+
+```rust
+use refyne::{Client, ExtractRequest};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+
+#[derive(Debug, Deserialize)]
+struct Product {
+    name: String,
+    price: f64,
+    description: String,
+}
+
+#[tokio::main]
+async fn main() -> Result<(), refyne::Error> {
+    let client = Client::builder(std::env::var("REFYNE_API_KEY")?)
+        .build()?;
+
+    let result = client.extract(ExtractRequest {
+        url: "https://example.com/product".into(),
+        schema: json!({
+            "name": "string",
+            "price": "number",
+            "description": "string",
+        }),
+        ..Default::default()
+    }).await?;
+
+    // Deserialize into typed struct
+    let product: Product = serde_json::from_value(result.data)?;
+    println!("Product: {} - ${:.2}", product.name, product.price);
+
+    Ok(())
+}
+```
+
+## Error Handling
+
+```rust
+use refyne::{Client, Error, ExtractRequest};
+use serde_json::json;
+
+#[tokio::main]
+async fn main() {
+    let client = Client::builder("your-api-key").build().unwrap();
+
+    match client.extract(ExtractRequest { ... }).await {
+        Ok(result) => println!("Data: {:?}", result.data),
+        Err(Error::RateLimit { retry_after }) => {
+            println!("Rate limited. Retry after {} seconds", retry_after);
+        }
+        Err(Error::Validation { errors, .. }) => {
+            println!("Validation errors: {:?}", errors);
+        }
+        Err(Error::Api { message, status, .. }) => {
+            println!("API error: {} (status {})", message, status);
+        }
+        Err(e) => println!("Error: {}", e),
+    }
+}
+```
+
+## Available Methods
+
+```rust
+// Extraction
+client.extract(request).await?;
+client.crawl(request).await?;
+client.analyze(request).await?;
+client.get_usage().await?;
+
+// Jobs
+client.list_jobs(limit, offset).await?;
+client.get_job("job-id").await?;
+client.get_job_results("job-id", merge).await?;
+
+// Schemas
+client.list_schemas().await?;
+client.get_schema("schema-id").await?;
+client.create_schema(request).await?;
+client.update_schema("schema-id", request).await?;
+client.delete_schema("schema-id").await?;
+
+// Sites
+client.list_sites().await?;
+client.get_site("site-id").await?;
+client.create_site(request).await?;
+client.update_site("site-id", request).await?;
+client.delete_site("site-id").await?;
+
+// API Keys
+client.list_keys().await?;
+client.create_key("key-name").await?;
+client.revoke_key("key-id").await?;
+
+// LLM Configuration
+client.list_providers().await?;
+client.list_models("openai").await?;
+client.list_llm_keys().await?;
+client.upsert_llm_key(request).await?;
+client.delete_llm_key("key-id").await?;
+client.get_llm_chain().await?;
+client.set_llm_chain(chain).await?;
+```
+
+## API Reference
+
+For detailed documentation, see [docs.rs/refyne](https://docs.rs/refyne).

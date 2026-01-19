@@ -15,7 +15,7 @@ import (
 
 	"github.com/gocolly/colly/v2"
 	"github.com/oklog/ulid/v2"
-	"github.com/refyne/refyne/pkg/cleaner"
+	"github.com/jmylchreest/refyne/pkg/cleaner"
 
 	"github.com/jmylchreest/refyne-api/internal/config"
 	"github.com/jmylchreest/refyne-api/internal/crypto"

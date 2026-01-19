@@ -2,15 +2,12 @@ package llm
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
-	"net/http"
 	"sort"
-	"strings"
-	"time"
 
 	"github.com/jmylchreest/refyne-api/internal/config"
 	"github.com/jmylchreest/refyne-api/internal/constants"
+	refynellm "github.com/jmylchreest/refyne/pkg/llm"
 )
 
 // InitRegistry creates and initializes the provider registry with all supported providers.
@@ -82,15 +79,36 @@ func InitRegistry(cfg *config.Config, logger *slog.Logger) *Registry {
 }
 
 // listOpenRouterModels returns a ModelLister that fetches models from OpenRouter.
-// It uses the registry's cached capabilities when available.
+// It uses refyne's OpenRouter provider when an API key is available.
 func listOpenRouterModels(r *Registry) ModelLister {
 	return func(ctx context.Context, baseURL, apiKey string) ([]ModelInfo, error) {
-		// Return static models - capabilities are populated by PricingService via the registry cache
+		// If we have an API key, use refyne's provider to fetch live models
+		if apiKey != "" {
+			cfg := refynellm.ProviderConfig{
+				APIKey:  apiKey,
+				BaseURL: baseURL,
+			}
+			provider, err := refynellm.NewOpenRouterProvider(cfg)
+			if err == nil {
+				models, err := provider.ListModels(ctx)
+				if err == nil && len(models) > 0 {
+					// Convert refyne models to refyne-api format
+					result := make([]ModelInfo, 0, len(models))
+					for _, m := range models {
+						result = append(result, ConvertModelInfo("openrouter", m))
+					}
+					return result, nil
+				}
+			}
+		}
+
+		// Fall back to static models with cached capabilities
 		return getStaticOpenRouterModels(r), nil
 	}
 }
 
-// getOpenRouterCapabilities returns a CapabilitiesLookup that checks the registry cache first.
+// getOpenRouterCapabilities returns a CapabilitiesLookup that checks the registry cache first,
+// then falls back to refyne's provider or static defaults.
 func getOpenRouterCapabilities(r *Registry) CapabilitiesLookup {
 	return func(ctx context.Context, model string) ModelCapabilities {
 		// Check if cached by PricingService
@@ -235,68 +253,38 @@ func listOpenAIModels(ctx context.Context, baseURL, apiKey string) ([]ModelInfo,
 	return models, nil
 }
 
-// listOllamaModels fetches models from a local Ollama instance.
+// listOllamaModels fetches models from a local Ollama instance using refyne's provider.
 func listOllamaModels(ctx context.Context, baseURL, apiKey string) ([]ModelInfo, error) {
 	if baseURL == "" {
 		baseURL = "http://localhost:11434"
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/tags", nil)
+	// Use refyne's Ollama provider
+	cfg := refynellm.ProviderConfig{
+		BaseURL: baseURL,
+	}
+	provider, err := refynellm.NewOllamaProvider(cfg)
 	if err != nil {
 		return getStaticOllamaModels(), nil
 	}
 
-	resp, err := client.Do(req)
-	if err != nil {
-		// Ollama not running - return default models
-		return getStaticOllamaModels(), nil
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
+	models, err := provider.ListModels(ctx)
+	if err != nil || len(models) == 0 {
+		// Ollama not running or no models - return defaults
 		return getStaticOllamaModels(), nil
 	}
 
-	var result struct {
-		Models []struct {
-			Name string `json:"name"`
-		} `json:"models"`
+	// Convert refyne models to refyne-api format
+	result := make([]ModelInfo, 0, len(models))
+	for _, m := range models {
+		result = append(result, ConvertModelInfo("ollama", m))
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return getStaticOllamaModels(), nil
-	}
-
-	// Ollama default capabilities - most models support streaming but not structured outputs
-	ollamaCaps := ModelCapabilities{
-		SupportsStructuredOutputs: false,
-		SupportsTools:             false,
-		SupportsStreaming:         true,
-		SupportsReasoning:         false,
-		SupportsResponseFormat:    false,
-	}
-
-	models := make([]ModelInfo, 0, len(result.Models))
-	for _, m := range result.Models {
-		name := strings.TrimSuffix(m.Name, ":latest")
-		settings := GetDefaultSettings("ollama", m.Name)
-		models = append(models, ModelInfo{
-			ID:               m.Name,
-			Name:             name,
-			Provider:         "ollama",
-			Capabilities:     ollamaCaps,
-			DefaultTemp:      settings.Temperature,
-			DefaultMaxTokens: settings.MaxTokens,
-		})
-	}
-
-	sort.Slice(models, func(i, j int) bool {
-		return models[i].Name < models[j].Name
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Name < result[j].Name
 	})
 
-	return models, nil
+	return result, nil
 }
 
 func getStaticOllamaModels() []ModelInfo {

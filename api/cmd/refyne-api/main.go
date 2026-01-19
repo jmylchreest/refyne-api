@@ -247,43 +247,48 @@ func main() {
 	}
 	// Add security scheme for Bearer auth
 	humaConfig.Components.SecuritySchemes = map[string]*huma.SecurityScheme{
-		"bearerAuth": {
+		mw.SecurityScheme: {
 			Type:         "http",
 			Scheme:       "bearer",
 			Description:  "API key authentication. Include your API key in the Authorization header as `Bearer rf_your_key`.",
 		},
 	}
 
-	// Main API with OpenAPI docs
+	// Single Huma API instance for all routes - this ensures all routes appear in OpenAPI
 	api := humachi.New(router, humaConfig)
 
-	// Config for hidden routes (K8s probes - no docs needed)
-	hiddenConfig := huma.DefaultConfig("Refyne API", "1.0.0")
-	hiddenConfig.DocsPath = ""
-	hiddenConfig.OpenAPIPath = ""
-	hiddenConfig.SchemasPath = ""
-	hiddenAPI := humachi.New(router, hiddenConfig)
+	// Add Huma middleware for authentication based on operation security requirements
+	api.UseMiddleware(mw.HumaAuth(api, mw.HumaAuthConfig{
+		ClerkVerifier:     clerkVerifier,
+		AuthService:       services.Auth,
+		SubscriptionCache: services.SubscriptionCache,
+		UsageService:      services.Usage,
+		JobService:        services.Job,
+	}))
 
-	// Config for protected routes (no separate docs - they're served by the main API)
-	// Note: Routes registered here don't appear in the main OpenAPI spec.
-	// The comprehensive API documentation is maintained in the web project's openapi.json
-	protectedConfig := huma.DefaultConfig("Refyne API", "1.0.0")
-	protectedConfig.Info.Description = humaConfig.Info.Description
-	protectedConfig.Servers = humaConfig.Servers
-	protectedConfig.DocsPath = ""
-	protectedConfig.OpenAPIPath = ""
-	protectedConfig.SchemasPath = ""
+	// Add user-based rate limiting for operations that need it
+	api.UseMiddleware(mw.HumaRateLimit(mw.DefaultRateLimitConfig()))
 
-	// Health check (public, shown in docs)
-	huma.Get(api, "/api/v1/health", handlers.HealthCheck)
+	// =========================================================================
+	// Public Routes (no auth required)
+	// =========================================================================
+
+	// Health check
+	mw.PublicGet(api, "/api/v1/health", handlers.HealthCheck,
+		mw.WithTags("Health"),
+		mw.WithSummary("Health check"),
+		mw.WithOperationID("healthCheck"))
 
 	// Public pricing/tier info (for dynamic pricing pages)
-	huma.Get(api, "/api/v1/pricing/tiers", handlers.ListTierLimits)
+	mw.PublicGet(api, "/api/v1/pricing/tiers", handlers.ListTierLimits,
+		mw.WithTags("Pricing"),
+		mw.WithSummary("List subscription tiers"),
+		mw.WithOperationID("listTiers"))
 
 	// Kubernetes probes (hidden from docs - internal use only)
-	huma.Get(hiddenAPI, "/healthz", handlers.Livez)
+	mw.HiddenGet(api, "/healthz", handlers.Livez)
 	readyzHandler := handlers.NewReadyzHandler(db)
-	huma.Get(hiddenAPI, "/readyz", readyzHandler.Readyz)
+	mw.HiddenGet(api, "/readyz", readyzHandler.Readyz)
 
 	// Clerk webhook (signature verified by handler, not user auth)
 	if cfg.ClerkWebhookSecret != "" {
@@ -293,138 +298,266 @@ func main() {
 		logger.Info("clerk webhook endpoint enabled")
 	}
 
-	// Protected routes
-	router.Group(func(r chi.Router) {
-		r.Use(mw.Auth(clerkVerifier, services.Auth))
-		r.Use(mw.TierGate(services.Usage))
+	// =========================================================================
+	// Protected Routes (require bearer auth)
+	// =========================================================================
 
-		// Create a new Huma API for protected routes
-		protectedAPI := humachi.New(r, protectedConfig)
+	// Initialize handlers
+	jobHandler := handlers.NewJobHandlerWithWebhook(services.Job, services.Storage, services.Webhook)
+	usageHandler := handlers.NewUsageHandler(services.Usage)
+	userLLMHandler := handlers.NewUserLLMHandler(services.UserLLM, services.Admin, providerRegistry)
+	adminHandler := handlers.NewAdminHandler(services.Admin, services.TierSync)
+	schemaCatalogHandler := handlers.NewSchemaCatalogHandler(repos.SchemaCatalog)
+	savedSitesHandler := handlers.NewSavedSitesHandler(repos.SavedSites)
+	var webhookEncryptor *crypto.Encryptor
+	if len(cfg.EncryptionKey) > 0 {
+		webhookEncryptor, _ = crypto.NewEncryptor(cfg.EncryptionKey)
+	}
+	webhookHandler := handlers.NewWebhookHandler(repos.Webhook, repos.WebhookDelivery, webhookEncryptor)
+	extractionHandler := handlers.NewExtractionHandler(services.Extraction, services.Job)
+	crawlHandler := handlers.NewJobHandler(services.Job, services.Storage, services.LLMConfigResolver)
+	analyzeHandler := handlers.NewAnalyzeHandler(services.Analyzer, repos.Job)
 
-		// Job list and status routes (no quota check needed)
-		jobHandler := handlers.NewJobHandlerWithWebhook(services.Job, services.Storage, services.Webhook)
-		huma.Get(protectedAPI, "/api/v1/jobs", jobHandler.ListJobs)
-		huma.Get(protectedAPI, "/api/v1/jobs/{id}", jobHandler.GetJob)
-		huma.Get(protectedAPI, "/api/v1/jobs/{id}/crawl-map", jobHandler.GetCrawlMap)
-		huma.Get(protectedAPI, "/api/v1/jobs/{id}/download", jobHandler.GetJobResultsDownload)
-		huma.Get(protectedAPI, "/api/v1/jobs/{id}/webhooks", jobHandler.GetJobWebhookDeliveries)
+	// --- Jobs ---
+	mw.ProtectedGet(api, "/api/v1/jobs", jobHandler.ListJobs,
+		mw.WithTags("Jobs"),
+		mw.WithSummary("List jobs"),
+		mw.WithOperationID("listJobs"))
+	mw.ProtectedGet(api, "/api/v1/jobs/{id}", jobHandler.GetJob,
+		mw.WithTags("Jobs"),
+		mw.WithSummary("Get job details"),
+		mw.WithOperationID("getJob"))
+	mw.ProtectedGet(api, "/api/v1/jobs/{id}/crawl-map", jobHandler.GetCrawlMap,
+		mw.WithTags("Jobs"),
+		mw.WithSummary("Get crawl map"),
+		mw.WithOperationID("getCrawlMap"))
+	mw.ProtectedGet(api, "/api/v1/jobs/{id}/download", jobHandler.GetJobResultsDownload,
+		mw.WithTags("Jobs"),
+		mw.WithSummary("Download job results"),
+		mw.WithOperationID("downloadJobResults"))
+	mw.ProtectedGet(api, "/api/v1/jobs/{id}/webhooks", jobHandler.GetJobWebhookDeliveries,
+		mw.WithTags("Jobs"),
+		mw.WithSummary("Get job webhook deliveries"),
+		mw.WithOperationID("getJobWebhookDeliveries"))
 
-		// Raw HTTP handlers for format-aware responses (non-JSON content types)
-		r.Get("/api/v1/jobs/{id}/results", jobHandler.GetJobResultsRaw)
-		r.Get("/api/v1/jobs/{id}/stream", jobHandler.StreamResults)
+	// Raw HTTP handlers for format-aware responses (non-JSON content types)
+	// These use Chi middleware for auth since they're not Huma operations.
+	// RegisterRawEndpoints adds them to OpenAPI with proper security requirements.
+	jobHandler.RegisterRawEndpoints(api)
+	chiAuthMiddleware := mw.Auth(clerkVerifier, services.Auth, services.SubscriptionCache)
+	router.With(chiAuthMiddleware).Get("/api/v1/jobs/{id}/results", jobHandler.GetJobResultsRaw)
+	router.With(chiAuthMiddleware).Get("/api/v1/jobs/{id}/stream", jobHandler.StreamResults)
 
-		// Usage routes
-		huma.Get(protectedAPI, "/api/v1/usage", handlers.NewUsageHandler(services.Usage).GetUsage)
+	// --- Usage ---
+	mw.ProtectedGet(api, "/api/v1/usage", usageHandler.GetUsage,
+		mw.WithTags("Usage"),
+		mw.WithSummary("Get usage statistics"),
+		mw.WithOperationID("getUsage"))
 
-		// User LLM provider keys and fallback chain routes
-		userLLMHandler := handlers.NewUserLLMHandler(services.UserLLM, services.Admin, providerRegistry)
-		huma.Get(protectedAPI, "/api/v1/llm/providers", userLLMHandler.ListProviders)
-		huma.Get(protectedAPI, "/api/v1/llm/keys", userLLMHandler.ListServiceKeys)
-		huma.Put(protectedAPI, "/api/v1/llm/keys", userLLMHandler.UpsertServiceKey)
-		huma.Delete(protectedAPI, "/api/v1/llm/keys/{id}", userLLMHandler.DeleteServiceKey)
-		huma.Get(protectedAPI, "/api/v1/llm/chain", userLLMHandler.GetFallbackChain)
-		huma.Put(protectedAPI, "/api/v1/llm/chain", userLLMHandler.SetFallbackChain)
-		huma.Get(protectedAPI, "/api/v1/llm/models/{provider}", userLLMHandler.ListModels)
+	// --- LLM Configuration ---
+	mw.ProtectedGet(api, "/api/v1/llm/providers", userLLMHandler.ListProviders,
+		mw.WithTags("LLM"),
+		mw.WithSummary("List LLM providers"),
+		mw.WithOperationID("listProviders"))
+	mw.ProtectedGet(api, "/api/v1/llm/keys", userLLMHandler.ListServiceKeys,
+		mw.WithTags("LLM"),
+		mw.WithSummary("List user LLM keys"),
+		mw.WithOperationID("listLlmKeys"))
+	mw.ProtectedPut(api, "/api/v1/llm/keys", userLLMHandler.UpsertServiceKey,
+		mw.WithTags("LLM"),
+		mw.WithSummary("Upsert user LLM key"),
+		mw.WithOperationID("upsertLlmKey"))
+	mw.ProtectedDelete(api, "/api/v1/llm/keys/{id}", userLLMHandler.DeleteServiceKey,
+		mw.WithTags("LLM"),
+		mw.WithSummary("Delete user LLM key"),
+		mw.WithOperationID("deleteLlmKey"))
+	mw.ProtectedGet(api, "/api/v1/llm/chain", userLLMHandler.GetFallbackChain,
+		mw.WithTags("LLM"),
+		mw.WithSummary("Get LLM fallback chain"),
+		mw.WithOperationID("getLlmChain"))
+	mw.ProtectedPut(api, "/api/v1/llm/chain", userLLMHandler.SetFallbackChain,
+		mw.WithTags("LLM"),
+		mw.WithSummary("Set LLM fallback chain"),
+		mw.WithOperationID("setLlmChain"))
+	mw.ProtectedGet(api, "/api/v1/llm/models/{provider}", userLLMHandler.ListModels,
+		mw.WithTags("LLM"),
+		mw.WithSummary("List models for provider"),
+		mw.WithOperationID("listModels"))
 
-		// API key routes (for hosted mode - users can manage their own API keys)
-		if !cfg.IsSelfHosted() {
-			huma.Get(protectedAPI, "/api/v1/keys", handlers.NewAPIKeyHandler(services.APIKey).ListKeys)
-			huma.Post(protectedAPI, "/api/v1/keys", handlers.NewAPIKeyHandler(services.APIKey).CreateKey)
-			huma.Delete(protectedAPI, "/api/v1/keys/{id}", handlers.NewAPIKeyHandler(services.APIKey).RevokeKey)
-		}
+	// --- API Keys (hosted mode only) ---
+	if !cfg.IsSelfHosted() {
+		apiKeyHandler := handlers.NewAPIKeyHandler(services.APIKey)
+		mw.ProtectedGet(api, "/api/v1/keys", apiKeyHandler.ListKeys,
+			mw.WithTags("API Keys"),
+			mw.WithSummary("List API keys"),
+			mw.WithOperationID("listApiKeys"))
+		mw.ProtectedPost(api, "/api/v1/keys", apiKeyHandler.CreateKey,
+			mw.WithTags("API Keys"),
+			mw.WithSummary("Create API key"),
+			mw.WithOperationID("createApiKey"))
+		mw.ProtectedDelete(api, "/api/v1/keys/{id}", apiKeyHandler.RevokeKey,
+			mw.WithTags("API Keys"),
+			mw.WithSummary("Revoke API key"),
+			mw.WithOperationID("revokeApiKey"))
+	}
 
-		// Superadmin routes (requires global_superadmin in Clerk public_metadata)
-		adminHandler := handlers.NewAdminHandler(services.Admin, services.TierSync)
-		huma.Get(protectedAPI, "/api/v1/admin/service-keys", adminHandler.ListServiceKeys)
-		huma.Put(protectedAPI, "/api/v1/admin/service-keys", adminHandler.UpsertServiceKey)
-		huma.Delete(protectedAPI, "/api/v1/admin/service-keys/{provider}", adminHandler.DeleteServiceKey)
+	// --- Admin Routes (require superadmin) ---
+	mw.ProtectedGet(api, "/api/v1/admin/service-keys", adminHandler.ListServiceKeys,
+		mw.WithTags("Admin"),
+		mw.WithSummary("List service keys"),
+		mw.WithOperationID("adminListServiceKeys"),
+		mw.WithSuperadmin())
+	mw.ProtectedPut(api, "/api/v1/admin/service-keys", adminHandler.UpsertServiceKey,
+		mw.WithTags("Admin"),
+		mw.WithSummary("Upsert service key"),
+		mw.WithOperationID("adminUpsertServiceKey"),
+		mw.WithSuperadmin())
+	mw.ProtectedDelete(api, "/api/v1/admin/service-keys/{provider}", adminHandler.DeleteServiceKey,
+		mw.WithTags("Admin"),
+		mw.WithSummary("Delete service key"),
+		mw.WithOperationID("adminDeleteServiceKey"),
+		mw.WithSuperadmin())
+	mw.ProtectedGet(api, "/api/v1/admin/fallback-chain", adminHandler.GetFallbackChain,
+		mw.WithTags("Admin"),
+		mw.WithSummary("Get admin fallback chain"),
+		mw.WithOperationID("adminGetFallbackChain"),
+		mw.WithSuperadmin())
+	mw.ProtectedPut(api, "/api/v1/admin/fallback-chain", adminHandler.SetFallbackChain,
+		mw.WithTags("Admin"),
+		mw.WithSummary("Set admin fallback chain"),
+		mw.WithOperationID("adminSetFallbackChain"),
+		mw.WithSuperadmin())
+	mw.ProtectedGet(api, "/api/v1/admin/models/{provider}", adminHandler.ListModels,
+		mw.WithTags("Admin"),
+		mw.WithSummary("List models for provider (admin)"),
+		mw.WithOperationID("adminListModels"),
+		mw.WithSuperadmin())
+	mw.ProtectedPost(api, "/api/v1/admin/models/validate", adminHandler.ValidateModels,
+		mw.WithTags("Admin"),
+		mw.WithSummary("Validate models"),
+		mw.WithOperationID("adminValidateModels"),
+		mw.WithSuperadmin())
+	mw.ProtectedGet(api, "/api/v1/admin/tiers", adminHandler.ListTiers,
+		mw.WithTags("Admin"),
+		mw.WithSummary("List subscription tiers (admin)"),
+		mw.WithOperationID("adminListTiers"),
+		mw.WithSuperadmin())
+	mw.ProtectedPost(api, "/api/v1/admin/tiers/validate", adminHandler.ValidateTiers,
+		mw.WithTags("Admin"),
+		mw.WithSummary("Validate tiers"),
+		mw.WithOperationID("adminValidateTiers"),
+		mw.WithSuperadmin())
+	mw.ProtectedPost(api, "/api/v1/admin/tiers/sync", adminHandler.SyncTiers,
+		mw.WithTags("Admin"),
+		mw.WithSummary("Sync tiers from Clerk"),
+		mw.WithOperationID("adminSyncTiers"),
+		mw.WithSuperadmin())
+	mw.ProtectedGet(api, "/api/v1/admin/schemas", schemaCatalogHandler.ListAllSchemas,
+		mw.WithTags("Admin"),
+		mw.WithSummary("List all schemas (admin)"),
+		mw.WithOperationID("adminListSchemas"),
+		mw.WithSuperadmin())
+	mw.ProtectedPost(api, "/api/v1/admin/schemas", schemaCatalogHandler.CreatePlatformSchema,
+		mw.WithTags("Admin"),
+		mw.WithSummary("Create platform schema"),
+		mw.WithOperationID("adminCreatePlatformSchema"),
+		mw.WithSuperadmin())
 
-		// Fallback chain configuration
-		huma.Get(protectedAPI, "/api/v1/admin/fallback-chain", adminHandler.GetFallbackChain)
-		huma.Put(protectedAPI, "/api/v1/admin/fallback-chain", adminHandler.SetFallbackChain)
+	// --- Schemas (read access for all authenticated users) ---
+	mw.ProtectedGet(api, "/api/v1/schemas", schemaCatalogHandler.ListSchemas,
+		mw.WithTags("Schemas"),
+		mw.WithSummary("List schemas"),
+		mw.WithOperationID("listSchemas"))
+	mw.ProtectedGet(api, "/api/v1/schemas/{id}", schemaCatalogHandler.GetSchema,
+		mw.WithTags("Schemas"),
+		mw.WithSummary("Get schema"),
+		mw.WithOperationID("getSchema"))
 
-		// Provider models listing and validation
-		huma.Get(protectedAPI, "/api/v1/admin/models/{provider}", adminHandler.ListModels)
-		huma.Post(protectedAPI, "/api/v1/admin/models/validate", adminHandler.ValidateModels)
+	// Schema write operations (require schema_custom feature)
+	mw.ProtectedPost(api, "/api/v1/schemas", schemaCatalogHandler.CreateSchema,
+		mw.WithTags("Schemas"),
+		mw.WithSummary("Create schema"),
+		mw.WithOperationID("createSchema"),
+		mw.WithFeature("schema_custom"))
+	mw.ProtectedPut(api, "/api/v1/schemas/{id}", schemaCatalogHandler.UpdateSchema,
+		mw.WithTags("Schemas"),
+		mw.WithSummary("Update schema"),
+		mw.WithOperationID("updateSchema"),
+		mw.WithFeature("schema_custom"))
+	mw.ProtectedDelete(api, "/api/v1/schemas/{id}", schemaCatalogHandler.DeleteSchema,
+		mw.WithTags("Schemas"),
+		mw.WithSummary("Delete schema"),
+		mw.WithOperationID("deleteSchema"),
+		mw.WithFeature("schema_custom"))
 
-		// Subscription tiers (from Clerk)
-		huma.Get(protectedAPI, "/api/v1/admin/tiers", adminHandler.ListTiers)
-		huma.Post(protectedAPI, "/api/v1/admin/tiers/validate", adminHandler.ValidateTiers)
-		huma.Post(protectedAPI, "/api/v1/admin/tiers/sync", adminHandler.SyncTiers)
+	// --- Saved Sites ---
+	mw.ProtectedGet(api, "/api/v1/sites", savedSitesHandler.ListSavedSites,
+		mw.WithTags("Sites"),
+		mw.WithSummary("List saved sites"),
+		mw.WithOperationID("listSites"))
+	mw.ProtectedGet(api, "/api/v1/sites/{id}", savedSitesHandler.GetSavedSite,
+		mw.WithTags("Sites"),
+		mw.WithSummary("Get saved site"),
+		mw.WithOperationID("getSite"))
+	mw.ProtectedPost(api, "/api/v1/sites", savedSitesHandler.CreateSavedSite,
+		mw.WithTags("Sites"),
+		mw.WithSummary("Create saved site"),
+		mw.WithOperationID("createSite"))
+	mw.ProtectedPut(api, "/api/v1/sites/{id}", savedSitesHandler.UpdateSavedSite,
+		mw.WithTags("Sites"),
+		mw.WithSummary("Update saved site"),
+		mw.WithOperationID("updateSite"))
+	mw.ProtectedDelete(api, "/api/v1/sites/{id}", savedSitesHandler.DeleteSavedSite,
+		mw.WithTags("Sites"),
+		mw.WithSummary("Delete saved site"),
+		mw.WithOperationID("deleteSite"))
 
-		// Admin schema catalog management
-		schemaCatalogHandler := handlers.NewSchemaCatalogHandler(repos.SchemaCatalog)
-		huma.Get(protectedAPI, "/api/v1/admin/schemas", schemaCatalogHandler.ListAllSchemas)
-		huma.Post(protectedAPI, "/api/v1/admin/schemas", schemaCatalogHandler.CreatePlatformSchema)
+	// --- Webhooks ---
+	mw.ProtectedGet(api, "/api/v1/webhooks", webhookHandler.ListWebhooks,
+		mw.WithTags("Webhooks"),
+		mw.WithSummary("List webhooks"),
+		mw.WithOperationID("listWebhooks"))
+	mw.ProtectedGet(api, "/api/v1/webhooks/{id}", webhookHandler.GetWebhook,
+		mw.WithTags("Webhooks"),
+		mw.WithSummary("Get webhook"),
+		mw.WithOperationID("getWebhook"))
+	mw.ProtectedPost(api, "/api/v1/webhooks", webhookHandler.CreateWebhook,
+		mw.WithTags("Webhooks"),
+		mw.WithSummary("Create webhook"),
+		mw.WithOperationID("createWebhook"))
+	mw.ProtectedPut(api, "/api/v1/webhooks/{id}", webhookHandler.UpdateWebhook,
+		mw.WithTags("Webhooks"),
+		mw.WithSummary("Update webhook"),
+		mw.WithOperationID("updateWebhook"))
+	mw.ProtectedDelete(api, "/api/v1/webhooks/{id}", webhookHandler.DeleteWebhook,
+		mw.WithTags("Webhooks"),
+		mw.WithSummary("Delete webhook"),
+		mw.WithOperationID("deleteWebhook"))
+	mw.ProtectedGet(api, "/api/v1/webhooks/{id}/deliveries", webhookHandler.ListWebhookDeliveries,
+		mw.WithTags("Webhooks"),
+		mw.WithSummary("List webhook deliveries"),
+		mw.WithOperationID("listWebhookDeliveries"))
 
-		// Schema catalog routes (accessible to all authenticated users)
-		huma.Get(protectedAPI, "/api/v1/schemas", schemaCatalogHandler.ListSchemas)
-		huma.Get(protectedAPI, "/api/v1/schemas/{id}", schemaCatalogHandler.GetSchema)
+	// --- Analyze (requires content_analyzer feature) ---
+	mw.ProtectedPost(api, "/api/v1/analyze", analyzeHandler.Analyze,
+		mw.WithTags("Extraction"),
+		mw.WithSummary("Analyze URL"),
+		mw.WithOperationID("analyze"),
+		mw.WithFeature("content_analyzer"))
 
-		// Saved sites routes
-		savedSitesHandler := handlers.NewSavedSitesHandler(repos.SavedSites)
-		huma.Get(protectedAPI, "/api/v1/sites", savedSitesHandler.ListSavedSites)
-		huma.Get(protectedAPI, "/api/v1/sites/{id}", savedSitesHandler.GetSavedSite)
-		huma.Post(protectedAPI, "/api/v1/sites", savedSitesHandler.CreateSavedSite)
-		huma.Put(protectedAPI, "/api/v1/sites/{id}", savedSitesHandler.UpdateSavedSite)
-		huma.Delete(protectedAPI, "/api/v1/sites/{id}", savedSitesHandler.DeleteSavedSite)
-
-		// Webhook management routes
-		var webhookEncryptor *crypto.Encryptor
-		if len(cfg.EncryptionKey) > 0 {
-			webhookEncryptor, _ = crypto.NewEncryptor(cfg.EncryptionKey)
-		}
-		webhookHandler := handlers.NewWebhookHandler(repos.Webhook, repos.WebhookDelivery, webhookEncryptor)
-		huma.Get(protectedAPI, "/api/v1/webhooks", webhookHandler.ListWebhooks)
-		huma.Get(protectedAPI, "/api/v1/webhooks/{id}", webhookHandler.GetWebhook)
-		huma.Post(protectedAPI, "/api/v1/webhooks", webhookHandler.CreateWebhook)
-		huma.Put(protectedAPI, "/api/v1/webhooks/{id}", webhookHandler.UpdateWebhook)
-		huma.Delete(protectedAPI, "/api/v1/webhooks/{id}", webhookHandler.DeleteWebhook)
-		huma.Get(protectedAPI, "/api/v1/webhooks/{id}/deliveries", webhookHandler.ListWebhookDeliveries)
-	})
-
-	// Schema routes that require schema_custom feature
-	router.Group(func(r chi.Router) {
-		r.Use(mw.Auth(clerkVerifier, services.Auth))
-		r.Use(mw.TierGate(services.Usage))
-		r.Use(mw.RequireFeature("schema_custom"))
-
-		schemaAPI := humachi.New(r, protectedConfig)
-		schemaCatalogHandler := handlers.NewSchemaCatalogHandler(repos.SchemaCatalog)
-		huma.Post(schemaAPI, "/api/v1/schemas", schemaCatalogHandler.CreateSchema)
-		huma.Put(schemaAPI, "/api/v1/schemas/{id}", schemaCatalogHandler.UpdateSchema)
-		huma.Delete(schemaAPI, "/api/v1/schemas/{id}", schemaCatalogHandler.DeleteSchema)
-	})
-
-	// Analyze routes (requires content_analyzer feature)
-	router.Group(func(r chi.Router) {
-		r.Use(mw.Auth(clerkVerifier, services.Auth))
-		r.Use(mw.TierGate(services.Usage))
-		r.Use(mw.RequireFeature("content_analyzer"))
-
-		analyzeAPI := humachi.New(r, protectedConfig)
-		huma.Post(analyzeAPI, "/api/v1/analyze", handlers.NewAnalyzeHandler(services.Analyzer, repos.Job).Analyze)
-	})
-
-	// Extraction/crawl routes with quota and concurrency checking
-	router.Group(func(r chi.Router) {
-		r.Use(mw.Auth(clerkVerifier, services.Auth))
-		r.Use(mw.TierGate(services.Usage))
-		r.Use(mw.RequireUsageQuota(services.Usage))
-		r.Use(mw.RequireConcurrentJobLimit(services.Job))
-		r.Use(mw.RateLimitByUser(mw.DefaultRateLimitConfig()))
-		// Extend write deadline for sync crawl requests (wait=true)
-		r.Use(mw.ExtendWriteDeadlineForSyncRequests())
-
-		// Create a new Huma API for quota-gated routes
-		quotaAPI := humachi.New(r, protectedConfig)
-
-		// Extraction routes
-		huma.Post(quotaAPI, "/api/v1/extract", handlers.NewExtractionHandler(services.Extraction, services.Job).Extract)
-
-		// Job creation routes
-		huma.Post(quotaAPI, "/api/v1/crawl", handlers.NewJobHandler(services.Job, services.Storage, services.LLMConfigResolver).CreateCrawlJob)
-	})
+	// --- Extract and Crawl (require quota and concurrency checks) ---
+	mw.ProtectedPost(api, "/api/v1/extract", extractionHandler.Extract,
+		mw.WithTags("Extraction"),
+		mw.WithSummary("Extract data from URL"),
+		mw.WithOperationID("extract"),
+		mw.WithQuotaCheck(),
+		mw.WithConcurrencyCheck())
+	mw.ProtectedPost(api, "/api/v1/crawl", crawlHandler.CreateCrawlJob,
+		mw.WithTags("Extraction"),
+		mw.WithSummary("Start crawl job"),
+		mw.WithOperationID("crawl"),
+		mw.WithQuotaCheck(),
+		mw.WithConcurrencyCheck())
 
 	// Create server
 	server := &http.Server{

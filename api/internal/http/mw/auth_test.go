@@ -366,7 +366,7 @@ func TestRequireScope(t *testing.T) {
 // ========================================
 
 func TestAuth_MissingAuthHeader(t *testing.T) {
-	handler := Auth(nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := Auth(nil, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -382,7 +382,7 @@ func TestAuth_MissingAuthHeader(t *testing.T) {
 
 func TestAuth_InvalidToken(t *testing.T) {
 	// Test with a token that's neither a valid API key nor Clerk JWT
-	handler := Auth(nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := Auth(nil, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -408,7 +408,7 @@ func TestAuth_InvalidToken(t *testing.T) {
 
 func TestOptionalAuth_NoAuth(t *testing.T) {
 	var receivedClaims *UserClaims
-	handler := OptionalAuth(nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := OptionalAuth(nil, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedClaims = GetUserClaims(r.Context())
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -428,7 +428,7 @@ func TestOptionalAuth_NoAuth(t *testing.T) {
 
 func TestOptionalAuth_InvalidAuth(t *testing.T) {
 	var receivedClaims *UserClaims
-	handler := OptionalAuth(nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := OptionalAuth(nil, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedClaims = GetUserClaims(r.Context())
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -450,7 +450,7 @@ func TestOptionalAuth_InvalidAuth(t *testing.T) {
 
 func TestOptionalAuth_WithBearerPrefix(t *testing.T) {
 	// Test that both "Bearer token" and raw "token" formats work
-	handler := OptionalAuth(nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := OptionalAuth(nil, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Claims should be nil for invalid tokens, but request should pass
 		_ = GetUserClaims(r.Context())
 		w.WriteHeader(http.StatusOK)

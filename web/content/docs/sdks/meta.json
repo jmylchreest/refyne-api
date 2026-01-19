@@ -4,6 +4,7 @@
     "typescript",
     "go",
     "python",
+    "rust",
     "curl"
   ]
 }

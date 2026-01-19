@@ -15,7 +15,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/jmylchreest/slog-logfilter v0.0.0
 	github.com/oklog/ulid/v2 v2.1.0
-	github.com/refyne/refyne v0.0.0
+	github.com/jmylchreest/refyne v0.0.0
 	github.com/stripe/stripe-go/v78 v78.12.0
 	github.com/svix/svix-webhooks v1.84.1
 	github.com/tursodatabase/go-libsql v0.0.0-20251219133454-43644db490ff
@@ -101,6 +101,6 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/refyne/refyne => ../../refyne
+replace github.com/jmylchreest/refyne => ../../refyne
 
 replace github.com/jmylchreest/slog-logfilter => ../../slog-logfilter

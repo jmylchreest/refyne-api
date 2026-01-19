@@ -20,8 +20,14 @@ pnpm add @refyne/sdk
 ```typescript
 import { Refyne } from '@refyne/sdk';
 
+// Using the builder pattern (recommended)
+const refyne = new Refyne.Builder()
+  .apiKey(process.env.REFYNE_API_KEY!)
+  .build();
+
+// Or using direct constructor
 const refyne = new Refyne({
-  apiKey: process.env.REFYNE_API_KEY,
+  apiKey: process.env.REFYNE_API_KEY!,
 });
 
 // Extract data from a page
@@ -61,6 +67,7 @@ const result = await refyne.extract<ProductSchema>({
 });
 
 // result.data is typed as ProductSchema
+console.log(result.data.name);
 ```
 
 ## Crawling
@@ -76,8 +83,12 @@ const job = await refyne.crawl({
   },
 });
 
-// Check job status
-const status = await refyne.jobs.get(job.jobId);
+// Poll for completion
+let status = await refyne.jobs.get(job.jobId);
+while (status.status === 'running') {
+  await new Promise(r => setTimeout(r, 2000));
+  status = await refyne.jobs.get(job.jobId);
+}
 
 // Get results
 const results = await refyne.jobs.getResults(job.jobId);
@@ -88,27 +99,44 @@ const merged = await refyne.jobs.getResults(job.jobId, { merge: true });
 
 ## Site Analysis
 
+Use the analyze endpoint to discover the structure of a website before crawling:
+
 ```typescript
 const analysis = await refyne.analyze({
-  url: 'https://example.com',
+  url: 'https://example.com/products',
   depth: 1,
 });
 
 console.log(analysis.suggestedSchema);
+// { "name": "string", "price": "number", "description": "string" }
+
 console.log(analysis.followPatterns);
+// ["a.product-link", ".pagination a", "a[href*='/product/']"]
+
+// Use the suggested schema and follow patterns in a crawl
+const job = await refyne.crawl({
+  url: 'https://example.com/products',
+  schema: analysis.suggestedSchema,
+  options: {
+    followSelector: analysis.followPatterns.join(', '),
+    maxPages: 50,
+  },
+});
 ```
 
 ## Error Handling
 
 ```typescript
-import { RefyneError, RateLimitError } from '@refyne/sdk';
+import { RefyneError, RateLimitError, ValidationError } from '@refyne/sdk';
 
 try {
   const result = await refyne.extract({ ... });
 } catch (error) {
   if (error instanceof RateLimitError) {
     // Wait and retry
-    await sleep(error.retryAfter);
+    console.log(`Rate limited. Retry after ${error.retryAfter}s`);
+  } else if (error instanceof ValidationError) {
+    console.error('Invalid request:', error.errors);
   } else if (error instanceof RefyneError) {
     console.error(error.message, error.status);
   }
@@ -118,10 +146,22 @@ try {
 ## Configuration
 
 ```typescript
+// Using builder pattern
+const refyne = new Refyne.Builder()
+  .apiKey(process.env.REFYNE_API_KEY!)
+  .baseUrl('https://api.refyne.uk')  // Optional
+  .timeout(60000)                     // Optional, in ms
+  .maxRetries(3)                      // Optional
+  .cacheEnabled(true)                 // Optional
+  .build();
+
+// Or using config object
 const refyne = new Refyne({
-  apiKey: process.env.REFYNE_API_KEY,
-  baseUrl: 'https://api.refyne.uk', // Optional
-  timeout: 30000, // Optional, in ms
+  apiKey: process.env.REFYNE_API_KEY!,
+  baseUrl: 'https://api.refyne.uk',  // Optional
+  timeout: 30000,                     // Optional, in ms
+  maxRetries: 3,                      // Optional
+  cacheEnabled: true,                 // Optional
 });
 ```
 

@@ -32,7 +32,7 @@ func NewAnalyzeHandler(analyzerSvc *service.AnalyzerService, jobRepo repository.
 type AnalyzeInput struct {
 	Body struct {
 		URL       string `json:"url" minLength:"1" doc:"URL to analyze"`
-		Depth     int    `json:"depth" minimum:"0" maximum:"1" default:"0" doc:"Crawl depth: 0=single page, 1=one level deep"`
+		Depth     *int   `json:"depth,omitempty" minimum:"0" maximum:"1" default:"0" doc:"Crawl depth: 0=single page, 1=one level deep"`
 		FetchMode string `json:"fetch_mode,omitempty" enum:"auto,static,dynamic" default:"auto" doc:"Fetch mode: auto, static, or dynamic"`
 	}
 }
@@ -107,10 +107,16 @@ func (h *AnalyzeHandler) Analyze(ctx context.Context, input *AnalyzeInput) (*Ana
 	// Best effort: create job record. Analysis proceeds regardless.
 	_ = h.jobRepo.Create(ctx, job)
 
+	// Determine depth with default of 0
+	depth := 0
+	if input.Body.Depth != nil {
+		depth = *input.Body.Depth
+	}
+
 	// Perform analysis
 	result, err := h.analyzerSvc.Analyze(ctx, userID, service.AnalyzeInput{
 		URL:       input.Body.URL,
-		Depth:     input.Body.Depth,
+		Depth:     depth,
 		FetchMode: input.Body.FetchMode,
 	}, tier, byokAllowed, modelsCustomAllowed)
 

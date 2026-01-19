@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/danielgtaylor/huma/v2/sse"
 	"github.com/go-chi/chi/v5"
 
 	"github.com/jmylchreest/refyne-api/internal/constants"
@@ -1351,4 +1352,174 @@ func (h *JobHandler) GetJobResultsDownload(ctx context.Context, input *GetJobRes
 			ExpiresAt:   time.Now().Add(expiry).Format(time.RFC3339),
 		},
 	}, nil
+}
+
+// =============================================================================
+// SSE Event Types for OpenAPI Schema Generation
+// =============================================================================
+
+// SSEStatusEvent is sent as the initial event and when job status changes.
+type SSEStatusEvent struct {
+	JobID      string `json:"job_id" doc:"Job ID"`
+	Status     string `json:"status" doc:"Job status (pending, running, completed, failed)"`
+	URLsQueued int    `json:"urls_queued" doc:"Number of URLs queued for processing"`
+	PageCount  int    `json:"page_count" doc:"Number of pages processed so far"`
+}
+
+// SSEResultEvent is sent for each extracted result.
+type SSEResultEvent struct {
+	ID            string          `json:"id" doc:"Result ID"`
+	URL           string          `json:"url" doc:"Source URL"`
+	Status        string          `json:"status" doc:"Crawl status (pending, completed, failed)"`
+	Data          json.RawMessage `json:"data,omitempty" doc:"Extracted data matching the schema"`
+	ErrorMessage  string          `json:"error_message,omitempty" doc:"Error message if failed"`
+	ErrorCategory string          `json:"error_category,omitempty" doc:"Error category if failed"`
+	LLMProvider   string          `json:"llm_provider,omitempty" doc:"LLM provider used"`
+	LLMModel      string          `json:"llm_model,omitempty" doc:"LLM model used"`
+}
+
+// SSECompleteEvent is sent when the job completes.
+type SSECompleteEvent struct {
+	JobID         string `json:"job_id" doc:"Job ID"`
+	Status        string `json:"status" doc:"Final job status"`
+	PageCount     int    `json:"page_count" doc:"Total pages processed"`
+	ErrorMessage  string `json:"error_message,omitempty" doc:"Error message if job failed"`
+	ErrorCategory string `json:"error_category,omitempty" doc:"Error category if job failed"`
+}
+
+// SSEErrorEvent is sent when an error occurs during streaming.
+type SSEErrorEvent struct {
+	Message string `json:"message" doc:"Error message"`
+}
+
+// SSEStreamInput is the input for the SSE stream endpoint.
+type SSEStreamInput struct {
+	ID string `path:"id" doc:"Job ID to stream results from"`
+}
+
+// =============================================================================
+// Raw Endpoint OpenAPI Registration
+// =============================================================================
+
+// RegisterRawEndpoints registers raw HTTP endpoints (SSE, multi-format) with Huma for OpenAPI documentation.
+// The actual handlers are registered separately via chi middleware for authentication.
+// This ensures these endpoints appear in the OpenAPI spec with proper security requirements.
+func (h *JobHandler) RegisterRawEndpoints(api huma.API) {
+	// Register SSE stream endpoint for OpenAPI documentation
+	sse.Register(api, huma.Operation{
+		OperationID: "streamJobResults",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/jobs/{id}/stream",
+		Summary:     "Stream job results via SSE",
+		Description: `Server-Sent Events stream for real-time job results.
+
+Events sent:
+- **status**: Initial job status and progress updates
+- **result**: Each extracted result as it completes
+- **complete**: Final status when job finishes
+- **error**: Error notifications
+
+The stream sends heartbeat comments every 15 seconds to keep connections alive through proxies.
+
+Example usage with curl:
+` + "```" + `bash
+curl -H "Authorization: Bearer rf_your_key" \
+     -H "Accept: text/event-stream" \
+     https://api.refyne.dev/api/v1/jobs/{id}/stream
+` + "```" + `
+`,
+		Tags:     []string{"Jobs"},
+		Security: []map[string][]string{{mw.SecurityScheme: {}}},
+	}, map[string]any{
+		"status":   SSEStatusEvent{},
+		"result":   SSEResultEvent{},
+		"complete": SSECompleteEvent{},
+		"error":    SSEErrorEvent{},
+	}, func(ctx context.Context, input *SSEStreamInput, send sse.Sender) {
+		// Placeholder handler - actual SSE is handled by chi router.
+		// This registration is only for OpenAPI schema generation.
+		<-ctx.Done()
+	})
+
+	// Register results endpoint for OpenAPI documentation
+	// This endpoint returns different content types based on Accept header
+	huma.Register(api, huma.Operation{
+		OperationID: "getJobResultsRaw",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/jobs/{id}/results",
+		Summary:     "Get job results in various formats",
+		Description: `Returns job results in the requested format.
+
+Supported formats via Accept header or ?format= query parameter:
+- **application/json** (default): JSON array of results
+- **application/x-ndjson**: Newline-delimited JSON (one result per line)
+- **text/csv**: CSV format with headers
+
+Query parameters:
+- **merge=true**: Merge all page results into a single array
+- **format=json|jsonl|csv**: Override content type
+
+Example:
+` + "```" + `bash
+# JSON format (default)
+curl -H "Authorization: Bearer rf_your_key" \
+     https://api.refyne.dev/api/v1/jobs/{id}/results
+
+# CSV format
+curl -H "Authorization: Bearer rf_your_key" \
+     -H "Accept: text/csv" \
+     https://api.refyne.dev/api/v1/jobs/{id}/results
+
+# JSONL format with merge
+curl -H "Authorization: Bearer rf_your_key" \
+     "https://api.refyne.dev/api/v1/jobs/{id}/results?format=jsonl&merge=true"
+` + "```" + `
+`,
+		Tags:     []string{"Jobs"},
+		Security: []map[string][]string{{mw.SecurityScheme: {}}},
+		Responses: map[string]*huma.Response{
+			"200": {
+				Description: "Job results in requested format",
+				Content: map[string]*huma.MediaType{
+					"application/json": {
+						Schema: &huma.Schema{
+							Type:        "array",
+							Description: "Array of job results",
+							Items: &huma.Schema{
+								Type: "object",
+								Properties: map[string]*huma.Schema{
+									"id":     {Type: "string", Description: "Result ID"},
+									"url":    {Type: "string", Description: "Source URL"},
+									"status": {Type: "string", Description: "Crawl status"},
+									"data":   {Type: "object", Description: "Extracted data"},
+								},
+							},
+						},
+					},
+					"application/x-ndjson": {
+						Schema: &huma.Schema{
+							Type:        "string",
+							Description: "Newline-delimited JSON results",
+						},
+					},
+					"text/csv": {
+						Schema: &huma.Schema{
+							Type:        "string",
+							Description: "CSV formatted results",
+						},
+					},
+				},
+			},
+			"401": {Description: "Unauthorized - missing or invalid token"},
+			"404": {Description: "Job not found"},
+		},
+	}, func(ctx context.Context, input *struct {
+		ID     string `path:"id" doc:"Job ID"`
+		Merge  bool   `query:"merge" default:"false" doc:"Merge all page results into single array"`
+		Format string `query:"format" enum:"json,jsonl,csv" doc:"Output format override"`
+	}) (*struct{ Body []byte }, error) {
+		// Placeholder handler - actual handling is done by chi router.
+		// This registration is only for OpenAPI schema generation.
+		return nil, huma.Error501NotImplemented("Use chi router handler")
+	})
 }

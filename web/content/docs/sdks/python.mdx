@@ -15,109 +15,131 @@ poetry add refyne
 
 ## Quick Start
 
-```python
-from refyne import Refyne
-import os
-
-client = Refyne(api_key=os.environ["REFYNE_API_KEY"])
-
-result = client.extract(
-    url="https://example.com/product",
-    schema={
-        "name": "string",
-        "price": "number",
-        "description": "string",
-    }
-)
-
-print(result.data)
-# {"name": "Product Name", "price": 29.99, "description": "..."}
-```
-
-## Async Support
+The Refyne Python SDK is fully async. All methods must be called with `await`:
 
 ```python
 import asyncio
-from refyne import AsyncRefyne
+import os
+from refyne import Refyne
 
 async def main():
-    client = AsyncRefyne(api_key=os.environ["REFYNE_API_KEY"])
+    client = Refyne(api_key=os.environ["REFYNE_API_KEY"])
 
     result = await client.extract(
         url="https://example.com/product",
-        schema={"name": "string", "price": "number"}
+        schema={
+            "name": "string",
+            "price": "number",
+            "description": "string",
+        }
     )
 
     print(result.data)
+    # {"name": "Product Name", "price": 29.99, "description": "..."}
+
+    await client.close()
 
 asyncio.run(main())
 ```
 
-## Type Hints
+## Context Manager
 
-Use Pydantic models for type-safe results:
+Use the async context manager for automatic cleanup:
 
 ```python
-from pydantic import BaseModel
-from refyne import Refyne
+async def main():
+    async with Refyne(api_key=os.environ["REFYNE_API_KEY"]) as client:
+        result = await client.extract(
+            url="https://example.com/product",
+            schema={"name": "string", "price": "number"}
+        )
+        print(result.data)
 
-class Product(BaseModel):
-    name: str
-    price: float
-    description: str
-    tags: list[str]
+asyncio.run(main())
+```
 
-client = Refyne(api_key=os.environ["REFYNE_API_KEY"])
+## Site Analysis
 
-result = client.extract_typed(
-    Product,
-    url="https://example.com/product",
-    schema={
-        "name": "string",
-        "price": "number",
-        "description": "string",
-        "tags": ["string"],
-    }
-)
+Analyze a website to discover structure and suggested schemas:
 
-# result.data is a Product instance
-print(result.data.name)
+```python
+async def main():
+    async with Refyne(api_key=os.environ["REFYNE_API_KEY"]) as client:
+        analysis = await client.analyze(
+            url="https://example.com/products",
+            depth=1,
+        )
+
+        print(analysis.suggested_schema)
+        # {"name": "string", "price": "number", "description": "string"}
+
+        print(analysis.follow_patterns)
+        # ["a.product-link", ".pagination a", "a[href*='/product/']"]
+
+        # Use the analysis results for a crawl
+        job = await client.crawl(
+            url="https://example.com/products",
+            schema=analysis.suggested_schema,
+            options={
+                "follow_selector": ", ".join(analysis.follow_patterns),
+                "max_pages": 50,
+            }
+        )
 ```
 
 ## Crawling
 
 ```python
-# Start a crawl job
-job = client.crawl(
-    url="https://example.com/products",
-    schema={"name": "string", "price": "number"},
-    options={
-        "follow_selector": "a.product-link",
-        "max_pages": 20,
-    }
-)
+async def main():
+    async with Refyne(api_key=os.environ["REFYNE_API_KEY"]) as client:
+        # Start a crawl job
+        job = await client.crawl(
+            url="https://example.com/products",
+            schema={"name": "string", "price": "number"},
+            options={
+                "follow_selector": "a.product-link",
+                "max_pages": 20,
+            }
+        )
 
-# Check job status
-status = client.jobs.get(job.job_id)
+        print(f"Job started: {job.job_id}")
 
-# Get results
-results = client.jobs.get_results(job.job_id)
+        # Poll for completion
+        import asyncio
+        while True:
+            status = await client.jobs.get(job.job_id)
+            if status.status.value == "completed":
+                break
+            if status.status.value == "failed":
+                raise Exception(f"Job failed: {status.error_message}")
+            await asyncio.sleep(2)
 
-# Get merged results
-merged = client.jobs.get_results(job.job_id, merge=True)
+        # Get results
+        results = await client.jobs.get_results(job.job_id)
+
+        # Get merged results
+        merged = await client.jobs.get_results_merged(job.job_id)
+
+asyncio.run(main())
 ```
 
 ## Error Handling
 
 ```python
-from refyne import RefyneError, RateLimitError
+from refyne import RefyneError, RateLimitError, ValidationError
+import asyncio
 
-try:
-    result = client.extract(...)
-except RateLimitError as e:
-    print(f"Rate limited. Retry after {e.retry_after} seconds")
-except RefyneError as e:
-    print(f"API error: {e.message} (status {e.status})")
+async def main():
+    async with Refyne(api_key=os.environ["REFYNE_API_KEY"]) as client:
+        try:
+            result = await client.extract(...)
+        except RateLimitError as e:
+            print(f"Rate limited. Retry after {e.retry_after} seconds")
+            await asyncio.sleep(e.retry_after)
+        except ValidationError as e:
+            print(f"Validation error: {e.message}")
+        except RefyneError as e:
+            print(f"API error: {e.message} (status {e.status})")
 ```
 
 ## Configuration
@@ -126,8 +148,37 @@ except RefyneError as e:
 client = Refyne(
     api_key=os.environ["REFYNE_API_KEY"],
     base_url="https://api.refyne.uk",  # Optional
-    timeout=30.0,  # Optional, in seconds
+    timeout=30.0,                       # Optional, in seconds
+    max_retries=3,                      # Optional
+    cache_enabled=True,                 # Optional
+    verify_ssl=True,                    # Optional
 )
+```
+
+## Sub-Clients
+
+The client provides sub-clients for different operations:
+
+```python
+# Jobs
+jobs = await client.jobs.list()
+job = await client.jobs.get("job-id")
+results = await client.jobs.get_results("job-id")
+
+# Schemas
+schemas = await client.schemas.list()
+schema = await client.schemas.get("schema-id")
+schema = await client.schemas.create(name="My Schema", schema_yaml="...")
+
+# Sites
+sites = await client.sites.list()
+
+# API Keys
+keys = await client.keys.list()
+
+# LLM Configuration
+providers = await client.llm.list_providers()
+models = await client.llm.list_models("openai")
 ```
 
 ## API Reference

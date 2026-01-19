@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/refyne/refyne/pkg/cleaner"
-	"github.com/refyne/refyne/pkg/refyne"
-	"github.com/refyne/refyne/pkg/schema"
+	"github.com/jmylchreest/refyne/pkg/cleaner"
+	"github.com/jmylchreest/refyne/pkg/refyne"
+	"github.com/jmylchreest/refyne/pkg/schema"
 
 	"github.com/jmylchreest/refyne-api/internal/config"
 	"github.com/jmylchreest/refyne-api/internal/constants"

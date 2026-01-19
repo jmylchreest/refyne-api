@@ -13,8 +13,11 @@ type UserBalance struct {
 	BalanceUSD    float64    `json:"balance_usd"`
 	LifetimeAdded float64    `json:"lifetime_added"`
 	LifetimeSpent float64    `json:"lifetime_spent"`
-	PeriodStart   *time.Time `json:"period_start,omitempty"` // Current billing period start (from Clerk subscription)
-	PeriodEnd     *time.Time `json:"period_end,omitempty"`   // Current billing period end (from Clerk subscription)
+	Tier          string     `json:"tier,omitempty"`           // User's subscription tier (synced from Clerk)
+	Features      []string   `json:"features,omitempty"`       // User's feature flags (synced from Clerk Commerce)
+	PeriodStart   *time.Time `json:"period_start,omitempty"`   // Current billing period start (from Clerk subscription)
+	PeriodEnd     *time.Time `json:"period_end,omitempty"`     // Current billing period end (from Clerk subscription)
+	ClerkSyncedAt *time.Time `json:"clerk_synced_at,omitempty"` // When tier/features were last synced from Clerk
 	UpdatedAt     time.Time  `json:"updated_at"`
 }
 

@@ -8,7 +8,7 @@ The official Go SDK for <Refyne /> with full context support.
 ## Installation
 
 ```bash
-go get github.com/refyne/refyne-go
+go get github.com/jmylchreest/refyne-sdk-go
 ```
 
 ## Quick Start
@@ -20,16 +20,15 @@ import (
     "context"
     "fmt"
     "log"
+    "os"
 
-    "github.com/refyne/refyne-go"
+    refyne "github.com/jmylchreest/refyne-sdk-go"
 )
 
 func main() {
-    client := refyne.NewClient(refyne.Config{
-        APIKey: os.Getenv("REFYNE_API_KEY"),
-    })
+    client := refyne.NewClient(os.Getenv("REFYNE_API_KEY"))
 
-    result, err := client.Extract(context.Background(), refyne.ExtractInput{
+    result, err := client.Extract(context.Background(), refyne.ExtractRequest{
         URL: "https://example.com/product",
         Schema: map[string]any{
             "name":  "string",
@@ -44,26 +43,43 @@ func main() {
 }
 ```
 
-## Typed Results
+## Configuration Options
 
-Use Go structs for type-safe results:
+Use functional options to customize the client:
 
 ```go
-type Product struct {
-    Name        string   `json:"name"`
-    Price       float64  `json:"price"`
-    Description string   `json:"description"`
-    Tags        []string `json:"tags"`
+client := refyne.NewClient(
+    os.Getenv("REFYNE_API_KEY"),
+    refyne.WithBaseURL("https://api.refyne.uk"),
+    refyne.WithTimeout(60 * time.Second),
+    refyne.WithMaxRetries(3),
+    refyne.WithCacheEnabled(true),
+)
+```
+
+## Site Analysis
+
+Analyze a website to discover structure and suggested schemas:
+
+```go
+analysis, err := client.Analyze(ctx, refyne.AnalyzeRequest{
+    URL:   "https://example.com/products",
+    Depth: 1,
+})
+if err != nil {
+    log.Fatal(err)
 }
 
-var product Product
-result, err := client.ExtractTyped(ctx, &product, refyne.ExtractInput{
-    URL: "https://example.com/product",
-    Schema: map[string]any{
-        "name":        "string",
-        "price":       "number",
-        "description": "string",
-        "tags":        []string{"string"},
+fmt.Printf("Suggested Schema: %+v\n", analysis.SuggestedSchema)
+fmt.Printf("Follow Patterns: %+v\n", analysis.FollowPatterns)
+
+// Use the analysis results for a crawl
+job, err := client.Crawl(ctx, refyne.CrawlRequest{
+    URL:    "https://example.com/products",
+    Schema: analysis.SuggestedSchema,
+    Options: &refyne.CrawlOptions{
+        FollowSelector: strings.Join(analysis.FollowPatterns, ", "),
+        MaxPages:       50,
     },
 })
 ```
@@ -72,23 +88,41 @@ result, err := client.ExtractTyped(ctx, &product, refyne.ExtractInput{
 
 ```go
 // Start a crawl job
-job, err := client.Crawl(ctx, refyne.CrawlInput{
+job, err := client.Crawl(ctx, refyne.CrawlRequest{
     URL: "https://example.com/products",
     Schema: map[string]any{
         "name":  "string",
         "price": "number",
     },
-    Options: refyne.CrawlOptions{
+    Options: &refyne.CrawlOptions{
         FollowSelector: "a.product-link",
         MaxPages:       20,
     },
 })
+if err != nil {
+    log.Fatal(err)
+}
 
-// Check job status
-status, err := client.Jobs.Get(ctx, job.JobID)
+// Poll for completion
+for {
+    status, err := client.Jobs.Get(ctx, job.JobID)
+    if err != nil {
+        log.Fatal(err)
+    }
+    if status.Status == refyne.JobStatusCompleted {
+        break
+    }
+    if status.Status == refyne.JobStatusFailed {
+        log.Fatalf("Job failed: %s", status.ErrorMessage)
+    }
+    time.Sleep(2 * time.Second)
+}
 
 // Get results
 results, err := client.Jobs.GetResults(ctx, job.JobID)
+if err != nil {
+    log.Fatal(err)
+}
 
 // Get merged results
 merged, err := client.Jobs.GetResultsMerged(ctx, job.JobID)
@@ -110,27 +144,51 @@ result, err := client.Extract(ctx, input)
 ```go
 result, err := client.Extract(ctx, input)
 if err != nil {
-    var apiErr *refyne.APIError
+    var apiErr *refyne.RefyneError
     if errors.As(err, &apiErr) {
         fmt.Printf("API error: %s (status %d)\n", apiErr.Message, apiErr.Status)
-        if apiErr.Status == 429 {
-            // Rate limited, wait and retry
-        }
     }
+
+    var rateLimitErr *refyne.RateLimitError
+    if errors.As(err, &rateLimitErr) {
+        fmt.Printf("Rate limited. Retry after %d seconds\n", rateLimitErr.RetryAfter)
+    }
+
+    var validationErr *refyne.ValidationError
+    if errors.As(err, &validationErr) {
+        fmt.Printf("Validation errors: %+v\n", validationErr.Errors)
+    }
+
     return err
 }
 ```
 
-## Configuration
+## Sub-Services
+
+The client provides sub-services for different operations:
 
 ```go
-client := refyne.NewClient(refyne.Config{
-    APIKey:  os.Getenv("REFYNE_API_KEY"),
-    BaseURL: "https://api.refyne.uk", // Optional
-    Timeout: 30 * time.Second,         // Optional
-})
+// Jobs
+jobs, err := client.Jobs.List(ctx)
+job, err := client.Jobs.Get(ctx, "job-id")
+results, err := client.Jobs.GetResults(ctx, "job-id")
+
+// Schemas
+schemas, err := client.Schemas.List(ctx)
+schema, err := client.Schemas.Get(ctx, "schema-id")
+schema, err := client.Schemas.Create(ctx, refyne.CreateSchemaRequest{...})
+
+// Sites
+sites, err := client.Sites.List(ctx)
+
+// API Keys
+keys, err := client.Keys.List(ctx)
+
+// LLM Configuration
+providers, err := client.LLM.ListProviders(ctx)
+models, err := client.LLM.ListModels(ctx, "openai")
 ```
 
 ## API Reference
 
-For detailed documentation, see [pkg.go.dev/github.com/refyne/refyne-go](https://pkg.go.dev/github.com/refyne/refyne-go).
+For detailed documentation, see [pkg.go.dev/github.com/jmylchreest/refyne-sdk-go](https://pkg.go.dev/github.com/jmylchreest/refyne-sdk-go).

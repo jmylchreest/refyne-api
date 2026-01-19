@@ -84,7 +84,8 @@ func (c *UserClaims) HasAnyFeature(features []string) bool {
 }
 
 // Auth returns an authentication middleware that supports both Clerk JWTs and API keys.
-func Auth(clerkVerifier *auth.ClerkVerifier, authSvc *service.AuthService) func(http.Handler) http.Handler {
+// If subCache is provided, API key auth will fetch tier/features from Clerk.
+func Auth(clerkVerifier *auth.ClerkVerifier, authSvc *service.AuthService, subCache *auth.SubscriptionCache) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Get token from Authorization header
@@ -107,7 +108,7 @@ func Auth(clerkVerifier *auth.ClerkVerifier, authSvc *service.AuthService) func(
 
 			// Check if it's an API key (starts with rf_)
 			if strings.HasPrefix(token, "rf_") {
-				claims, err = validateAPIKey(r.Context(), authSvc, token)
+				claims, err = validateAPIKey(r.Context(), authSvc, subCache, token)
 			} else {
 				claims, err = validateClerkToken(clerkVerifier, token)
 			}
@@ -176,20 +177,51 @@ func validateClerkToken(verifier *auth.ClerkVerifier, tokenString string) (*User
 }
 
 // validateAPIKey validates an API key via the auth service.
-func validateAPIKey(ctx context.Context, authSvc *service.AuthService, apiKey string) (*UserClaims, error) {
+// If subCache is provided, it will fetch tier/features from Clerk.
+func validateAPIKey(ctx context.Context, authSvc *service.AuthService, subCache *auth.SubscriptionCache, apiKey string) (*UserClaims, error) {
 	tokenClaims, err := authSvc.ValidateAPIKey(ctx, apiKey)
 	if err != nil {
 		return nil, err
 	}
 
-	return &UserClaims{
+	claims := &UserClaims{
 		UserID:           tokenClaims.UserID,
 		Email:            tokenClaims.Email,
 		Tier:             tokenClaims.Tier,
 		GlobalSuperadmin: tokenClaims.GlobalSuperadmin,
 		Scopes:           tokenClaims.Scopes,
 		IsAPIKey:         true,
-	}, nil
+	}
+
+	// If we have a subscription cache, hydrate tier/features from Clerk
+	if subCache != nil {
+		sub, err := subCache.GetSubscription(ctx, tokenClaims.UserID)
+		if err != nil {
+			// Log but don't fail - use defaults from tokenClaims
+			slog.Warn("failed to fetch subscription for API key",
+				"user_id", tokenClaims.UserID,
+				"error", err,
+			)
+		} else if sub != nil && sub.Status == "active" {
+			// Override tier from subscription
+			claims.Tier = sub.PlanSlug
+
+			// Extract feature slugs
+			features := make([]string, 0, len(sub.Features))
+			for _, f := range sub.Features {
+				features = append(features, f.Slug)
+			}
+			claims.Features = features
+
+			slog.Debug("hydrated API key claims from Clerk subscription",
+				"user_id", tokenClaims.UserID,
+				"tier", claims.Tier,
+				"features", claims.Features,
+			)
+		}
+	}
+
+	return claims, nil
 }
 
 // GetUserClaims retrieves user claims from context.
@@ -245,7 +277,8 @@ func RequireScope(scope string) func(http.Handler) http.Handler {
 }
 
 // OptionalAuth returns middleware that validates auth if present but allows unauthenticated requests.
-func OptionalAuth(clerkVerifier *auth.ClerkVerifier, authSvc *service.AuthService) func(http.Handler) http.Handler {
+// If subCache is provided, API key auth will fetch tier/features from Clerk.
+func OptionalAuth(clerkVerifier *auth.ClerkVerifier, authSvc *service.AuthService, subCache *auth.SubscriptionCache) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
@@ -267,7 +300,7 @@ func OptionalAuth(clerkVerifier *auth.ClerkVerifier, authSvc *service.AuthServic
 
 			// Check if it's an API key (starts with rf_)
 			if strings.HasPrefix(token, "rf_") {
-				claims, _ = validateAPIKey(r.Context(), authSvc, token)
+				claims, _ = validateAPIKey(r.Context(), authSvc, subCache, token)
 			} else {
 				claims, _ = validateClerkToken(clerkVerifier, token)
 			}
