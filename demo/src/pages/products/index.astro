@@ -1,0 +1,138 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import Card from '../../components/Card.astro';
+import CategoryFilter from '../../components/CategoryFilter.astro';
+import Pagination from '../../components/Pagination.astro';
+import {
+  getProducts,
+  getProductCategories,
+  formatPrice,
+  formatRating,
+  getStockStatus,
+} from '../../lib/products';
+
+const url = Astro.url;
+const category = url.searchParams.get('category') || undefined;
+const page = parseInt(url.searchParams.get('page') || '1', 10);
+const perPage = 12;
+
+let allProducts = await getProducts();
+const categories = await getProductCategories();
+
+// Apply filter
+if (category) {
+  allProducts = allProducts.filter((product) => product.category === category);
+}
+
+const totalPages = Math.ceil(allProducts.length / perPage);
+const products = allProducts.slice((page - 1) * perPage, page * perPage);
+
+function getFilterUrl(params: Record<string, string | undefined>): string {
+  const searchParams = new URLSearchParams();
+  if (params.category) searchParams.set('category', params.category);
+  const qs = searchParams.toString();
+  return qs ? `/products?${qs}` : '/products';
+}
+---
+
+<Layout title="Products" description="Browse our product catalog">
+  <!-- Header -->
+  <section class="bg-gradient-to-br from-indigo-600 to-purple-700 text-white">
+    <div class="container py-12">
+      <h1 class="text-3xl md:text-4xl font-bold mb-4">Products</h1>
+      <p class="text-lg text-indigo-100 max-w-2xl">
+        Browse our catalog of {(await getProducts()).length} products across various categories.
+      </p>
+    </div>
+  </section>
+
+  <!-- Filters -->
+  <section class="bg-white border-b border-gray-200 sticky top-16 z-40">
+    <div class="container py-4">
+      <label class="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Category</label>
+      <CategoryFilter
+        categories={categories}
+        currentCategory={category}
+        basePath="/products"
+      />
+    </div>
+  </section>
+
+  <!-- Results -->
+  <section class="py-8">
+    <div class="container">
+      <div class="flex items-center justify-between mb-6">
+        <p class="text-gray-600">
+          Showing <span class="font-medium">{products.length}</span> of <span class="font-medium">{allProducts.length}</span> products
+        </p>
+      </div>
+
+      {products.length > 0 ? (
+        <div class="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+          {products.map((product) => {
+            const stockStatus = getStockStatus(product.stock);
+            return (
+              <Card href={`/products/${product.id}`}>
+                <div class="aspect-square bg-gray-100 relative">
+                  <img
+                    src={product.thumbnail}
+                    alt={product.name}
+                    class="w-full h-full object-cover"
+                    loading="lazy"
+                  />
+                  {product.discount_percentage > 0 && (
+                    <span class="absolute top-2 right-2 bg-red-500 text-white text-xs font-medium px-2 py-1 rounded">
+                      -{Math.round(product.discount_percentage)}%
+                    </span>
+                  )}
+                </div>
+                <div class="p-4">
+                  <p class="text-xs text-gray-500 uppercase tracking-wide">{product.brand}</p>
+                  <h2 class="font-medium text-gray-900 mt-1 line-clamp-2">{product.name}</h2>
+                  <div class="flex items-center gap-2 mt-2">
+                    <span class="font-semibold text-gray-900">{formatPrice(product.price)}</span>
+                    {product.original_price && (
+                      <span class="text-sm text-gray-400 line-through">{formatPrice(product.original_price)}</span>
+                    )}
+                  </div>
+                  <div class="flex items-center justify-between mt-3">
+                    <div class="flex items-center gap-1">
+                      <svg class="w-4 h-4 text-yellow-400 fill-current" viewBox="0 0 20 20">
+                        <path d="M10 15l-5.878 3.09 1.123-6.545L.489 6.91l6.572-.955L10 0l2.939 5.955 6.572.955-4.756 4.635 1.123 6.545z"/>
+                      </svg>
+                      <span class="text-sm text-gray-600">{formatRating(product.rating)}</span>
+                      <span class="text-sm text-gray-400">({product.reviews_count})</span>
+                    </div>
+                    <span class={stockStatus.color}>{stockStatus.label}</span>
+                  </div>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      ) : (
+        <div class="text-center py-12">
+          <p class="text-gray-500">No products found in this category.</p>
+          <a href="/products" class="text-indigo-600 hover:text-indigo-700 font-medium mt-2 inline-block">
+            View all products
+          </a>
+        </div>
+      )}
+
+      <Pagination
+        currentPage={page}
+        totalPages={totalPages}
+        basePath={getFilterUrl({ category })}
+      />
+    </div>
+  </section>
+</Layout>
+
+<style>
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+</style>

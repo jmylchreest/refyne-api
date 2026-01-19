@@ -1,0 +1,92 @@
+---
+interface Props {
+  currentPage: number;
+  totalPages: number;
+  basePath: string;
+}
+
+const { currentPage, totalPages, basePath } = Astro.props;
+
+const pages: (number | 'ellipsis')[] = [];
+
+if (totalPages <= 7) {
+  for (let i = 1; i <= totalPages; i++) {
+    pages.push(i);
+  }
+} else {
+  pages.push(1);
+
+  if (currentPage > 3) {
+    pages.push('ellipsis');
+  }
+
+  const start = Math.max(2, currentPage - 1);
+  const end = Math.min(totalPages - 1, currentPage + 1);
+
+  for (let i = start; i <= end; i++) {
+    pages.push(i);
+  }
+
+  if (currentPage < totalPages - 2) {
+    pages.push('ellipsis');
+  }
+
+  pages.push(totalPages);
+}
+
+function getPageUrl(page: number): string {
+  if (page === 1) return basePath;
+  return `${basePath}?page=${page}`;
+}
+---
+
+{totalPages > 1 && (
+  <nav class="flex items-center justify-center gap-1 mt-8" aria-label="Pagination">
+    <a
+      href={currentPage > 1 ? getPageUrl(currentPage - 1) : undefined}
+      class:list={[
+        'px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+        currentPage > 1
+          ? 'text-gray-700 hover:bg-gray-100'
+          : 'text-gray-300 cursor-not-allowed pointer-events-none',
+      ]}
+      aria-disabled={currentPage <= 1}
+    >
+      Previous
+    </a>
+
+    <div class="flex items-center gap-1">
+      {pages.map((page) =>
+        page === 'ellipsis' ? (
+          <span class="px-3 py-2 text-gray-400">...</span>
+        ) : (
+          <a
+            href={getPageUrl(page)}
+            class:list={[
+              'px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+              page === currentPage
+                ? 'bg-indigo-600 text-white'
+                : 'text-gray-700 hover:bg-gray-100',
+            ]}
+            aria-current={page === currentPage ? 'page' : undefined}
+          >
+            {page}
+          </a>
+        )
+      )}
+    </div>
+
+    <a
+      href={currentPage < totalPages ? getPageUrl(currentPage + 1) : undefined}
+      class:list={[
+        'px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+        currentPage < totalPages
+          ? 'text-gray-700 hover:bg-gray-100'
+          : 'text-gray-300 cursor-not-allowed pointer-events-none',
+      ]}
+      aria-disabled={currentPage >= totalPages}
+    >
+      Next
+    </a>
+  </nav>
+)}

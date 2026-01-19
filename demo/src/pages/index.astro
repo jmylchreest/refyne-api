@@ -1,0 +1,225 @@
+---
+import Layout from '../layouts/Layout.astro';
+import Card from '../components/Card.astro';
+import { getJobs, formatSalary, formatJobType } from '../lib/jobs';
+import { getBlogPosts, formatDate } from '../lib/blog';
+import { getNews, formatRelativeTime, getSourceColor } from '../lib/news';
+import { getProducts, formatPrice, formatRating } from '../lib/products';
+
+const jobs = getJobs().slice(0, 4);
+const blogPosts = await getBlogPosts();
+const featuredPosts = blogPosts.slice(0, 3);
+const news = await getNews();
+const latestNews = news.slice(0, 4);
+const products = await getProducts();
+const featuredProducts = products.slice(0, 4);
+---
+
+<Layout title="Home">
+  <!-- Hero Section -->
+  <section class="bg-gradient-to-br from-indigo-600 to-purple-700 text-white">
+    <div class="container py-16 md:py-24">
+      <div class="max-w-3xl">
+        <h1 class="text-4xl md:text-5xl font-bold mb-6">
+          Refyne Demo Site
+        </h1>
+        <p class="text-xl text-indigo-100 mb-8">
+          A comprehensive demo platform for testing Refyne SDK integrations and client demonstrations.
+          Featuring realistic data from RSS feeds, APIs, and generated content.
+        </p>
+        <div class="flex flex-wrap gap-4">
+          <a href="/jobs" class="btn bg-white text-indigo-700 hover:bg-indigo-50">
+            Browse Jobs
+          </a>
+          <a href="/products" class="btn bg-indigo-500 text-white hover:bg-indigo-400 border border-indigo-400">
+            View Products
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Stats Section -->
+  <section class="bg-white border-b border-gray-200">
+    <div class="container py-8">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-8">
+        <div class="text-center">
+          <div class="text-3xl font-bold text-indigo-600">{getJobs().length}</div>
+          <div class="text-sm text-gray-600">Job Listings</div>
+        </div>
+        <div class="text-center">
+          <div class="text-3xl font-bold text-indigo-600">{blogPosts.length}</div>
+          <div class="text-sm text-gray-600">Blog Posts</div>
+        </div>
+        <div class="text-center">
+          <div class="text-3xl font-bold text-indigo-600">{news.length}</div>
+          <div class="text-sm text-gray-600">News Articles</div>
+        </div>
+        <div class="text-center">
+          <div class="text-3xl font-bold text-indigo-600">{products.length}</div>
+          <div class="text-sm text-gray-600">Products</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Latest Jobs -->
+  <section class="py-12 md:py-16">
+    <div class="container">
+      <div class="flex items-center justify-between mb-8">
+        <h2 class="text-2xl font-bold text-gray-900">Latest Jobs</h2>
+        <a href="/jobs" class="text-indigo-600 hover:text-indigo-700 font-medium">
+          View all jobs &rarr;
+        </a>
+      </div>
+      <div class="grid md:grid-cols-2 gap-6">
+        {jobs.map((job) => (
+          <Card href={`/jobs/${job.id}`}>
+            <div class="p-6">
+              <div class="flex items-start gap-4">
+                <img
+                  src={job.company_logo}
+                  alt={job.company}
+                  class="w-12 h-12 rounded-lg"
+                />
+                <div class="flex-1 min-w-0">
+                  <h3 class="font-semibold text-gray-900 truncate">{job.title}</h3>
+                  <p class="text-sm text-gray-600">{job.company}</p>
+                  <div class="flex flex-wrap items-center gap-2 mt-2">
+                    <span class="badge-blue">{job.category}</span>
+                    <span class="badge-gray">{formatJobType(job.type)}</span>
+                  </div>
+                </div>
+                <div class="text-right">
+                  <div class="font-medium text-gray-900">{formatSalary(job.salary_min, job.salary_max)}</div>
+                  <div class="text-sm text-gray-500">{job.location}</div>
+                </div>
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- Featured Products -->
+  <section class="py-12 md:py-16 bg-gray-50">
+    <div class="container">
+      <div class="flex items-center justify-between mb-8">
+        <h2 class="text-2xl font-bold text-gray-900">Featured Products</h2>
+        <a href="/products" class="text-indigo-600 hover:text-indigo-700 font-medium">
+          View all products &rarr;
+        </a>
+      </div>
+      <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
+        {featuredProducts.map((product) => (
+          <Card href={`/products/${product.id}`}>
+            <div class="aspect-square bg-gray-100">
+              <img
+                src={product.thumbnail}
+                alt={product.name}
+                class="w-full h-full object-cover"
+              />
+            </div>
+            <div class="p-4">
+              <p class="text-xs text-gray-500 uppercase tracking-wide">{product.brand}</p>
+              <h3 class="font-medium text-gray-900 truncate mt-1">{product.name}</h3>
+              <div class="flex items-center gap-2 mt-2">
+                <span class="font-semibold text-gray-900">{formatPrice(product.price)}</span>
+                {product.original_price && (
+                  <span class="text-sm text-gray-400 line-through">{formatPrice(product.original_price)}</span>
+                )}
+              </div>
+              <div class="flex items-center gap-1 mt-2">
+                <svg class="w-4 h-4 text-yellow-400 fill-current" viewBox="0 0 20 20">
+                  <path d="M10 15l-5.878 3.09 1.123-6.545L.489 6.91l6.572-.955L10 0l2.939 5.955 6.572.955-4.756 4.635 1.123 6.545z"/>
+                </svg>
+                <span class="text-sm text-gray-600">{formatRating(product.rating)}</span>
+                <span class="text-sm text-gray-400">({product.reviews_count})</span>
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- Latest Blog Posts -->
+  <section class="py-12 md:py-16">
+    <div class="container">
+      <div class="flex items-center justify-between mb-8">
+        <h2 class="text-2xl font-bold text-gray-900">Latest Blog Posts</h2>
+        <a href="/blog" class="text-indigo-600 hover:text-indigo-700 font-medium">
+          View all posts &rarr;
+        </a>
+      </div>
+      <div class="grid md:grid-cols-3 gap-6">
+        {featuredPosts.map((post) => (
+          <Card href={`/blog/${post.slug}`}>
+            <div class="aspect-video bg-gray-100">
+              <img
+                src={post.image_url}
+                alt={post.title}
+                class="w-full h-full object-cover"
+              />
+            </div>
+            <div class="p-5">
+              <div class="flex items-center gap-2 mb-3">
+                <span class="badge-blue">{post.category}</span>
+                <span class="text-sm text-gray-500">{post.reading_time} min read</span>
+              </div>
+              <h3 class="font-semibold text-gray-900 line-clamp-2">{post.title}</h3>
+              <p class="text-sm text-gray-600 mt-2 line-clamp-2">{post.excerpt}</p>
+              <div class="flex items-center gap-3 mt-4 pt-4 border-t border-gray-100">
+                <img
+                  src={post.author_avatar}
+                  alt={post.author}
+                  class="w-8 h-8 rounded-full"
+                />
+                <div>
+                  <p class="text-sm font-medium text-gray-900">{post.author}</p>
+                  <p class="text-xs text-gray-500">{formatDate(post.published_at)}</p>
+                </div>
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- Latest News -->
+  <section class="py-12 md:py-16 bg-gray-50">
+    <div class="container">
+      <div class="flex items-center justify-between mb-8">
+        <h2 class="text-2xl font-bold text-gray-900">Latest News</h2>
+        <a href="/news" class="text-indigo-600 hover:text-indigo-700 font-medium">
+          View all news &rarr;
+        </a>
+      </div>
+      <div class="grid md:grid-cols-2 gap-6">
+        {latestNews.map((item) => (
+          <Card href={`/news/${item.id}`}>
+            <div class="p-5">
+              <div class="flex items-center gap-2 mb-3">
+                <span class={getSourceColor(item.source)}>{item.source}</span>
+                <span class="text-sm text-gray-500">{formatRelativeTime(item.published_at)}</span>
+              </div>
+              <h3 class="font-semibold text-gray-900 line-clamp-2">{item.title}</h3>
+              <p class="text-sm text-gray-600 mt-2 line-clamp-2">{item.summary}</p>
+            </div>
+          </Card>
+        ))}
+      </div>
+    </div>
+  </section>
+</Layout>
+
+<style>
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+</style>

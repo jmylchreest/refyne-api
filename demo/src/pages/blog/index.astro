@@ -1,0 +1,156 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import Card from '../../components/Card.astro';
+import CategoryFilter from '../../components/CategoryFilter.astro';
+import Pagination from '../../components/Pagination.astro';
+import { getBlogPosts, getBlogCategories, getPopularTags, formatDate } from '../../lib/blog';
+
+const url = Astro.url;
+const category = url.searchParams.get('category') || undefined;
+const tag = url.searchParams.get('tag') || undefined;
+const page = parseInt(url.searchParams.get('page') || '1', 10);
+const perPage = 9;
+
+let allPosts = await getBlogPosts();
+const categories = await getBlogCategories();
+const popularTags = await getPopularTags();
+
+// Apply filters
+if (category) {
+  allPosts = allPosts.filter((post) => post.category === category);
+}
+if (tag) {
+  allPosts = allPosts.filter((post) => post.tags.includes(tag));
+}
+
+const totalPages = Math.ceil(allPosts.length / perPage);
+const posts = allPosts.slice((page - 1) * perPage, page * perPage);
+
+function getFilterUrl(params: Record<string, string | undefined>): string {
+  const searchParams = new URLSearchParams();
+  if (params.category) searchParams.set('category', params.category);
+  if (params.tag) searchParams.set('tag', params.tag);
+  const qs = searchParams.toString();
+  return qs ? `/blog?${qs}` : '/blog';
+}
+---
+
+<Layout title="Blog" description="Latest articles and insights">
+  <!-- Header -->
+  <section class="bg-gradient-to-br from-indigo-600 to-purple-700 text-white">
+    <div class="container py-12">
+      <h1 class="text-3xl md:text-4xl font-bold mb-4">Blog</h1>
+      <p class="text-lg text-indigo-100 max-w-2xl">
+        Discover the latest articles, tutorials, and insights from the tech community.
+      </p>
+    </div>
+  </section>
+
+  <!-- Filters -->
+  <section class="bg-white border-b border-gray-200 sticky top-16 z-40">
+    <div class="container py-4">
+      <div class="flex flex-col lg:flex-row gap-4">
+        <!-- Category Filter -->
+        <div class="flex-1">
+          <label class="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Category</label>
+          <CategoryFilter
+            categories={categories}
+            currentCategory={category}
+            basePath="/blog"
+          />
+        </div>
+      </div>
+
+      <!-- Popular Tags -->
+      {popularTags.length > 0 && (
+        <div class="mt-4 pt-4 border-t border-gray-100">
+          <label class="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Popular Tags</label>
+          <div class="flex flex-wrap gap-2">
+            {popularTags.map((t) => (
+              <a
+                href={getFilterUrl({ category, tag: t === tag ? undefined : t })}
+                class:list={[
+                  'px-2 py-1 rounded text-sm transition-colors',
+                  tag === t
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200',
+                ]}
+              >
+                #{t}
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  </section>
+
+  <!-- Results -->
+  <section class="py-8">
+    <div class="container">
+      <div class="flex items-center justify-between mb-6">
+        <p class="text-gray-600">
+          Showing <span class="font-medium">{posts.length}</span> of <span class="font-medium">{allPosts.length}</span> posts
+        </p>
+      </div>
+
+      {posts.length > 0 ? (
+        <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {posts.map((post) => (
+            <Card href={`/blog/${post.slug}`}>
+              <div class="aspect-video bg-gray-100">
+                <img
+                  src={post.image_url}
+                  alt={post.title}
+                  class="w-full h-full object-cover"
+                  loading="lazy"
+                />
+              </div>
+              <div class="p-5">
+                <div class="flex items-center gap-2 mb-3">
+                  <span class="badge-blue">{post.category}</span>
+                  <span class="text-sm text-gray-500">{post.reading_time} min read</span>
+                </div>
+                <h2 class="font-semibold text-gray-900 line-clamp-2 mb-2">{post.title}</h2>
+                <p class="text-sm text-gray-600 line-clamp-2">{post.excerpt}</p>
+                <div class="flex items-center gap-3 mt-4 pt-4 border-t border-gray-100">
+                  <img
+                    src={post.author_avatar}
+                    alt={post.author}
+                    class="w-8 h-8 rounded-full"
+                  />
+                  <div>
+                    <p class="text-sm font-medium text-gray-900">{post.author}</p>
+                    <p class="text-xs text-gray-500">{formatDate(post.published_at)}</p>
+                  </div>
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      ) : (
+        <div class="text-center py-12">
+          <p class="text-gray-500">No posts found matching your criteria.</p>
+          <a href="/blog" class="text-indigo-600 hover:text-indigo-700 font-medium mt-2 inline-block">
+            Clear filters
+          </a>
+        </div>
+      )}
+
+      <Pagination
+        currentPage={page}
+        totalPages={totalPages}
+        basePath={getFilterUrl({ category, tag })}
+      />
+    </div>
+  </section>
+</Layout>
+
+<style>
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+</style>

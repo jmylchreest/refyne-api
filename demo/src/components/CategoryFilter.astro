@@ -1,0 +1,43 @@
+---
+interface Props {
+  categories: string[];
+  currentCategory?: string;
+  basePath: string;
+  allLabel?: string;
+}
+
+const { categories, currentCategory, basePath, allLabel = 'All' } = Astro.props;
+
+function getCategoryUrl(category?: string): string {
+  if (!category) return basePath;
+  return `${basePath}?category=${encodeURIComponent(category)}`;
+}
+---
+
+<div class="flex flex-wrap items-center gap-2">
+  <a
+    href={getCategoryUrl()}
+    class:list={[
+      'px-3 py-1.5 rounded-full text-sm font-medium transition-colors',
+      !currentCategory
+        ? 'bg-indigo-600 text-white'
+        : 'bg-gray-100 text-gray-700 hover:bg-gray-200',
+    ]}
+  >
+    {allLabel}
+  </a>
+
+  {categories.map((category) => (
+    <a
+      href={getCategoryUrl(category)}
+      class:list={[
+        'px-3 py-1.5 rounded-full text-sm font-medium transition-colors',
+        currentCategory === category
+          ? 'bg-indigo-600 text-white'
+          : 'bg-gray-100 text-gray-700 hover:bg-gray-200',
+      ]}
+    >
+      {category}
+    </a>
+  ))}
+</div>

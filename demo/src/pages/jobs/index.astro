@@ -1,0 +1,169 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import Card from '../../components/Card.astro';
+import CategoryFilter from '../../components/CategoryFilter.astro';
+import Pagination from '../../components/Pagination.astro';
+import {
+  getJobs,
+  getJobCategories,
+  getJobTypes,
+  getJobLocations,
+  formatSalary,
+  formatJobType,
+  type Job,
+} from '../../lib/jobs';
+
+const url = Astro.url;
+const category = url.searchParams.get('category') || undefined;
+const type = url.searchParams.get('type') || undefined;
+const location = url.searchParams.get('location') || undefined;
+const page = parseInt(url.searchParams.get('page') || '1', 10);
+const perPage = 12;
+
+let allJobs = getJobs();
+
+// Apply filters
+if (category) {
+  allJobs = allJobs.filter((job) => job.category === category);
+}
+if (type) {
+  allJobs = allJobs.filter((job) => job.type === type);
+}
+if (location) {
+  allJobs = allJobs.filter((job) => job.location === location);
+}
+
+const totalPages = Math.ceil(allJobs.length / perPage);
+const jobs = allJobs.slice((page - 1) * perPage, page * perPage);
+
+const categories = getJobCategories();
+const types = getJobTypes();
+const locations = getJobLocations();
+
+function getFilterUrl(params: Record<string, string | undefined>): string {
+  const searchParams = new URLSearchParams();
+  if (params.category) searchParams.set('category', params.category);
+  if (params.type) searchParams.set('type', params.type);
+  if (params.location) searchParams.set('location', params.location);
+  const qs = searchParams.toString();
+  return qs ? `/jobs?${qs}` : '/jobs';
+}
+---
+
+<Layout title="Jobs" description="Browse our latest job listings">
+  <!-- Header -->
+  <section class="bg-gradient-to-br from-indigo-600 to-purple-700 text-white">
+    <div class="container py-12">
+      <h1 class="text-3xl md:text-4xl font-bold mb-4">Job Listings</h1>
+      <p class="text-lg text-indigo-100 max-w-2xl">
+        Discover {getJobs().length} exciting opportunities across engineering, design, product, and more.
+      </p>
+    </div>
+  </section>
+
+  <!-- Filters -->
+  <section class="bg-white border-b border-gray-200 sticky top-16 z-40">
+    <div class="container py-4">
+      <div class="flex flex-col lg:flex-row gap-4">
+        <!-- Category Filter -->
+        <div class="flex-1">
+          <label class="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Category</label>
+          <CategoryFilter
+            categories={categories}
+            currentCategory={category}
+            basePath="/jobs"
+          />
+        </div>
+
+        <!-- Type Filter -->
+        <div>
+          <label class="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Type</label>
+          <div class="flex flex-wrap gap-2">
+            <a
+              href={getFilterUrl({ category, location })}
+              class:list={[
+                'px-3 py-1.5 rounded-full text-sm font-medium transition-colors',
+                !type ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200',
+              ]}
+            >
+              All
+            </a>
+            {types.map((t) => (
+              <a
+                href={getFilterUrl({ category, type: t, location })}
+                class:list={[
+                  'px-3 py-1.5 rounded-full text-sm font-medium transition-colors',
+                  type === t ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200',
+                ]}
+              >
+                {formatJobType(t)}
+              </a>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Results -->
+  <section class="py-8">
+    <div class="container">
+      <div class="flex items-center justify-between mb-6">
+        <p class="text-gray-600">
+          Showing <span class="font-medium">{jobs.length}</span> of <span class="font-medium">{allJobs.length}</span> jobs
+        </p>
+      </div>
+
+      {jobs.length > 0 ? (
+        <div class="grid gap-4">
+          {jobs.map((job) => (
+            <Card href={`/jobs/${job.id}`}>
+              <div class="p-6">
+                <div class="flex flex-col md:flex-row md:items-center gap-4">
+                  <img
+                    src={job.company_logo}
+                    alt={job.company}
+                    class="w-14 h-14 rounded-xl"
+                  />
+                  <div class="flex-1 min-w-0">
+                    <div class="flex flex-col md:flex-row md:items-center gap-2 md:gap-4">
+                      <h2 class="text-lg font-semibold text-gray-900">{job.title}</h2>
+                      <div class="flex flex-wrap gap-2">
+                        <span class="badge-blue">{job.category}</span>
+                        <span class="badge-gray">{formatJobType(job.type)}</span>
+                      </div>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-sm text-gray-600">
+                      <span>{job.company}</span>
+                      <span class="hidden md:inline">&bull;</span>
+                      <span>{job.location}</span>
+                    </div>
+                  </div>
+                  <div class="text-left md:text-right">
+                    <div class="font-semibold text-gray-900">{formatSalary(job.salary_min, job.salary_max)}</div>
+                    <div class="text-sm text-gray-500">
+                      {job.posted_at.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      ) : (
+        <div class="text-center py-12">
+          <p class="text-gray-500">No jobs found matching your criteria.</p>
+          <a href="/jobs" class="text-indigo-600 hover:text-indigo-700 font-medium mt-2 inline-block">
+            Clear filters
+          </a>
+        </div>
+      )}
+
+      <Pagination
+        currentPage={page}
+        totalPages={totalPages}
+        basePath={getFilterUrl({ category, type, location })}
+      />
+    </div>
+  </section>
+</Layout>

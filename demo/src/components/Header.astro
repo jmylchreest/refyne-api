@@ -1,0 +1,77 @@
+---
+const navItems = [
+  { href: '/', label: 'Home' },
+  { href: '/jobs', label: 'Jobs' },
+  { href: '/blog', label: 'Blog' },
+  { href: '/news', label: 'News' },
+  { href: '/products', label: 'Products' },
+];
+
+const currentPath = Astro.url.pathname;
+---
+
+<header class="bg-white border-b border-gray-200 sticky top-0 z-50">
+  <nav class="container">
+    <div class="flex items-center justify-between h-16">
+      <a href="/" class="flex items-center gap-2">
+        <div class="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
+          <span class="text-white font-bold text-lg">R</span>
+        </div>
+        <span class="font-semibold text-xl text-gray-900">Refyne Demo</span>
+      </a>
+
+      <div class="hidden md:flex items-center gap-1">
+        {navItems.map((item) => (
+          <a
+            href={item.href}
+            class:list={[
+              'px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+              currentPath === item.href || (item.href !== '/' && currentPath.startsWith(item.href))
+                ? 'bg-indigo-50 text-indigo-700'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50',
+            ]}
+          >
+            {item.label}
+          </a>
+        ))}
+      </div>
+
+      <button
+        id="mobile-menu-button"
+        class="md:hidden p-2 rounded-lg text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+        aria-label="Toggle menu"
+      >
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+        </svg>
+      </button>
+    </div>
+
+    <div id="mobile-menu" class="hidden md:hidden pb-4">
+      <div class="flex flex-col gap-1">
+        {navItems.map((item) => (
+          <a
+            href={item.href}
+            class:list={[
+              'px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+              currentPath === item.href || (item.href !== '/' && currentPath.startsWith(item.href))
+                ? 'bg-indigo-50 text-indigo-700'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50',
+            ]}
+          >
+            {item.label}
+          </a>
+        ))}
+      </div>
+    </div>
+  </nav>
+</header>
+
+<script>
+  const button = document.getElementById('mobile-menu-button');
+  const menu = document.getElementById('mobile-menu');
+
+  button?.addEventListener('click', () => {
+    menu?.classList.toggle('hidden');
+  });
+</script>
