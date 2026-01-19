@@ -64,17 +64,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Checkout sibling repos for Go replace directives
-      - uses: actions/checkout@v4
-        with:
-          repository: jmylchreest/refyne
-          path: ../refyne
-          token: ${{ secrets.GH_PAT }}
-
-      - uses: actions/checkout@v4
-        with:
-          repository: jmylchreest/slog-logfilter
-          path: ../slog-logfilter
+      # Clone sibling repos for Go replace directives
+      - name: Clone sibling repos
+        run: |
+          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/jmylchreest/refyne.git ../refyne
+          git clone --depth 1 https://github.com/jmylchreest/slog-logfilter.git ../slog-logfilter
 
       - name: Set up Go
         uses: actions/setup-go@v5
