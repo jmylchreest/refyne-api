@@ -13,9 +13,9 @@ require (
 	github.com/go-chi/httprate v0.15.0
 	github.com/gocolly/colly/v2 v2.3.0
 	github.com/golang-jwt/jwt/v5 v5.2.2
-	github.com/jmylchreest/slog-logfilter v0.0.0
+	github.com/jmylchreest/slog-logfilter v0.0.1
 	github.com/oklog/ulid/v2 v2.1.0
-	github.com/jmylchreest/refyne v0.0.0
+	github.com/jmylchreest/refyne v0.0.1
 	github.com/stripe/stripe-go/v78 v78.12.0
 	github.com/svix/svix-webhooks v1.84.1
 	github.com/tursodatabase/go-libsql v0.0.0-20251219133454-43644db490ff
