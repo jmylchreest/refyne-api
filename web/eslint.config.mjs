@@ -15,6 +15,13 @@ const eslintConfig = defineConfig([
     // Generated files from fumadocs
     ".source/**",
   ]),
+  // Disable overly strict rules
+  {
+    rules: {
+      // The setMounted(true) pattern is valid for client-side rendering
+      "react-hooks/set-state-in-effect": "off",
+    },
+  },
 ]);
 
 export default eslintConfig;
