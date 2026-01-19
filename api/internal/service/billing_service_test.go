@@ -226,7 +226,10 @@ func newTestBillingService() (
 	billingCfg := config.DefaultBillingConfig()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	svc := NewBillingService(repos, &billingCfg, nil, nil, logger)
+	// Create a pricing service for cost estimation
+	pricingSvc := NewPricingService(PricingServiceConfig{}, logger)
+
+	svc := NewBillingService(repos, &billingCfg, pricingSvc, logger)
 	return svc, balanceRepo, creditRepo, usageRepo, insightRepo, schemaRepo
 }
 

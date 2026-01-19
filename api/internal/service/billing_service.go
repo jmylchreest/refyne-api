@@ -24,17 +24,15 @@ import (
 type BillingService struct {
 	repos      *repository.Repositories
 	billingCfg *config.BillingConfig
-	orClient   *llm.OpenRouterClient
 	pricingSvc *PricingService
 	logger     *slog.Logger
 }
 
 // NewBillingService creates a new billing service.
-func NewBillingService(repos *repository.Repositories, billingCfg *config.BillingConfig, orClient *llm.OpenRouterClient, pricingSvc *PricingService, logger *slog.Logger) *BillingService {
+func NewBillingService(repos *repository.Repositories, billingCfg *config.BillingConfig, pricingSvc *PricingService, logger *slog.Logger) *BillingService {
 	return &BillingService{
 		repos:      repos,
 		billingCfg: billingCfg,
-		orClient:   orClient,
 		pricingSvc: pricingSvc,
 		logger:     logger,
 	}
@@ -119,12 +117,7 @@ func (s *BillingService) EstimateCost(pages int, model, provider string) float64
 	inputTokens := avgTokensPerPage * pages
 	outputTokens := avgTokensPerPage * pages / 4
 
-	var baseCost float64
-	if s.pricingSvc != nil {
-		baseCost = s.pricingSvc.EstimateCost(provider, model, inputTokens, outputTokens)
-	} else {
-		baseCost = llm.EstimateCost(inputTokens, outputTokens, model)
-	}
+	baseCost := s.pricingSvc.EstimateCost(provider, model, inputTokens, outputTokens)
 	// Add maximum possible markup (100% for free tier)
 	return baseCost * 2
 }
@@ -147,14 +140,10 @@ func (s *BillingService) CalculateTotalCost(llmCostUSD float64, tier string, isB
 	return
 }
 
-// GetActualCost retrieves actual cost from OpenRouter or falls back to estimation.
-// Uses cached pricing data for cost calculation. For actual recorded cost from the provider,
-// use GetActualCostFromProvider with the generation ID.
+// GetActualCost calculates cost based on token counts using cached pricing data.
+// For actual recorded cost from the provider, use GetActualCostFromProvider with the generation ID.
 func (s *BillingService) GetActualCost(ctx context.Context, tokensInput, tokensOutput int, model, provider string) float64 {
-	if s.pricingSvc != nil {
-		return s.pricingSvc.EstimateCost(provider, model, tokensInput, tokensOutput)
-	}
-	return llm.EstimateCost(tokensInput, tokensOutput, model)
+	return s.pricingSvc.EstimateCost(provider, model, tokensInput, tokensOutput)
 }
 
 // GetActualCostFromProvider retrieves the actual recorded cost from the provider.

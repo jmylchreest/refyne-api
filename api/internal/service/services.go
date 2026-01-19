@@ -11,7 +11,6 @@ import (
 	"github.com/jmylchreest/refyne-api/internal/auth"
 	"github.com/jmylchreest/refyne-api/internal/config"
 	"github.com/jmylchreest/refyne-api/internal/crypto"
-	"github.com/jmylchreest/refyne-api/internal/llm"
 	"github.com/jmylchreest/refyne-api/internal/repository"
 )
 
@@ -34,6 +33,7 @@ type Services struct {
 	Pricing           *PricingService
 	TierSync          *TierSyncService
 	LLMConfigResolver *LLMConfigResolver
+	SubscriptionCache *auth.SubscriptionCache // For API key tier/feature hydration from Clerk
 }
 
 // NewServices creates all service instances.
@@ -60,19 +60,13 @@ func NewServices(cfg *config.Config, repos *repository.Repositories, logger *slo
 	billingCfg := config.DefaultBillingConfig()
 	balanceSvc := NewBalanceService(repos, &billingCfg, logger)
 
-	// Create OpenRouter client for cost tracking (if we have a service key)
-	var orClient *llm.OpenRouterClient
-	if cfg.ServiceOpenRouterKey != "" {
-		orClient = llm.NewOpenRouterClient(cfg.ServiceOpenRouterKey)
-	}
-
-	// Create pricing service for model cost estimation
+	// Create pricing service for model cost estimation (uses refyne's provider interfaces)
 	pricingSvc := NewPricingService(PricingServiceConfig{
 		OpenRouterAPIKey: cfg.ServiceOpenRouterKey,
 	}, logger)
 
 	// Create billing service
-	billingSvc := NewBillingService(repos, &billingCfg, orClient, pricingSvc, logger)
+	billingSvc := NewBillingService(repos, &billingCfg, pricingSvc, logger)
 
 	// Create shared LLM config resolver (used by extraction and analyzer services)
 	llmResolver := NewLLMConfigResolver(cfg, repos, encryptor, logger)
@@ -96,8 +90,9 @@ func NewServices(cfg *config.Config, repos *repository.Repositories, logger *slo
 	// Create sitemap service for URL discovery
 	sitemapSvc := NewSitemapService(logger)
 
-	// Create tier sync service for syncing visibility/display names from Clerk
+	// Create Clerk-dependent services
 	var tierSyncSvc *TierSyncService
+	var subscriptionCache *auth.SubscriptionCache
 	if cfg.ClerkSecretKey != "" {
 		clerkClient := auth.NewClerkBackendClient(cfg.ClerkSecretKey)
 		tierSyncSvc = NewTierSyncService(clerkClient, logger)
@@ -107,6 +102,11 @@ func NewServices(cfg *config.Config, repos *repository.Repositories, logger *slo
 			// Log but don't fail startup - we have hardcoded defaults
 			logger.Warn("failed to sync tier metadata from Clerk on startup", "error", err)
 		}
+
+		// Create subscription cache for API key tier/feature hydration
+		// Uses 5-minute TTL to balance freshness with API rate limits
+		subscriptionCache = auth.NewSubscriptionCache(clerkClient, auth.DefaultSubscriptionCacheTTL, logger)
+		logger.Info("subscription cache enabled for API key auth", "ttl", auth.DefaultSubscriptionCacheTTL)
 	}
 
 	return &Services{
@@ -127,6 +127,7 @@ func NewServices(cfg *config.Config, repos *repository.Repositories, logger *slo
 		Pricing:           pricingSvc,
 		TierSync:          tierSyncSvc,
 		LLMConfigResolver: llmResolver,
+		SubscriptionCache: subscriptionCache,
 	}, nil
 }
 

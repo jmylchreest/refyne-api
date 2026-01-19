@@ -2,11 +2,8 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -139,109 +136,6 @@ func TestPricingService_EstimateCostFallback(t *testing.T) {
 }
 
 // ========================================
-// parsePrice Tests
-// ========================================
-
-func TestParsePrice(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected float64
-	}{
-		{"0.000003", 0.000003},
-		{"0.00015", 0.00015},
-		{"0", 0},
-		{"", 0},
-		{"0.0", 0.0},
-		{"1.5", 1.5},
-		{"invalid", 0}, // Should handle gracefully
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			result := parsePrice(tt.input)
-			if result != tt.expected {
-				t.Errorf("parsePrice(%q) = %f, want %f", tt.input, result, tt.expected)
-			}
-		})
-	}
-}
-
-// ========================================
-// parseOpenRouterCapabilities Tests
-// ========================================
-
-func TestParseOpenRouterCapabilities(t *testing.T) {
-	t.Run("empty parameters", func(t *testing.T) {
-		caps := parseOpenRouterCapabilities(nil)
-		if !caps.SupportsStreaming {
-			t.Error("expected SupportsStreaming to always be true")
-		}
-		if caps.SupportsStructuredOutputs {
-			t.Error("expected SupportsStructuredOutputs to be false")
-		}
-	})
-
-	t.Run("structured outputs", func(t *testing.T) {
-		caps := parseOpenRouterCapabilities([]string{"structured_outputs"})
-		if !caps.SupportsStructuredOutputs {
-			t.Error("expected SupportsStructuredOutputs to be true")
-		}
-	})
-
-	t.Run("tools capability", func(t *testing.T) {
-		caps := parseOpenRouterCapabilities([]string{"tools"})
-		if !caps.SupportsTools {
-			t.Error("expected SupportsTools to be true")
-		}
-	})
-
-	t.Run("tool_choice capability", func(t *testing.T) {
-		caps := parseOpenRouterCapabilities([]string{"tool_choice"})
-		if !caps.SupportsTools {
-			t.Error("expected SupportsTools to be true for tool_choice")
-		}
-	})
-
-	t.Run("reasoning capability", func(t *testing.T) {
-		caps := parseOpenRouterCapabilities([]string{"reasoning"})
-		if !caps.SupportsReasoning {
-			t.Error("expected SupportsReasoning to be true")
-		}
-	})
-
-	t.Run("response_format capability", func(t *testing.T) {
-		caps := parseOpenRouterCapabilities([]string{"response_format"})
-		if !caps.SupportsResponseFormat {
-			t.Error("expected SupportsResponseFormat to be true")
-		}
-	})
-
-	t.Run("all capabilities", func(t *testing.T) {
-		caps := parseOpenRouterCapabilities([]string{
-			"structured_outputs",
-			"tools",
-			"reasoning",
-			"response_format",
-		})
-		if !caps.SupportsStructuredOutputs {
-			t.Error("expected SupportsStructuredOutputs to be true")
-		}
-		if !caps.SupportsTools {
-			t.Error("expected SupportsTools to be true")
-		}
-		if !caps.SupportsReasoning {
-			t.Error("expected SupportsReasoning to be true")
-		}
-		if !caps.SupportsResponseFormat {
-			t.Error("expected SupportsResponseFormat to be true")
-		}
-		if !caps.SupportsStreaming {
-			t.Error("expected SupportsStreaming to be true")
-		}
-	})
-}
-
-// ========================================
 // GetCachedModelCount and LastRefresh Tests
 // ========================================
 
@@ -281,129 +175,47 @@ func TestPricingService_CacheInfo(t *testing.T) {
 }
 
 // ========================================
-// RefreshOpenRouterPricing with Mock Server
+// Cache Structure Tests
 // ========================================
 
-func TestPricingService_RefreshOpenRouterPricing(t *testing.T) {
-	// Create a mock server
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		response := map[string]interface{}{
-			"data": []map[string]interface{}{
-				{
-					"id":             "anthropic/claude-3-haiku",
-					"name":           "Claude 3 Haiku",
-					"pricing":        map[string]string{"prompt": "0.00000025", "completion": "0.00000125"},
-					"context_length": 200000,
-					"supported_parameters": []string{"structured_outputs", "tools"},
-				},
-				{
-					"id":             "openai/gpt-4o-mini",
-					"name":           "GPT-4o Mini",
-					"pricing":        map[string]string{"prompt": "0.00000015", "completion": "0.0000006"},
-					"context_length": 128000,
-					"supported_parameters": []string{"response_format"},
-				},
-			},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
-	}))
-	defer server.Close()
-
-	// Note: We can't easily override the URL in the service, so we'll test
-	// the parsing logic separately. This test verifies the structure is correct.
-	t.Run("cache structure", func(t *testing.T) {
-		logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-		svc := NewPricingService(PricingServiceConfig{
-			RefreshInterval: time.Hour,
-		}, logger)
-
-		// Simulate what RefreshOpenRouterPricing would do
-		svc.openRouterMu.Lock()
-		svc.openRouterPrices["anthropic/claude-3-haiku"] = &ModelPricing{
-			ID:              "anthropic/claude-3-haiku",
-			Name:            "Claude 3 Haiku",
-			PromptPrice:     0.00000025,
-			CompletionPrice: 0.00000125,
-			ContextLength:   200000,
-			IsFree:          false,
-			Capabilities: llm.ModelCapabilities{
-				SupportsStreaming:         true,
-				SupportsStructuredOutputs: true,
-				SupportsTools:             true,
-			},
-		}
-		svc.lastRefresh = time.Now()
-		svc.openRouterMu.Unlock()
-
-		pricing := svc.GetModelPricing("openrouter", "anthropic/claude-3-haiku")
-		if pricing == nil {
-			t.Fatal("expected pricing to be cached")
-		}
-		if pricing.Name != "Claude 3 Haiku" {
-			t.Errorf("Name = %q, want %q", pricing.Name, "Claude 3 Haiku")
-		}
-		if pricing.ContextLength != 200000 {
-			t.Errorf("ContextLength = %d, want 200000", pricing.ContextLength)
-		}
-		if !pricing.Capabilities.SupportsStructuredOutputs {
-			t.Error("expected SupportsStructuredOutputs to be true")
-		}
-	})
-}
-
-// ========================================
-// OpenRouterCostFetcher Tests
-// ========================================
-
-func TestOpenRouterCostFetcher_SupportsGeneration(t *testing.T) {
+func TestPricingService_CacheStructure(t *testing.T) {
+	// Tests the cache structure and GetModelPricing retrieval
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	fetcher := NewOpenRouterCostFetcher(&http.Client{}, logger)
+	svc := NewPricingService(PricingServiceConfig{
+		RefreshInterval: time.Hour,
+	}, logger)
 
-	if !fetcher.SupportsGeneration() {
-		t.Error("expected SupportsGeneration to return true")
+	// Manually populate cache (simulating what RefreshOpenRouterPricing does)
+	svc.openRouterMu.Lock()
+	svc.openRouterPrices["anthropic/claude-3-haiku"] = &ModelPricing{
+		ID:              "anthropic/claude-3-haiku",
+		Name:            "Claude 3 Haiku",
+		PromptPrice:     0.00000025,
+		CompletionPrice: 0.00000125,
+		ContextLength:   200000,
+		IsFree:          false,
+		Capabilities: llm.ModelCapabilities{
+			SupportsStreaming:         true,
+			SupportsStructuredOutputs: true,
+			SupportsTools:             true,
+		},
 	}
-}
+	svc.lastRefresh = time.Now()
+	svc.openRouterMu.Unlock()
 
-func TestOpenRouterCostFetcher_FetchGenerationCost(t *testing.T) {
-	// Create mock server
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verify auth header
-		auth := r.Header.Get("Authorization")
-		if auth != "Bearer test-key" {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-
-		// Check generation ID from query
-		genID := r.URL.Query().Get("id")
-		if genID == "not-found" {
-			w.WriteHeader(http.StatusNotFound)
-			w.Write([]byte("not found"))
-			return
-		}
-
-		response := map[string]interface{}{
-			"data": map[string]interface{}{
-				"total_cost": 0.00123,
-			},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
-	}))
-	defer server.Close()
-
-	// Create fetcher with test client
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	fetcher := &OpenRouterCostFetcher{
-		httpClient: server.Client(),
-		logger:     logger,
+	pricing := svc.GetModelPricing("openrouter", "anthropic/claude-3-haiku")
+	if pricing == nil {
+		t.Fatal("expected pricing to be cached")
 	}
-
-	// Note: We can't easily override the URL constant, but we verify the interface
-	t.Run("interface compliance", func(t *testing.T) {
-		var _ ProviderCostFetcher = fetcher
-	})
+	if pricing.Name != "Claude 3 Haiku" {
+		t.Errorf("Name = %q, want %q", pricing.Name, "Claude 3 Haiku")
+	}
+	if pricing.ContextLength != 200000 {
+		t.Errorf("ContextLength = %d, want 200000", pricing.ContextLength)
+	}
+	if !pricing.Capabilities.SupportsStructuredOutputs {
+		t.Error("expected SupportsStructuredOutputs to be true")
+	}
 }
 
 // ========================================

@@ -1,6 +1,8 @@
 // Package llm provides LLM client interfaces and provider implementations.
 package llm
 
+import "time"
+
 // Provider name constants for use throughout the codebase.
 // Use these constants instead of string literals to prevent typos
 // and enable compile-time checking.
@@ -16,6 +18,13 @@ const (
 
 	// ProviderOllama is the Ollama provider name.
 	ProviderOllama = "ollama"
+)
+
+// Timeout constants for LLM operations.
+const (
+	// LLMTimeout is the timeout for LLM completion requests.
+	// Set higher to accommodate free models under load.
+	LLMTimeout = 120 * time.Second
 )
 
 // ValidProviders returns a slice of all valid provider names.

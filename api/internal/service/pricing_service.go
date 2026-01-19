@@ -2,110 +2,31 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/jmylchreest/refyne-api/internal/llm"
+	refynellm "github.com/jmylchreest/refyne/pkg/llm"
 )
-
-const (
-	// OpenRouter API endpoints
-	openRouterModelsURL     = "https://openrouter.ai/api/v1/models"
-	openRouterGenerationURL = "https://openrouter.ai/api/v1/generation"
-)
-
-// ProviderCostFetcher defines the interface for fetching actual costs from providers.
-// Providers that support per-generation cost lookup can implement this interface.
-type ProviderCostFetcher interface {
-	// FetchGenerationCost retrieves the actual cost for a specific generation.
-	// Returns the cost in USD or an error if lookup fails/not supported.
-	FetchGenerationCost(ctx context.Context, generationID, apiKey string) (float64, error)
-	// SupportsGeneration returns true if the provider supports generation cost lookup.
-	SupportsGeneration() bool
-}
-
-// OpenRouterCostFetcher implements ProviderCostFetcher for OpenRouter.
-type OpenRouterCostFetcher struct {
-	httpClient *http.Client
-	logger     *slog.Logger
-}
-
-// NewOpenRouterCostFetcher creates a new OpenRouter cost fetcher.
-func NewOpenRouterCostFetcher(httpClient *http.Client, logger *slog.Logger) *OpenRouterCostFetcher {
-	return &OpenRouterCostFetcher{
-		httpClient: httpClient,
-		logger:     logger,
-	}
-}
-
-// SupportsGeneration returns true - OpenRouter supports generation cost lookup.
-func (f *OpenRouterCostFetcher) SupportsGeneration() bool {
-	return true
-}
-
-// FetchGenerationCost fetches the actual cost from OpenRouter.
-func (f *OpenRouterCostFetcher) FetchGenerationCost(ctx context.Context, generationID, apiKey string) (float64, error) {
-	url := fmt.Sprintf("%s?id=%s", openRouterGenerationURL, generationID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return 0, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := f.httpClient.Do(req)
-	if err != nil {
-		return 0, fmt.Errorf("request failed: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return 0, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	var result struct {
-		Data struct {
-			TotalCost float64 `json:"total_cost"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return 0, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	f.logger.Debug("actual cost fetched from OpenRouter",
-		"generation_id", generationID,
-		"cost_usd", result.Data.TotalCost,
-	)
-	return result.Data.TotalCost, nil
-}
 
 // ModelPricing represents pricing and capabilities for a single model.
 type ModelPricing struct {
-	ID              string               `json:"id"`
-	Name            string               `json:"name"`
-	PromptPrice     float64              `json:"prompt_price"`     // Price per token (USD)
-	CompletionPrice float64              `json:"completion_price"` // Price per token (USD)
-	ContextLength   int                  `json:"context_length"`
-	IsFree          bool                 `json:"is_free"`
+	ID              string                `json:"id"`
+	Name            string                `json:"name"`
+	PromptPrice     float64               `json:"prompt_price"`     // Price per token (USD)
+	CompletionPrice float64               `json:"completion_price"` // Price per token (USD)
+	ContextLength   int                   `json:"context_length"`
+	IsFree          bool                  `json:"is_free"`
 	Capabilities    llm.ModelCapabilities `json:"capabilities"` // What features the model supports
 }
 
 // PricingService manages model pricing data from LLM providers.
+// Uses refyne's provider interfaces for cost tracking, estimation, and model listing.
 type PricingService struct {
-	httpClient *http.Client
-	logger     *slog.Logger
+	logger *slog.Logger
 
 	// OpenRouter pricing cache
 	openRouterAPIKey string
@@ -113,9 +34,6 @@ type PricingService struct {
 	openRouterMu     sync.RWMutex
 	lastRefresh      time.Time
 	refreshInterval  time.Duration
-
-	// Provider cost fetchers for generation cost lookup
-	costFetchers map[string]ProviderCostFetcher
 
 	// Capabilities cache (typically the llm.Registry)
 	capCache llm.CapabilitiesCache
@@ -134,6 +52,7 @@ func (s *PricingService) SetCapabilitiesCache(cache llm.CapabilitiesCache) {
 }
 
 // NewPricingService creates a new pricing service.
+// Uses refyne's provider interfaces for cost tracking, estimation, and model listing.
 func NewPricingService(cfg PricingServiceConfig, logger *slog.Logger) *PricingService {
 	if cfg.RefreshInterval == 0 {
 		cfg.RefreshInterval = 1 * time.Hour // Default: cache for 1 hour
@@ -142,26 +61,13 @@ func NewPricingService(cfg PricingServiceConfig, logger *slog.Logger) *PricingSe
 		logger = slog.Default()
 	}
 
-	httpClient := &http.Client{
-		Timeout: 5 * time.Second, // Short timeout for quick retries
-	}
 	componentLogger := logger.With("component", "pricing")
 
-	// Initialize provider cost fetchers
-	costFetchers := map[string]ProviderCostFetcher{
-		"openrouter": NewOpenRouterCostFetcher(httpClient, componentLogger),
-		// Other providers can be added here when they support generation cost lookup
-		// "anthropic": NewAnthropicCostFetcher(httpClient, componentLogger),
-		// "openai": NewOpenAICostFetcher(httpClient, componentLogger),
-	}
-
 	return &PricingService{
-		httpClient:       httpClient,
 		logger:           componentLogger,
 		openRouterAPIKey: cfg.OpenRouterAPIKey,
 		openRouterPrices: make(map[string]*ModelPricing),
 		refreshInterval:  cfg.RefreshInterval,
-		costFetchers:     costFetchers,
 	}
 }
 
@@ -228,80 +134,34 @@ func (s *PricingService) ensureFresh(ctx context.Context) {
 	}
 }
 
-// openRouterModelsResponse represents the response from OpenRouter's /api/v1/models endpoint.
-type openRouterModelsResponse struct {
-	Data []openRouterModel `json:"data"`
-}
-
-type openRouterModel struct {
-	ID                  string              `json:"id"`
-	Name                string              `json:"name"`
-	Pricing             openRouterPricing   `json:"pricing"`
-	ContextLength       int                 `json:"context_length"`
-	TopProvider         *openRouterProvider `json:"top_provider,omitempty"`
-	SupportedParameters []string            `json:"supported_parameters"` // Capabilities like "structured_outputs", "tools", etc.
-}
-
-type openRouterPricing struct {
-	Prompt     string `json:"prompt"`     // Price per token as string (e.g., "0.000003")
-	Completion string `json:"completion"` // Price per token as string
-	Image      string `json:"image,omitempty"`
-	Request    string `json:"request,omitempty"`
-}
-
-type openRouterProvider struct {
-	ContextLength       int  `json:"context_length,omitempty"`
-	MaxCompletionTokens int  `json:"max_completion_tokens,omitempty"`
-	IsModerated         bool `json:"is_moderated,omitempty"`
-}
-
-// RefreshOpenRouterPricing fetches current pricing from OpenRouter.
+// RefreshOpenRouterPricing fetches current pricing from OpenRouter using refyne's provider.
 func (s *PricingService) RefreshOpenRouterPricing(ctx context.Context) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, openRouterModelsURL, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
+	// Create an OpenRouter provider using refyne
 	// API key is optional for models endpoint but may provide more data
-	if s.openRouterAPIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+s.openRouterAPIKey)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := s.httpClient.Do(req)
+	provider, err := refynellm.NewOpenRouterProvider(refynellm.ProviderConfig{
+		APIKey: s.openRouterAPIKey,
+	})
 	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
+		return fmt.Errorf("failed to create OpenRouter provider: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	// Use refyne's ModelLister to fetch models
+	models, err := provider.ListModels(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to read response: %w", err)
+		return fmt.Errorf("failed to list models: %w", err)
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	var result openRouterModelsResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		return fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	// Parse and cache pricing with capabilities
-	prices := make(map[string]*ModelPricing, len(result.Data))
-	for _, model := range result.Data {
-		promptPrice := parsePrice(model.Pricing.Prompt)
-		completionPrice := parsePrice(model.Pricing.Completion)
-
+	// Convert refyne ModelInfo to our ModelPricing format
+	prices := make(map[string]*ModelPricing, len(models))
+	for _, model := range models {
 		prices[model.ID] = &ModelPricing{
 			ID:              model.ID,
 			Name:            model.Name,
-			PromptPrice:     promptPrice,
-			CompletionPrice: completionPrice,
+			PromptPrice:     model.PromptPrice,
+			CompletionPrice: model.CompletionPrice,
 			ContextLength:   model.ContextLength,
-			IsFree:          promptPrice == 0 && completionPrice == 0,
-			Capabilities:    parseOpenRouterCapabilities(model.SupportedParameters),
+			IsFree:          model.IsFree,
+			Capabilities:    llm.ConvertCapabilities(model.Capabilities),
 		}
 	}
 
@@ -324,38 +184,6 @@ func (s *PricingService) RefreshOpenRouterPricing(ctx context.Context) error {
 	return nil
 }
 
-// parsePrice converts a string price to float64.
-func parsePrice(s string) float64 {
-	if s == "" || s == "0" {
-		return 0
-	}
-	var price float64
-	_, _ = fmt.Sscanf(s, "%f", &price)
-	return price
-}
-
-// parseOpenRouterCapabilities converts OpenRouter's supported_parameters to normalized capabilities.
-func parseOpenRouterCapabilities(params []string) llm.ModelCapabilities {
-	caps := llm.ModelCapabilities{
-		SupportsStreaming: true, // OpenRouter always supports streaming
-	}
-
-	for _, p := range params {
-		switch p {
-		case "structured_outputs":
-			caps.SupportsStructuredOutputs = true
-		case "tools", "tool_choice":
-			caps.SupportsTools = true
-		case "reasoning":
-			caps.SupportsReasoning = true
-		case "response_format":
-			caps.SupportsResponseFormat = true
-		}
-	}
-
-	return caps
-}
-
 // GetModelPricing returns pricing for a specific model.
 // Returns nil if model not found.
 func (s *PricingService) GetModelPricing(provider, model string) *ModelPricing {
@@ -374,8 +202,9 @@ func (s *PricingService) GetModelPricing(provider, model string) *ModelPricing {
 }
 
 // EstimateCost calculates estimated cost based on cached pricing.
-// Falls back to hardcoded estimates if pricing not available.
+// Falls back to refyne's CostEstimator or hardcoded estimates if pricing not available.
 func (s *PricingService) EstimateCost(provider, model string, inputTokens, outputTokens int) float64 {
+	// First, try cached pricing (fastest - no API call)
 	pricing := s.GetModelPricing(provider, model)
 	if pricing != nil {
 		inputCost := float64(inputTokens) * pricing.PromptPrice
@@ -393,8 +222,21 @@ func (s *PricingService) EstimateCost(provider, model string, inputTokens, outpu
 		return cost
 	}
 
-	// Fallback to hardcoded estimates
-	cost := s.estimateCostFallback(model, inputTokens, outputTokens)
+	// Try refyne's CostEstimator (uses provider's static pricing data)
+	cost, err := s.estimateCostViaRefyne(provider, model, inputTokens, outputTokens)
+	if err == nil && cost > 0 {
+		s.logger.Debug("cost estimated via refyne provider",
+			"provider", provider,
+			"model", model,
+			"input_tokens", inputTokens,
+			"output_tokens", outputTokens,
+			"cost_usd", cost,
+		)
+		return cost
+	}
+
+	// Final fallback to hardcoded estimates
+	cost = s.estimateCostFallback(model, inputTokens, outputTokens)
 	s.logger.Debug("cost estimated from fallback pricing",
 		"provider", provider,
 		"model", model,
@@ -403,6 +245,36 @@ func (s *PricingService) EstimateCost(provider, model string, inputTokens, outpu
 		"cost_usd", cost,
 	)
 	return cost
+}
+
+// estimateCostViaRefyne uses refyne's CostEstimator interface.
+func (s *PricingService) estimateCostViaRefyne(provider, model string, inputTokens, outputTokens int) (float64, error) {
+	// Get the API key for the provider (needed to create provider instance)
+	var apiKey string
+	if provider == "openrouter" {
+		apiKey = s.openRouterAPIKey
+	}
+
+	// Create a refyne provider
+	refyneProvider, err := refynellm.NewProvider(provider, refynellm.ProviderConfig{
+		APIKey: apiKey,
+		Model:  model,
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	// Check if the provider supports cost estimation
+	if !refynellm.CanEstimateCost(refyneProvider) {
+		return 0, fmt.Errorf("provider %s does not support cost estimation", provider)
+	}
+
+	costEstimator, ok := refynellm.AsCostEstimator(refyneProvider)
+	if !ok {
+		return 0, fmt.Errorf("provider %s does not implement CostEstimator", provider)
+	}
+
+	return costEstimator.EstimateCost(context.Background(), model, inputTokens, outputTokens)
 }
 
 // estimateCostFallback provides rough cost estimates when pricing data isn't available.
@@ -438,18 +310,13 @@ func (s *PricingService) estimateCostFallback(model string, inputTokens, outputT
 }
 
 // GetActualCost retrieves the actual cost from a provider for a specific generation.
+// Uses refyne's CostTracker interface when available.
 // This makes an API call, so use sparingly (e.g., for recording final costs).
 // If apiKey is provided, it will be used instead of the service key (for BYOK users).
 // Retries up to 3 times with delays since generation stats may not be immediately available.
 func (s *PricingService) GetActualCost(ctx context.Context, provider, generationID, apiKey string) (float64, error) {
 	if generationID == "" {
 		return 0, fmt.Errorf("generation ID required for cost lookup")
-	}
-
-	// Get the provider's cost fetcher
-	fetcher, ok := s.costFetchers[provider]
-	if !ok || !fetcher.SupportsGeneration() {
-		return 0, fmt.Errorf("actual cost lookup not supported for provider: %s", provider)
 	}
 
 	// Use provided API key (BYOK) or fall back to service key for OpenRouter
@@ -459,6 +326,20 @@ func (s *PricingService) GetActualCost(ctx context.Context, provider, generation
 	}
 	if key == "" {
 		return 0, fmt.Errorf("%s API key required for cost lookup", provider)
+	}
+
+	// Create a refyne provider to use its CostTracker interface
+	refyneProvider, err := refynellm.NewProvider(provider, refynellm.ProviderConfig{
+		APIKey: key,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to create provider for cost lookup: %w", err)
+	}
+
+	// Check if the provider supports cost tracking
+	costTracker, ok := refynellm.AsCostTracker(refyneProvider)
+	if !ok || !costTracker.SupportsGenerationCost() {
+		return 0, fmt.Errorf("actual cost lookup not supported for provider: %s", provider)
 	}
 
 	// Retry with delays - generation stats may not be immediately available
@@ -477,8 +358,13 @@ func (s *PricingService) GetActualCost(ctx context.Context, provider, generation
 			time.Sleep(delay)
 		}
 
-		cost, err := fetcher.FetchGenerationCost(ctx, generationID, key)
+		cost, err := costTracker.GetGenerationCost(ctx, generationID)
 		if err == nil {
+			s.logger.Debug("actual cost fetched via refyne provider",
+				"provider", provider,
+				"generation_id", generationID,
+				"cost_usd", cost,
+			)
 			return cost, nil
 		}
 		lastErr = err
