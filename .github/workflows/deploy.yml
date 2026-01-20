@@ -169,28 +169,28 @@ jobs:
         run: npm install -g vercel
 
       - name: Pull Vercel environment
-        run: vercel pull --yes --environment=${{ needs.prepare.outputs.environment == 'production' && 'production' || 'preview' }} --token=${{ secrets.VERCEL_TOKEN }}
+        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_PROJECT_ID: ${{ needs.prepare.outputs.environment == 'production' && secrets.VERCEL_PROJECT_ID_PRODUCTION || secrets.VERCEL_PROJECT_ID_STAGING }}
 
       - name: Build with Vercel
-        run: vercel build ${{ needs.prepare.outputs.environment == 'production' && '--prod' || '' }} --token=${{ secrets.VERCEL_TOKEN }}
+        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_PROJECT_ID: ${{ needs.prepare.outputs.environment == 'production' && secrets.VERCEL_PROJECT_ID_PRODUCTION || secrets.VERCEL_PROJECT_ID_STAGING }}
           NEXT_PUBLIC_API_URL: ${{ needs.prepare.outputs.api_url }}
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
 
       - name: Deploy to Vercel
         id: deploy
         run: |
-          URL=$(vercel deploy --prebuilt --archive=tgz ${{ needs.prepare.outputs.environment == 'production' && '--prod' || '' }} --token=${{ secrets.VERCEL_TOKEN }})
+          URL=$(vercel deploy --prebuilt --archive=tgz --prod --token=${{ secrets.VERCEL_TOKEN }})
           echo "url=${URL}" >> $GITHUB_OUTPUT
           echo "Deployed to: ${URL}"
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_PROJECT_ID: ${{ needs.prepare.outputs.environment == 'production' && secrets.VERCEL_PROJECT_ID_PRODUCTION || secrets.VERCEL_PROJECT_ID_STAGING }}
 
   # Post-deployment notification (optional)
   notify:
