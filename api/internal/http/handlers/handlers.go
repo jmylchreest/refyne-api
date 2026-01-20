@@ -7,6 +7,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/jmylchreest/refyne-api/internal/http/mw"
+	"github.com/jmylchreest/refyne-api/internal/version"
 )
 
 // HealthCheckOutput represents health check response.
@@ -25,7 +26,7 @@ func HealthCheck(ctx context.Context, input *struct{}) (*HealthCheckOutput, erro
 			Version string `json:"version"`
 		}{
 			Status:  "healthy",
-			Version: "1.0.0",
+			Version: version.Get().Short(),
 		},
 	}, nil
 }

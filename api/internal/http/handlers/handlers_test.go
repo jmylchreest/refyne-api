@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/jmylchreest/refyne-api/internal/http/mw"
+	"github.com/jmylchreest/refyne-api/internal/version"
 )
 
 // ========================================
@@ -23,8 +24,9 @@ func TestHealthCheck(t *testing.T) {
 	if output.Body.Status != "healthy" {
 		t.Errorf("Status = %q, want %q", output.Body.Status, "healthy")
 	}
-	if output.Body.Version != "1.0.0" {
-		t.Errorf("Version = %q, want %q", output.Body.Version, "1.0.0")
+	expectedVersion := version.Get().Short()
+	if output.Body.Version != expectedVersion {
+		t.Errorf("Version = %q, want %q", output.Body.Version, expectedVersion)
 	}
 }
 

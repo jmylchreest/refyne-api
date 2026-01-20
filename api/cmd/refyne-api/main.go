@@ -240,7 +240,7 @@ func main() {
 	router.Use(middleware.Throttle(100))
 
 	// Create Huma API config for main API with OpenAPI docs
-	humaConfig := huma.DefaultConfig("Refyne API", "1.0.0")
+	humaConfig := huma.DefaultConfig("Refyne API", version.Get().Short())
 	humaConfig.Info.Description = "LLM-powered web extraction API that transforms unstructured websites into clean, typed JSON."
 	// Disable $schema field in responses - it conflicts with "schema" field in SDK code generators
 	humaConfig.CreateHooks = nil
