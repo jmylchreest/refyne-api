@@ -479,9 +479,14 @@ export default function JobsPage() {
                     <div className="min-w-0 flex-1">
                       <p className="font-mono text-sm break-all">{selectedJob.url}</p>
                     </div>
-                    <Badge className={cn('shrink-0', getStatusColor(selectedJob.status))}>
-                      {selectedJob.status}
-                    </Badge>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Badge variant="outline" className="font-mono text-xs text-zinc-500 dark:text-zinc-400">
+                        {selectedJob.id}
+                      </Badge>
+                      <Badge className={cn(getStatusColor(selectedJob.status))}>
+                        {selectedJob.status}
+                      </Badge>
+                    </div>
                   </div>
 
                   {/* Stats grid */}
