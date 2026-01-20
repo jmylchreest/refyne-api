@@ -200,24 +200,6 @@ func TestRequireFeature_HasFeature(t *testing.T) {
 }
 
 // ========================================
-// Mock UsageService
-// ========================================
-
-type mockUsageService struct {
-	usage *BillingPeriodUsage
-	err   error
-}
-
-// BillingPeriodUsage mirrors the structure from service package for testing
-type BillingPeriodUsage struct {
-	TotalJobs int `json:"total_jobs"`
-}
-
-func (m *mockUsageService) GetBillingPeriodUsage(ctx context.Context, userID string) (*BillingPeriodUsage, error) {
-	return m.usage, m.err
-}
-
-// ========================================
 // RequireUsageQuota Middleware Tests
 // ========================================
 

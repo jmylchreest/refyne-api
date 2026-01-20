@@ -178,28 +178,6 @@ func (m *mockSchemaSnapshotRepository) IncrementUsageCount(ctx context.Context, 
 	return nil
 }
 
-// mockPricingService implements a minimal pricing service for testing
-type mockPricingService struct {
-	estimatedCost float64
-	actualCost    float64
-	actualCostErr error
-}
-
-func (m *mockPricingService) EstimateCost(provider, model string, inputTokens, outputTokens int) float64 {
-	if m.estimatedCost > 0 {
-		return m.estimatedCost
-	}
-	// Default simple calculation
-	return float64(inputTokens+outputTokens) * 0.00001
-}
-
-func (m *mockPricingService) GetActualCost(ctx context.Context, provider, generationID, apiKey string) (float64, error) {
-	if m.actualCostErr != nil {
-		return 0, m.actualCostErr
-	}
-	return m.actualCost, nil
-}
-
 // newTestBillingService creates a billing service with mocks for testing
 func newTestBillingService() (
 	*BillingService,

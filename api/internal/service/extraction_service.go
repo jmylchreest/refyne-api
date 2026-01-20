@@ -1038,41 +1038,6 @@ func (s *ExtractionService) handleLLMError(err error, llmCfg *LLMConfigInput, is
 	return llmErr
 }
 
-// resolveLLMConfig determines which LLM configuration to use.
-// This is a simpler version that returns a single config (for Crawl operations).
-// Returns (config, isBYOK, error) where isBYOK is true if the user is using their own API key.
-// Note: This version does NOT check BYOK eligibility - use resolveLLMConfigWithBYOK for that.
-func (s *ExtractionService) resolveLLMConfig(ctx context.Context, userID string, override *LLMConfigInput) (*LLMConfigInput, bool, error) {
-	// Default to not allowing BYOK or custom models when no context available
-	return s.resolveLLMConfigWithBYOK(ctx, userID, override, "", false, false)
-}
-
-// resolveLLMConfigWithBYOK determines which LLM configuration to use with feature checking.
-// Returns (config, isBYOK, error) where isBYOK is true if the user is using their own API key.
-// Delegates to LLMConfigResolver for the feature matrix implementation.
-func (s *ExtractionService) resolveLLMConfigWithBYOK(ctx context.Context, userID string, override *LLMConfigInput, tier string, byokAllowed bool, modelsCustomAllowed bool) (*LLMConfigInput, bool, error) {
-	// Delegate to resolver for all standard cases
-	if s.resolver != nil {
-		config, isBYOK := s.resolver.ResolveConfig(ctx, userID, override, tier, byokAllowed, modelsCustomAllowed)
-		if config != nil {
-			return config, isBYOK, nil
-		}
-	}
-
-	// Fallback if resolver not set
-	return s.getDefaultLLMConfig(ctx), false, nil
-}
-
-// getDefaultLLMConfigsForTier returns the fallback chain for a specific tier.
-// Delegates to resolver when available.
-func (s *ExtractionService) getDefaultLLMConfigsForTier(ctx context.Context, tier string) []*LLMConfigInput {
-	if s.resolver != nil {
-		return s.resolver.GetDefaultConfigsForTier(ctx, tier)
-	}
-	// Fallback if resolver not set
-	return s.getHardcodedDefaultChain(ctx)
-}
-
 // getHardcodedDefaultChain returns the default fallback chain when no custom chain is configured.
 //
 // getHardcodedDefaultChain returns the hardcoded fallback chain when resolver isn't available.
