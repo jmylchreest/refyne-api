@@ -3,7 +3,7 @@
 # Manual deploy: fly deploy --config fly.staging.toml --app refyne-api-staging
 
 app = "refyne-api-staging"
-primary_region = "sjc"
+primary_region = "dub"  # Dublin - close to Turso aws-eu-west-1
 
 [build]
   dockerfile = "Dockerfile"
@@ -39,7 +39,7 @@ primary_region = "sjc"
   cpus = 1
 
 # Persistent volume for SQLite (staging uses smaller volume)
-# Create: fly volumes create refyne_data --size 1 --region sjc --app refyne-api-staging
+# Create: fly volumes create refyne_data --size 1 --region dub --app refyne-api-staging
 # [[mounts]]
 #   source = "refyne_data"
 #   destination = "/data"
