@@ -1,4 +1,6 @@
 import { ImageResponse } from 'next/og';
+import { readFile } from 'fs/promises';
+import { join } from 'path';
 import { OG_FEATURES, OG_TAGLINE, OG_URL } from '@/lib/og-constants';
 
 export const runtime = 'nodejs';
@@ -10,14 +12,14 @@ export const size = {
 export const contentType = 'image/png';
 
 export default async function Image() {
-  // Load local TTF fonts for the Twitter image (WOFF2 not supported by @vercel/og)
-  const victorMonoItalic = await fetch(
-    new URL('../../public/fonts/VictorMono-BoldItalic.ttf', import.meta.url)
-  ).then((res) => res.arrayBuffer());
+  // Load local TTF fonts using fs for Node.js runtime
+  const victorMonoItalic = await readFile(
+    join(process.cwd(), 'public/fonts/VictorMono-BoldItalic.ttf')
+  );
 
-  const firaCode = await fetch(
-    new URL('../../public/fonts/FiraCode-Medium.ttf', import.meta.url)
-  ).then((res) => res.arrayBuffer());
+  const firaCode = await readFile(
+    join(process.cwd(), 'public/fonts/FiraCode-Medium.ttf')
+  );
 
   return new ImageResponse(
     (
