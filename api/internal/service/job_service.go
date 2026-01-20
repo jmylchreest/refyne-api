@@ -172,6 +172,8 @@ func (s *JobService) ListJobs(ctx context.Context, userID string, limit, offset 
 }
 
 // GetJobResults retrieves results for a job.
+// For crawl jobs, results come from the database (JobResult table).
+// For extract jobs, results are fetched from S3/Tigris storage.
 func (s *JobService) GetJobResults(ctx context.Context, userID, jobID string) ([]*models.JobResult, error) {
 	// Verify job belongs to user
 	job, err := s.GetJob(ctx, userID, jobID)
@@ -179,7 +181,54 @@ func (s *JobService) GetJobResults(ctx context.Context, userID, jobID string) ([
 		return nil, err
 	}
 
+	// For extract jobs, fetch from S3 storage
+	if job.Type == models.JobTypeExtract {
+		return s.getExtractJobResultsFromStorage(ctx, job)
+	}
+
+	// For crawl jobs, fetch from database
 	return s.repos.JobResult.GetByJobID(ctx, jobID)
+}
+
+// getExtractJobResultsFromStorage retrieves extract job results from S3/Tigris.
+// Converts the S3 storage format to JobResult models for API consistency.
+func (s *JobService) getExtractJobResultsFromStorage(ctx context.Context, job *models.Job) ([]*models.JobResult, error) {
+	if s.storageSvc == nil || !s.storageSvc.IsEnabled() {
+		s.logger.Debug("storage not enabled, returning empty results for extract job",
+			"job_id", job.ID,
+		)
+		return []*models.JobResult{}, nil
+	}
+
+	// Only completed jobs have results in storage
+	if job.Status != models.JobStatusCompleted {
+		return []*models.JobResult{}, nil
+	}
+
+	// Fetch from S3
+	storageResults, err := s.storageSvc.GetJobResults(ctx, job.ID)
+	if err != nil {
+		s.logger.Warn("failed to get extract job results from storage",
+			"job_id", job.ID,
+			"error", err,
+		)
+		return []*models.JobResult{}, nil
+	}
+
+	// Convert storage format to JobResult models
+	results := make([]*models.JobResult, 0, len(storageResults.Results))
+	for _, r := range storageResults.Results {
+		results = append(results, &models.JobResult{
+			ID:          r.ID,
+			JobID:       job.ID,
+			URL:         r.URL,
+			DataJSON:    string(r.Data),
+			CrawlStatus: models.CrawlStatusCompleted,
+			CreatedAt:   r.CreatedAt,
+		})
+	}
+
+	return results, nil
 }
 
 // GetJobResultsAfterID retrieves results with ID greater than afterID (for SSE streaming).
