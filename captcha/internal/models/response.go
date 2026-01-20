@@ -32,7 +32,12 @@ type SolveResponse struct {
 	EndTimestamp   int64      `json:"endTimestamp"`             // Unix timestamp ms
 	Version        string     `json:"version"`                  // Service version
 	ChallengeType  string     `json:"challengeType,omitempty"`  // Type of challenge detected
-	SolverUsed     string     `json:"solverUsed,omitempty"`     // Solver used (if any)
+	SolverUsed     string     `json:"solverUsed,omitempty"`     // Solver used (if any) - deprecated, use Method
+
+	// Challenge tracking (Refyne extensions)
+	Challenged bool   `json:"challenged"`          // Whether a challenge was detected
+	Solved     bool   `json:"solved"`              // Whether the challenge was solved
+	Method     string `json:"method,omitempty"`    // How resolved: "cached", "resolved", "2captcha", etc.
 
 	// Refyne extensions
 	RequestID string     `json:"requestId,omitempty"` // Unique request ID

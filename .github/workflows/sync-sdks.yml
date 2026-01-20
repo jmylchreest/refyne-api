@@ -1,12 +1,14 @@
 # Sync SDK repositories when OpenAPI spec changes
 # Triggers each SDK repo to regenerate types from the updated spec
+# SDK versions use API major.minor with their own patch version
 name: Sync SDKs
 
 on:
   push:
     branches: [main]
     paths:
-      - 'web/openapi.json'
+      - 'api/cmd/refyne-api/**'
+      - 'api/internal/http/**'
   workflow_dispatch:
     inputs:
       sdk:
@@ -15,8 +17,33 @@ on:
         default: 'all'
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      api_version: ${{ steps.version.outputs.version }}
+      api_major: ${{ steps.version.outputs.major }}
+      api_minor: ${{ steps.version.outputs.minor }}
+      api_patch: ${{ steps.version.outputs.patch }}
+      api_sha: ${{ steps.version.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract API version
+        id: version
+        uses: jmylchreest/gha-extract-git-version@v1
+
+      - name: Log version info
+        run: |
+          echo "API Version: ${{ steps.version.outputs.version }}"
+          echo "Major: ${{ steps.version.outputs.major }}"
+          echo "Minor: ${{ steps.version.outputs.minor }}"
+          echo "Patch: ${{ steps.version.outputs.patch }}"
+
   trigger-sdk-sync:
     runs-on: ubuntu-latest
+    needs: prepare
     strategy:
       matrix:
         sdk: [refyne-sdk-ts, refyne-sdk-go, refyne-sdk-python, refyne-sdk-rust]
@@ -58,12 +85,17 @@ jobs:
             {
               "ref": "${{ github.ref }}",
               "sha": "${{ github.sha }}",
-              "api_version": "${{ github.event.repository.default_branch }}"
+              "api_version": "${{ needs.prepare.outputs.api_version }}",
+              "api_major": "${{ needs.prepare.outputs.api_major }}",
+              "api_minor": "${{ needs.prepare.outputs.api_minor }}",
+              "api_patch": "${{ needs.prepare.outputs.api_patch }}",
+              "api_sha": "${{ needs.prepare.outputs.api_sha }}"
             }
 
       - name: Log trigger
         if: steps.check.outputs.should_run == 'true'
         run: |
           echo "Triggered sync for ${{ matrix.sdk }}"
+          echo "  API Version: ${{ needs.prepare.outputs.api_version }}"
           echo "  Ref: ${{ github.ref }}"
           echo "  SHA: ${{ github.sha }}"

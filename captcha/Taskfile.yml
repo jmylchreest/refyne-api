@@ -1,0 +1,121 @@
+version: '3'
+
+vars:
+  VERSION_PKG: github.com/jmylchreest/refyne-api/captcha/internal/version
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo "0.0.0-dev"
+  COMMIT:
+    sh: git rev-parse --short HEAD 2>/dev/null || echo "unknown"
+  DATE:
+    sh: date -u +"%Y-%m-%dT%H:%M:%SZ"
+  DIRTY:
+    sh: git diff --quiet 2>/dev/null && echo "false" || echo "true"
+  LDFLAGS: >-
+    -X {{.VERSION_PKG}}.Version={{.VERSION}}
+    -X {{.VERSION_PKG}}.Commit={{.COMMIT}}
+    -X {{.VERSION_PKG}}.Date={{.DATE}}
+    -X {{.VERSION_PKG}}.Dirty={{.DIRTY}}
+
+tasks:
+  deps:
+    desc: Download Go dependencies
+    cmds:
+      - go mod tidy
+      - go mod download
+
+  build:
+    desc: Build the captcha server with version info
+    cmds:
+      - go build -ldflags "{{.LDFLAGS}}" -o bin/captcha-server ./cmd/captcha-server
+
+  build-prod:
+    desc: Build optimized binary for production
+    env:
+      CGO_ENABLED: "0"
+    cmds:
+      - go build -trimpath -ldflags "-s -w {{.LDFLAGS}}" -o bin/captcha-server ./cmd/captcha-server
+
+  dev:
+    desc: Run in development mode with hot reload (standalone/unauthenticated)
+    dotenv: ['.env', '.env.local']
+    env:
+      LOG_FORMAT: text
+      LOG_LEVEL: debug
+      ALLOW_UNAUTHENTICATED: "true"
+      PORT: "8191"
+    cmds:
+      - air
+
+  dev:nostealth:
+    desc: Run in development mode with stealth disabled (for testing CAPTCHA solving)
+    dotenv: ['.env', '.env.local']
+    env:
+      LOG_FORMAT: text
+      LOG_LEVEL: debug
+      ALLOW_UNAUTHENTICATED: "true"
+      DISABLE_STEALTH: "true"
+      PORT: "8191"
+    cmds:
+      - air
+
+  run:
+    desc: Run without hot reload (standalone/unauthenticated)
+    dotenv: ['.env', '.env.local']
+    env:
+      LOG_FORMAT: text
+      LOG_LEVEL: debug
+      ALLOW_UNAUTHENTICATED: "true"
+      PORT: "8191"
+    cmds:
+      - go run -ldflags "{{.LDFLAGS}}" ./cmd/captcha-server
+
+  run-auth:
+    desc: Run with authentication enabled (requires REFYNE_API_SECRET or CLERK_ISSUER)
+    dotenv: ['.env', '.env.local']
+    env:
+      LOG_FORMAT: text
+      LOG_LEVEL: debug
+      PORT: "8191"
+    cmds:
+      - go run -ldflags "{{.LDFLAGS}}" ./cmd/captcha-server
+
+  test:
+    desc: Run tests
+    cmds:
+      - go test -v ./...
+
+  test-cover:
+    desc: Run tests with coverage
+    cmds:
+      - go test -v -coverprofile=coverage.out ./...
+      - go tool cover -html=coverage.out -o coverage.html
+      - echo "Coverage report{{":"}} coverage.html"
+
+  lint:
+    desc: Lint code
+    cmds:
+      - golangci-lint run
+
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm -rf bin/
+      - rm -f coverage.out coverage.html
+
+  docker:build:
+    desc: Build Docker image
+    cmds:
+      - docker build -t captcha-server:latest .
+
+  docker:run:
+    desc: Run Docker container (standalone mode)
+    cmds:
+      - docker run --rm -p 8191:8191 -e ALLOW_UNAUTHENTICATED=true captcha-server:latest
+
+  version:
+    desc: Show version information
+    cmds:
+      - echo "Version{{":"}} {{.VERSION}}"
+      - echo "Commit{{":"}}  {{.COMMIT}}"
+      - echo "Date{{":"}}    {{.DATE}}"
+      - echo "Dirty{{":"}}   {{.DIRTY}}"

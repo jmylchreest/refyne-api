@@ -3,6 +3,7 @@ package challenge
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -46,12 +47,12 @@ type Detection struct {
 
 // Detector detects challenges on web pages.
 type Detector struct {
-	// Configuration options can be added here
+	logger *slog.Logger
 }
 
 // NewDetector creates a new challenge detector.
-func NewDetector() *Detector {
-	return &Detector{}
+func NewDetector(logger *slog.Logger) *Detector {
+	return &Detector{logger: logger}
 }
 
 // Detect analyzes a page and returns the detected challenge type.
@@ -129,33 +130,55 @@ func (d *Detector) Detect(ctx context.Context, page *rod.Page) (*Detection, erro
 // WaitForChallenge waits for an auto-resolvable challenge to complete.
 func (d *Detector) WaitForChallenge(ctx context.Context, page *rod.Page, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
+	startTime := time.Now()
+	checkCount := 0
+	lastLogTime := time.Now()
 
 	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
+			d.logger.Debug("wait cancelled", "elapsed", time.Since(startTime), "checks", checkCount)
 			return ctx.Err()
 		default:
 		}
 
 		detection, err := d.Detect(ctx, page)
 		if err != nil {
+			d.logger.Warn("detection error during wait", "error", err, "elapsed", time.Since(startTime))
 			return err
 		}
+		checkCount++
 
 		// Challenge resolved
 		if detection.Type == TypeNone {
+			d.logger.Debug("challenge resolved", "elapsed", time.Since(startTime), "checks", checkCount)
 			return nil
 		}
 
-		// Challenge requires manual solving
+		// Challenge requires manual solving (changed from auto to manual)
 		if !detection.CanAuto {
+			d.logger.Debug("challenge changed to manual", "type", detection.Type, "elapsed", time.Since(startTime))
 			return nil // Return so caller can handle CAPTCHA
+		}
+
+		// Log progress every 5 seconds
+		if time.Since(lastLogTime) >= 5*time.Second {
+			remaining := time.Until(deadline)
+			d.logger.Debug("waiting for challenge to resolve",
+				"type", detection.Type,
+				"title", detection.Title,
+				"elapsed", time.Since(startTime).Round(time.Second),
+				"remaining", remaining.Round(time.Second),
+				"checks", checkCount,
+			)
+			lastLogTime = time.Now()
 		}
 
 		// Wait a bit before checking again
 		time.Sleep(500 * time.Millisecond)
 	}
 
+	d.logger.Debug("challenge wait timeout", "elapsed", time.Since(startTime), "checks", checkCount)
 	return context.DeadlineExceeded
 }
 

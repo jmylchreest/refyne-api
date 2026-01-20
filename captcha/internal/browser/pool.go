@@ -62,6 +62,48 @@ func NewPool(cfg *config.Config, logger *slog.Logger) *Pool {
 	}
 }
 
+// Warmup ensures Chromium is downloaded and optionally pre-creates browsers.
+// This should be called during startup to avoid download delays on first request.
+func (p *Pool) Warmup(ctx context.Context, preCreate int) error {
+	p.logger.Info("warming up browser pool...")
+
+	// If custom Chrome path is set, verify it exists
+	if p.chromePath != "" {
+		p.logger.Info("using custom Chrome path", "path", p.chromePath)
+	} else {
+		// Ensure Chromium is downloaded (rod auto-downloads if missing)
+		p.logger.Info("ensuring Chromium is available...")
+		browserPath, err := launcher.NewBrowser().Get()
+		if err != nil {
+			return err
+		}
+		p.logger.Info("Chromium ready", "path", browserPath)
+	}
+
+	// Pre-create browsers if requested
+	if preCreate > 0 {
+		if preCreate > p.cfg.BrowserPoolSize {
+			preCreate = p.cfg.BrowserPoolSize
+		}
+		p.logger.Info("pre-creating browsers", "count", preCreate)
+
+		for i := 0; i < preCreate; i++ {
+			browser, err := p.createBrowser(ctx)
+			if err != nil {
+				p.logger.Error("failed to pre-create browser", "error", err)
+				return err
+			}
+			browser.InUse = false
+			p.mu.Lock()
+			p.browsers[browser.ID] = browser
+			p.mu.Unlock()
+		}
+		p.logger.Info("browser pool warmed up", "browsers", preCreate)
+	}
+
+	return nil
+}
+
 // Acquire gets a browser from the pool, creating one if necessary.
 // Blocks if pool is full and all browsers are in use.
 func (p *Pool) Acquire(ctx context.Context) (*ManagedBrowser, error) {

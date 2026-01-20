@@ -2,6 +2,7 @@ package browser
 
 import (
 	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/proto"
 	"github.com/go-rod/stealth"
 )
 
@@ -316,6 +317,16 @@ func CreateStealthPage(browser *rod.Browser) (*rod.Page, error) {
 	}
 
 	return page, nil
+}
+
+// CreatePage creates a new page, optionally with stealth mode disabled.
+// When disableStealth is true, creates a plain page without any evasion techniques.
+func CreatePage(browser *rod.Browser, disableStealth bool) (*rod.Page, error) {
+	if disableStealth {
+		// Create a plain page without stealth
+		return browser.MustIncognito().Page(proto.TargetCreateTarget{URL: "about:blank"})
+	}
+	return CreateStealthPage(browser)
 }
 
 // MustCreateStealthPage creates a stealth page, panicking on error.

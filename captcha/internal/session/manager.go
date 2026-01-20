@@ -45,12 +45,13 @@ type Session struct {
 
 // Manager manages browser sessions.
 type Manager struct {
-	mu       sync.RWMutex
-	sessions map[string]*Session
-	cfg      *config.Config
-	logger   *slog.Logger
+	mu          sync.RWMutex
+	sessions    map[string]*Session
+	waiters     map[string][]chan struct{} // Waiters for busy sessions
+	cfg         *config.Config
+	logger      *slog.Logger
 	maxSessions int
-	closed   bool
+	closed      bool
 }
 
 // NewManager creates a new session manager.
@@ -64,7 +65,9 @@ func NewManager(cfg *config.Config, logger *slog.Logger) *Manager {
 }
 
 // Create creates a new browser session.
-func (m *Manager) Create(ctx context.Context, opts *models.SessionOptions) (*Session, error) {
+// If sessionID is provided, it will be used as the session identifier.
+// If sessionID is empty, a ULID will be generated.
+func (m *Manager) Create(ctx context.Context, sessionID string, opts *models.SessionOptions) (*Session, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -74,6 +77,13 @@ func (m *Manager) Create(ctx context.Context, opts *models.SessionOptions) (*Ses
 
 	if len(m.sessions) >= m.maxSessions {
 		return nil, ErrMaxSessionsReached
+	}
+
+	// Check if session ID already exists
+	if sessionID != "" {
+		if _, exists := m.sessions[sessionID]; exists {
+			return nil, errors.New("session already exists: " + sessionID)
+		}
 	}
 
 	// Configure launcher
@@ -134,8 +144,9 @@ func (m *Manager) Create(ctx context.Context, opts *models.SessionOptions) (*Ses
 		return nil, err
 	}
 
-	// Create stealth page
-	page, err := browser.CreateStealthPage(b)
+	// Create page (stealth mode unless disabled for testing)
+	m.logger.Debug("creating session page", "stealth", !m.cfg.DisableStealth)
+	page, err := browser.CreatePage(b, m.cfg.DisableStealth)
 	if err != nil {
 		b.Close()
 		return nil, err
@@ -153,7 +164,11 @@ func (m *Manager) Create(ctx context.Context, opts *models.SessionOptions) (*Ses
 		}
 	}
 
-	id := ulid.Make().String()
+	// Use provided session ID or generate one
+	id := sessionID
+	if id == "" {
+		id = ulid.Make().String()
+	}
 	session := &Session{
 		ID:           id,
 		Browser:      b,
@@ -185,24 +200,103 @@ func (m *Manager) Get(id string) (*Session, error) {
 	return session, nil
 }
 
-// Acquire acquires a session for use.
-func (m *Manager) Acquire(id string) (*Session, error) {
+// Acquire acquires a session for use, waiting if the session is busy.
+// This blocks until the session is available or context is cancelled.
+func (m *Manager) Acquire(ctx context.Context, id string) (*Session, error) {
+	m.logger.Debug("session acquire attempt",
+		"id", id,
+		"total_sessions", len(m.sessions),
+	)
+
+	// Try to acquire immediately first
+	session, waitChan, err := m.tryAcquire(id)
+	if err != nil {
+		return nil, err
+	}
+	if session != nil {
+		m.logger.Debug("session acquired immediately", "id", id)
+		return session, nil
+	}
+
+	// Session is in use - wait for it
+	m.logger.Debug("session busy, waiting", "id", id)
+
+	select {
+	case <-waitChan:
+		// Session released, try to acquire again
+		session, _, err := m.tryAcquire(id)
+		if err != nil {
+			return nil, err
+		}
+		if session != nil {
+			m.logger.Debug("session acquired after wait", "id", id)
+			return session, nil
+		}
+		// Someone else got it, recurse
+		return m.Acquire(ctx, id)
+	case <-ctx.Done():
+		// Remove from waiting list
+		m.removeWaiter(id, waitChan)
+		return nil, ctx.Err()
+	}
+}
+
+// tryAcquire attempts to acquire a session without blocking.
+// Returns (session, nil, nil) if acquired, (nil, waitChan, nil) if busy, or (nil, nil, err) if not found.
+func (m *Manager) tryAcquire(id string) (*Session, chan struct{}, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	session, ok := m.sessions[id]
 	if !ok {
-		return nil, ErrSessionNotFound
+		m.logger.Debug("session not found", "id", id, "known_sessions", m.sessionIDsLocked())
+		return nil, nil, ErrSessionNotFound
 	}
 
 	if session.InUse {
-		return nil, ErrSessionInUse
+		// Create a wait channel for this session
+		waitChan := make(chan struct{}, 1)
+		if m.waiters == nil {
+			m.waiters = make(map[string][]chan struct{})
+		}
+		m.waiters[id] = append(m.waiters[id], waitChan)
+		m.logger.Debug("session in use, queued waiter",
+			"id", id,
+			"request_count", session.RequestCount,
+			"waiters", len(m.waiters[id]),
+		)
+		return nil, waitChan, nil
 	}
 
 	session.InUse = true
 	session.LastUsedAt = time.Now()
+	return session, nil, nil
+}
 
-	return session, nil
+// removeWaiter removes a wait channel from the waiters list.
+func (m *Manager) removeWaiter(id string, waitChan chan struct{}) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.waiters == nil {
+		return
+	}
+	waiters := m.waiters[id]
+	for i, ch := range waiters {
+		if ch == waitChan {
+			m.waiters[id] = append(waiters[:i], waiters[i+1:]...)
+			break
+		}
+	}
+}
+
+// sessionIDsLocked returns session IDs (must hold lock).
+func (m *Manager) sessionIDsLocked() []string {
+	ids := make([]string, 0, len(m.sessions))
+	for id := range m.sessions {
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 // Release releases a session after use.
@@ -224,6 +318,18 @@ func (m *Manager) Release(id string) {
 		cookies, err := session.Page.Cookies(nil)
 		if err == nil {
 			session.Cookies = cookies
+			m.logger.Debug("session cookies saved", "id", id, "cookie_count", len(cookies))
+		}
+	}
+
+	// Notify one waiter if any
+	if m.waiters != nil && len(m.waiters[id]) > 0 {
+		waiter := m.waiters[id][0]
+		m.waiters[id] = m.waiters[id][1:]
+		m.logger.Debug("notifying waiter", "id", id, "remaining_waiters", len(m.waiters[id]))
+		select {
+		case waiter <- struct{}{}:
+		default:
 		}
 	}
 }

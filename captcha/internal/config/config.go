@@ -32,7 +32,7 @@ type Config struct {
 	RefyneAPISecret      string // HMAC secret for signed headers from refyne-api
 	ClerkIssuer          string // Clerk issuer URL for JWT validation
 	RequiredFeature      string // Feature required to use captcha (e.g., "captcha")
-	AllowUnauthenticated bool   // Allow unauthenticated requests (for testing)
+	AllowUnauthenticated bool   // Standalone/FlareSolverr mode - disables all auth (for local dev)
 
 	// Proxy settings
 	ProxyEnabled bool
@@ -40,6 +40,9 @@ type Config struct {
 
 	// Session settings
 	SessionMaxIdle time.Duration
+
+	// Debug settings
+	DisableStealth bool // Disable stealth mode for testing CAPTCHA solving
 }
 
 // Load creates a Config from environment variables with sensible defaults.
@@ -63,6 +66,7 @@ func Load() *Config {
 		ProxyEnabled:         getEnv("PROXY_ENABLED", "false") == "true",
 		ProxyURL:           getEnv("PROXY_URL", ""),
 		SessionMaxIdle:     getEnvDuration("SESSION_MAX_IDLE", 10*time.Minute),
+		DisableStealth:     getEnv("DISABLE_STEALTH", "false") == "true",
 	}
 }
 

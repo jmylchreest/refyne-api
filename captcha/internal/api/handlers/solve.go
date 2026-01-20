@@ -54,6 +54,15 @@ func (h *SolveHandler) Handle(ctx context.Context, req *models.SolveRequest) *mo
 	startTime := time.Now().UnixMilli()
 	ver := version.Get().Version
 
+	// Debug log incoming request
+	h.logger.Debug("solve request received",
+		"cmd", req.Cmd,
+		"url", req.URL,
+		"session", req.Session,
+		"has_cookies", len(req.Cookies) > 0,
+		"max_timeout", req.MaxTimeout,
+	)
+
 	// Route to appropriate handler based on command
 	switch req.Cmd {
 	case models.CmdSessionsCreate:
@@ -73,10 +82,16 @@ func (h *SolveHandler) Handle(ctx context.Context, req *models.SolveRequest) *mo
 
 // handleSessionCreate creates a new browser session.
 func (h *SolveHandler) handleSessionCreate(ctx context.Context, req *models.SolveRequest, startTime int64, ver string) *models.SolveResponse {
-	sess, err := h.sessions.Create(ctx, req.SessionOptions)
+	h.logger.Debug("creating session", "requested_id", req.Session)
+
+	// Use client-provided session name or let manager generate one
+	sess, err := h.sessions.Create(ctx, req.Session, req.SessionOptions)
 	if err != nil {
+		h.logger.Warn("session creation failed", "requested_id", req.Session, "error", err)
 		return models.NewErrorResponse("failed to create session: "+err.Error(), startTime, time.Now().UnixMilli(), ver, "")
 	}
+
+	h.logger.Info("session created", "id", sess.ID, "requested_id", req.Session)
 
 	return &models.SolveResponse{
 		Status:         "ok",
@@ -108,9 +123,14 @@ func (h *SolveHandler) handleSessionDestroy(ctx context.Context, req *models.Sol
 		return models.NewErrorResponse("session ID required", startTime, time.Now().UnixMilli(), ver, "")
 	}
 
+	h.logger.Debug("destroying session", "id", req.Session)
+
 	if err := h.sessions.Destroy(req.Session); err != nil {
+		h.logger.Warn("session destroy failed", "id", req.Session, "error", err)
 		return models.NewErrorResponse("failed to destroy session: "+err.Error(), startTime, time.Now().UnixMilli(), ver, "")
 	}
+
+	h.logger.Info("session destroyed", "id", req.Session)
 
 	return &models.SolveResponse{
 		Status:         "ok",
@@ -152,13 +172,22 @@ func (h *SolveHandler) handleRequest(ctx context.Context, req *models.SolveReque
 
 	// Use session or acquire browser from pool
 	if req.Session != "" {
+		h.logger.Debug("acquiring session (will wait if busy)", "id", req.Session, "url", req.URL)
 		var err error
-		sess, err = h.sessions.Acquire(req.Session)
+		sess, err = h.sessions.Acquire(ctx, req.Session)
 		if err != nil {
+			h.logger.Warn("session acquire failed", "id", req.Session, "error", err)
 			return models.NewErrorResponse("failed to acquire session: "+err.Error(), startTime, time.Now().UnixMilli(), ver, "")
 		}
+		h.logger.Debug("session acquired",
+			"id", req.Session,
+			"request_count", sess.RequestCount,
+			"has_cookies", len(sess.Cookies) > 0,
+			"cookie_count", len(sess.Cookies),
+		)
 		page = sess.Page
 		cleanup = func() {
+			h.logger.Debug("releasing session", "id", req.Session)
 			h.sessions.Release(req.Session)
 		}
 	} else {
@@ -168,8 +197,8 @@ func (h *SolveHandler) handleRequest(ctx context.Context, req *models.SolveReque
 			return models.NewErrorResponse("failed to acquire browser: "+err.Error(), startTime, time.Now().UnixMilli(), ver, "")
 		}
 
-		// Create stealth page
-		page, err = browser.CreateStealthPage(managedBrowser.Browser)
+		// Create page (stealth mode unless disabled for testing)
+		page, err = browser.CreatePage(managedBrowser.Browser, h.cfg.DisableStealth)
 		if err != nil {
 			h.pool.Release(managedBrowser)
 			return models.NewErrorResponse("failed to create page: "+err.Error(), startTime, time.Now().UnixMilli(), ver, "")
@@ -213,43 +242,70 @@ func (h *SolveHandler) handleRequest(ctx context.Context, req *models.SolveReque
 		return models.NewErrorResponse("failed to detect challenge: "+err.Error(), startTime, time.Now().UnixMilli(), ver, "")
 	}
 
-	var challengeType string
-	var solverUsed string
+	// Challenge tracking
+	var (
+		challengeType string
+		solverUsed    string
+		challenged    bool
+		solved        bool
+		resolveMethod string
+	)
 
 	// Handle challenge if detected
 	if detection.Type != challenge.TypeNone {
+		challenged = true
 		challengeType = string(detection.Type)
-		h.logger.Info("challenge detected", "type", detection.Type, "can_auto", detection.CanAuto)
+		h.logger.Info("challenge detected", "type", detection.Type, "can_auto", detection.CanAuto, "session", req.Session)
 
-		if detection.CanAuto {
-			// Wait for auto-resolving challenge
-			if err := h.detector.WaitForChallenge(ctx, page, timeout); err != nil {
-				return models.NewErrorResponse("challenge timeout: "+err.Error(), startTime, time.Now().UnixMilli(), ver, "")
-			}
-		} else if h.solver != nil && h.solver.CanSolve(detection.Type) {
-			// Try to solve CAPTCHA
+		// Use solver chain for all challenge types
+		if h.solver != nil && h.solver.CanSolve(detection.Type) {
+			h.logger.Debug("attempting to solve challenge", "type", detection.Type, "solver", h.solver.Name(), "timeout", timeout)
 			result, err := h.solver.Solve(ctx, solver.SolveParams{
 				Type:    detection.Type,
 				SiteKey: detection.SiteKey,
 				PageURL: detection.PageURL,
 				Action:  detection.Action,
 				CData:   detection.CData,
+				Page:    page,
+				Timeout: timeout,
 			})
 			if err != nil {
-				return models.NewErrorResponse("failed to solve CAPTCHA: "+err.Error(), startTime, time.Now().UnixMilli(), ver, "")
+				h.logger.Warn("challenge solve failed", "type", detection.Type, "error", err, "session", req.Session)
+				return models.NewErrorResponse("failed to solve challenge: "+err.Error(), startTime, time.Now().UnixMilli(), ver, "")
 			}
 
 			solverUsed = result.SolverName
+			solved = true
+			resolveMethod = result.SolverName
+			h.logger.Info("challenge solved", "type", detection.Type, "solver", result.SolverName, "session", req.Session)
 
-			// Inject token
-			if err := h.injectCaptchaToken(page, detection, result.Token); err != nil {
-				return models.NewErrorResponse("failed to inject CAPTCHA token: "+err.Error(), startTime, time.Now().UnixMilli(), ver, "")
+			// Inject token if provided (external solvers return tokens, wait solver doesn't)
+			if result.Token != "" {
+				if err := h.injectCaptchaToken(page, detection, result.Token); err != nil {
+					return models.NewErrorResponse("failed to inject CAPTCHA token: "+err.Error(), startTime, time.Now().UnixMilli(), ver, "")
+				}
+				// Wait for page to process token
+				time.Sleep(2 * time.Second)
 			}
-
-			// Wait for page to process
-			time.Sleep(2 * time.Second)
 		} else {
-			return models.NewErrorResponse("CAPTCHA detected but no solver available", startTime, time.Now().UnixMilli(), ver, "")
+			return models.NewErrorResponse("challenge detected but no solver available for type: "+string(detection.Type), startTime, time.Now().UnixMilli(), ver, "")
+		}
+	} else {
+		// No challenge detected
+		challenged = false
+		solved = false
+
+		if req.Session != "" && sess != nil && len(sess.Cookies) > 0 {
+			resolveMethod = "cached"
+			h.logger.Info("no challenge - session cookies reused successfully",
+				"session", req.Session,
+				"cookie_count", len(sess.Cookies),
+				"request_count", sess.RequestCount,
+				"url", req.URL,
+				"method", resolveMethod,
+			)
+		} else {
+			h.logger.Debug("no challenge detected", "session", req.Session, "url", req.URL)
 		}
 	}
 
@@ -306,6 +362,9 @@ func (h *SolveHandler) handleRequest(ctx context.Context, req *models.SolveReque
 	resp := models.NewSuccessResponse(solution, startTime, time.Now().UnixMilli(), ver, "")
 	resp.ChallengeType = challengeType
 	resp.SolverUsed = solverUsed
+	resp.Challenged = challenged
+	resp.Solved = solved
+	resp.Method = resolveMethod
 
 	return resp
 }

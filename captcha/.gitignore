@@ -1,0 +1,16 @@
+# Build artifacts
+bin/
+tmp/
+
+# Test coverage
+coverage.out
+coverage.html
+
+# Environment files
+.env.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

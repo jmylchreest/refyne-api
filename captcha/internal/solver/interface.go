@@ -5,6 +5,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/go-rod/rod"
+
 	"github.com/jmylchreest/refyne-api/captcha/internal/challenge"
 )
 
@@ -45,6 +47,12 @@ type SolveParams struct {
 
 	// Proxy is optional proxy configuration to use for solving.
 	Proxy *ProxyConfig
+
+	// Page is the browser page (required for wait solver, optional for others).
+	Page *rod.Page
+
+	// Timeout is the maximum time to wait for solving.
+	Timeout time.Duration
 }
 
 // ProxyConfig contains proxy configuration for CAPTCHA solving.
