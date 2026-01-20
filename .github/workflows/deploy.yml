@@ -170,14 +170,12 @@ jobs:
 
       - name: Pull Vercel environment
         run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
-        working-directory: web
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ needs.prepare.outputs.environment == 'production' && secrets.VERCEL_PROJECT_ID_PRODUCTION || secrets.VERCEL_PROJECT_ID_STAGING }}
 
       - name: Build with Vercel
         run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
-        working-directory: web
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ needs.prepare.outputs.environment == 'production' && secrets.VERCEL_PROJECT_ID_PRODUCTION || secrets.VERCEL_PROJECT_ID_STAGING }}
@@ -190,7 +188,6 @@ jobs:
           URL=$(vercel deploy --prebuilt --archive=tgz --prod --token=${{ secrets.VERCEL_TOKEN }})
           echo "url=${URL}" >> $GITHUB_OUTPUT
           echo "Deployed to: ${URL}"
-        working-directory: web
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ needs.prepare.outputs.environment == 'production' && secrets.VERCEL_PROJECT_ID_PRODUCTION || secrets.VERCEL_PROJECT_ID_STAGING }}
