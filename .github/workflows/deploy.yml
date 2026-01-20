@@ -150,9 +150,6 @@ jobs:
     environment:
       name: ${{ needs.prepare.outputs.environment }}-web
       url: ${{ steps.deploy.outputs.url }}
-    defaults:
-      run:
-        working-directory: web
 
     steps:
       - uses: actions/checkout@v4
@@ -166,6 +163,7 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+        working-directory: web
 
       - name: Install Vercel CLI
         run: npm install -g vercel
