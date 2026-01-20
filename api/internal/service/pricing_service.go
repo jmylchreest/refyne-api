@@ -51,6 +51,12 @@ func (s *PricingService) SetCapabilitiesCache(cache llm.CapabilitiesCache) {
 	s.capCache = cache
 }
 
+// SetOpenRouterAPIKey sets/updates the OpenRouter API key.
+// This is called after initialization when keys are resolved from the database.
+func (s *PricingService) SetOpenRouterAPIKey(key string) {
+	s.openRouterAPIKey = key
+}
+
 // NewPricingService creates a new pricing service.
 // Uses refyne's provider interfaces for cost tracking, estimation, and model listing.
 func NewPricingService(cfg PricingServiceConfig, logger *slog.Logger) *PricingService {
@@ -319,14 +325,37 @@ func (s *PricingService) GetActualCost(ctx context.Context, provider, generation
 		return 0, fmt.Errorf("generation ID required for cost lookup")
 	}
 
-	// Use provided API key (BYOK) or fall back to service key for OpenRouter
+	// Use provided API key (from resolved LLM config) - this should be populated
+	// by the LLMConfigResolver with either user's BYOK key or system service key
 	key := apiKey
+	keySource := "resolved_config"
+
+	// Fall back to service key only if no key was passed
 	if key == "" && provider == "openrouter" {
 		key = s.openRouterAPIKey
+		keySource = "service_fallback"
+		if key != "" {
+			s.logger.Warn("using fallback service key for cost lookup - resolved config had no API key",
+				"provider", provider,
+				"generation_id", generationID,
+			)
+		}
 	}
+
 	if key == "" {
-		return 0, fmt.Errorf("%s API key required for cost lookup", provider)
+		s.logger.Error("API key required for cost lookup - neither resolved config nor service fallback has key",
+			"provider", provider,
+			"generation_id", generationID,
+			"has_service_fallback", s.openRouterAPIKey != "",
+		)
+		return 0, fmt.Errorf("%s API key required for cost lookup (check LLM config resolution and service key configuration)", provider)
 	}
+
+	s.logger.Debug("performing cost lookup",
+		"provider", provider,
+		"generation_id", generationID,
+		"key_source", keySource,
+	)
 
 	// Create a refyne provider to use its CostTracker interface
 	refyneProvider, err := refynellm.NewProvider(provider, refynellm.ProviderConfig{

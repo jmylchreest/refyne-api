@@ -250,14 +250,14 @@ func main() {
 	// Add security scheme for Bearer auth
 	humaConfig.Components.SecuritySchemes = map[string]*huma.SecurityScheme{
 		mw.SecurityScheme: {
-			Type:         "http",
-			Scheme:       "bearer",
-			Description:  "API key authentication. Include your API key in the Authorization header as `Bearer rf_your_key`.",
+			Type:        "http",
+			Scheme:      "bearer",
+			Description: "API key authentication. Include your API key in the Authorization header as `Bearer rf_your_key`.",
 		},
 	}
 
 	// Define OpenAPI tags with display names for documentation
-	humaConfig.OpenAPI.Tags = []*huma.Tag{
+	humaConfig.Tags = []*huma.Tag{
 		{Name: "Extraction", Description: "Data extraction, crawling, and analysis endpoints", Extensions: map[string]any{"x-displayName": "Extraction"}},
 		{Name: "Jobs", Description: "Job status and results retrieval", Extensions: map[string]any{"x-displayName": "Jobs"}},
 		{Name: "Schemas", Description: "Schema catalog management", Extensions: map[string]any{"x-displayName": "Schemas"}},

@@ -51,23 +51,36 @@ func (r *LLMConfigResolver) GetServiceKeys(ctx context.Context) ServiceKeys {
 	// Try to load from database first
 	if r.repos != nil && r.repos.ServiceKey != nil {
 		dbKeys, err := r.repos.ServiceKey.GetAll(ctx)
-		if err == nil {
+		if err != nil {
+			r.logger.Warn("failed to retrieve service keys from database, will fall back to env vars",
+				"error", err,
+			)
+		} else {
 			for _, k := range dbKeys {
 				// Decrypt the key if we have an encryptor
 				apiKey := k.APIKeyEncrypted
 				if r.encryptor != nil && k.APIKeyEncrypted != "" {
-					if decrypted, err := r.encryptor.Decrypt(k.APIKeyEncrypted); err == nil {
-						apiKey = decrypted
+					decrypted, decryptErr := r.encryptor.Decrypt(k.APIKeyEncrypted)
+					if decryptErr != nil {
+						r.logger.Warn("failed to decrypt service key, skipping",
+							"provider", k.Provider,
+							"error", decryptErr,
+						)
+						continue
 					}
+					apiKey = decrypted
 				}
 
 				switch k.Provider {
 				case llm.ProviderOpenRouter:
 					keys.OpenRouterKey = apiKey
+					r.logger.Debug("loaded OpenRouter key from database", "key_length", len(apiKey))
 				case llm.ProviderAnthropic:
 					keys.AnthropicKey = apiKey
+					r.logger.Debug("loaded Anthropic key from database", "key_length", len(apiKey))
 				case llm.ProviderOpenAI:
 					keys.OpenAIKey = apiKey
+					r.logger.Debug("loaded OpenAI key from database", "key_length", len(apiKey))
 				}
 			}
 		}
@@ -76,12 +89,21 @@ func (r *LLMConfigResolver) GetServiceKeys(ctx context.Context) ServiceKeys {
 	// Fall back to env vars for any missing keys
 	if keys.OpenRouterKey == "" {
 		keys.OpenRouterKey = r.cfg.ServiceOpenRouterKey
+		if keys.OpenRouterKey != "" {
+			r.logger.Debug("using OpenRouter key from environment variable")
+		}
 	}
 	if keys.AnthropicKey == "" {
 		keys.AnthropicKey = r.cfg.ServiceAnthropicKey
+		if keys.AnthropicKey != "" {
+			r.logger.Debug("using Anthropic key from environment variable")
+		}
 	}
 	if keys.OpenAIKey == "" {
 		keys.OpenAIKey = r.cfg.ServiceOpenAIKey
+		if keys.OpenAIKey != "" {
+			r.logger.Debug("using OpenAI key from environment variable")
+		}
 	}
 
 	return keys
