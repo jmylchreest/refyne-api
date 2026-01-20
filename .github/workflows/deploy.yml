@@ -48,11 +48,11 @@ jobs:
           if [[ "$ENV" == "production" ]]; then
             echo "api_app=refyne-api" >> $GITHUB_OUTPUT
             echo "web_project=refyne-web" >> $GITHUB_OUTPUT
-            echo "api_url=https://api.refyne.dev" >> $GITHUB_OUTPUT
+            echo "api_url=https://api.refyne.uk" >> $GITHUB_OUTPUT
           else
             echo "api_app=refyne-api-staging" >> $GITHUB_OUTPUT
             echo "web_project=refyne-web-staging" >> $GITHUB_OUTPUT
-            echo "api_url=https://api-staging.refyne.dev" >> $GITHUB_OUTPUT
+            echo "api_url=https://api-staging.refyne.uk" >> $GITHUB_OUTPUT
           fi
 
           echo "Deploying to: ${ENV}"
