@@ -31,7 +31,7 @@ primary_region = "lhr"  # London - close to Turso aws-eu-west-1
   interval = "30s"
   method = "GET"
   timeout = "5s"
-  path = "/health"
+  path = "/healthz"
 
 [[vm]]
   memory = "512mb"
