@@ -109,6 +109,50 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Need full history for version detection
+
+      - name: Compute version
+        id: version
+        working-directory: .  # Run from repo root for git commands
+        run: |
+          COMMIT=$(git rev-parse --short=7 HEAD)
+          DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          DIRTY="false"
+
+          # Check if this is a release (tag push)
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            # Gitversion-style: compute from git describe
+            if git describe --tags --always --long 2>/dev/null | grep -q '^v'; then
+              DESCRIBE=$(git describe --tags --always --long 2>/dev/null)
+              if [[ $DESCRIBE =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)-([0-9]+)-g([a-f0-9]+)$ ]]; then
+                MAJOR=${BASH_REMATCH[1]}
+                MINOR=${BASH_REMATCH[2]}
+                PATCH=${BASH_REMATCH[3]}
+                COMMITS=${BASH_REMATCH[4]}
+                HASH=${BASH_REMATCH[5]}
+                if [ "$COMMITS" = "0" ]; then
+                  VERSION="${MAJOR}.${MINOR}.${PATCH}"
+                else
+                  NEXT_PATCH=$((PATCH + 1))
+                  VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}-dev.${COMMITS}+${HASH}"
+                fi
+              else
+                VERSION="0.0.1-dev.0+${COMMIT}"
+              fi
+            else
+              COMMIT_COUNT=$(git rev-list --count HEAD)
+              VERSION="0.0.1-dev.${COMMIT_COUNT}+${COMMIT}"
+            fi
+          fi
+
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "commit=${COMMIT}" >> $GITHUB_OUTPUT
+          echo "date=${DATE}" >> $GITHUB_OUTPUT
+          echo "dirty=${DIRTY}" >> $GITHUB_OUTPUT
+          echo "Building version: ${VERSION}"
 
       - name: Set up Fly.io CLI
         uses: superfly/flyctl-actions/setup-flyctl@1.5
@@ -118,7 +162,11 @@ jobs:
           flyctl deploy --remote-only \
             --app ${{ needs.prepare.outputs.api_app }} \
             --config fly.${{ needs.prepare.outputs.environment }}.toml \
-            --build-secret GH_TOKEN=${{ secrets.GH_PAT }}
+            --build-secret GH_TOKEN=${{ secrets.GH_PAT }} \
+            --build-arg VERSION=${{ steps.version.outputs.version }} \
+            --build-arg COMMIT=${{ steps.version.outputs.commit }} \
+            --build-arg DATE=${{ steps.version.outputs.date }} \
+            --build-arg DIRTY=${{ steps.version.outputs.dirty }}
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 

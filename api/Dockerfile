@@ -1,6 +1,12 @@
 # Build stage
 FROM golang:latest AS builder
 
+# Build args for version info (passed from CI)
+ARG VERSION=0.0.0-dev
+ARG COMMIT=unknown
+ARG DATE=unknown
+ARG DIRTY=false
+
 WORKDIR /app
 
 # Install build dependencies for CGO (required for libsql)
@@ -20,41 +26,17 @@ RUN --mount=type=secret,id=GH_TOKEN \
     fi && \
     GOPRIVATE=github.com/jmylchreest/* go mod download
 
-# Copy source code (including .git for version detection)
+# Copy source code
 COPY . .
 
 # Build the binary with CGO enabled and version info injected
-RUN set -e && \
-    PKG="github.com/jmylchreest/refyne-api/internal/version" && \
-    DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ") && \
-    COMMIT=$(git rev-parse --short=7 HEAD 2>/dev/null || echo "unknown") && \
-    DIRTY="false" && \
-    if [ -n "$(git status --porcelain 2>/dev/null)" ]; then DIRTY="true"; fi && \
-    # Compute version from git tags (gitversion style)
-    if git describe --tags --always --long 2>/dev/null | grep -q '^v'; then \
-        DESCRIBE=$(git describe --tags --always --long 2>/dev/null); \
-        if echo "$DESCRIBE" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+-[0-9]+-g[a-f0-9]+$'; then \
-            MAJOR=$(echo "$DESCRIBE" | sed -E 's/^v([0-9]+)\.([0-9]+)\.([0-9]+)-([0-9]+)-g([a-f0-9]+)$/\1/'); \
-            MINOR=$(echo "$DESCRIBE" | sed -E 's/^v([0-9]+)\.([0-9]+)\.([0-9]+)-([0-9]+)-g([a-f0-9]+)$/\2/'); \
-            PATCH=$(echo "$DESCRIBE" | sed -E 's/^v([0-9]+)\.([0-9]+)\.([0-9]+)-([0-9]+)-g([a-f0-9]+)$/\3/'); \
-            COMMITS=$(echo "$DESCRIBE" | sed -E 's/^v([0-9]+)\.([0-9]+)\.([0-9]+)-([0-9]+)-g([a-f0-9]+)$/\4/'); \
-            HASH=$(echo "$DESCRIBE" | sed -E 's/^v([0-9]+)\.([0-9]+)\.([0-9]+)-([0-9]+)-g([a-f0-9]+)$/\5/'); \
-            if [ "$COMMITS" = "0" ]; then \
-                VERSION="${MAJOR}.${MINOR}.${PATCH}"; \
-            else \
-                NEXT_PATCH=$((PATCH + 1)); \
-                VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}-dev.${COMMITS}+${HASH}"; \
-            fi; \
-        else \
-            VERSION="0.0.1-dev.0+${COMMIT}"; \
-        fi; \
-    else \
-        COMMIT_COUNT=$(git rev-list --count HEAD 2>/dev/null || echo "0"); \
-        VERSION="0.0.1-dev.${COMMIT_COUNT}+${COMMIT}"; \
-    fi && \
-    echo "Building version: ${VERSION} (commit: ${COMMIT}, dirty: ${DIRTY})" && \
+RUN echo "Building version: ${VERSION} (commit: ${COMMIT}, dirty: ${DIRTY})" && \
     CGO_ENABLED=1 GOOS=linux go build \
-        -ldflags "-s -w -X ${PKG}.Version=${VERSION} -X ${PKG}.Commit=${COMMIT} -X ${PKG}.Date=${DATE} -X ${PKG}.Dirty=${DIRTY}" \
+        -ldflags "-s -w \
+            -X github.com/jmylchreest/refyne-api/internal/version.Version=${VERSION} \
+            -X github.com/jmylchreest/refyne-api/internal/version.Commit=${COMMIT} \
+            -X github.com/jmylchreest/refyne-api/internal/version.Date=${DATE} \
+            -X github.com/jmylchreest/refyne-api/internal/version.Dirty=${DIRTY}" \
         -o /app/refyne-api ./cmd/refyne-api
 
 # Create data directory with correct permissions for nonroot user (65532)
