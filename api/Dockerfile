@@ -1,5 +1,5 @@
-# Build stage
-FROM golang:latest AS builder
+# Build stage - use bookworm to match runtime glibc version
+FROM golang:1.23-bookworm AS builder
 
 WORKDIR /app
 
