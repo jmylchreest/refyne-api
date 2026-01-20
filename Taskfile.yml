@@ -154,6 +154,93 @@ tasks:
     cmds:
       - docker-compose -f deployments/docker/docker-compose.yml down
 
+  # Lint tasks
+  lint:
+    desc: Run linting across all components (api, web, demo)
+    cmds:
+      - task: api:lint
+      - task: web:lint
+      - task: demo:lint
+
+  demo:lint:
+    desc: Lint demo code
+    dir: ./demo
+    cmds:
+      - npm run lint 2>/dev/null || echo "No lint script configured for demo"
+
+  lint:fix:
+    desc: Run linting with auto-fix across all components
+    cmds:
+      - task: api:lint:fix
+      - task: web:lint:fix
+
+  api:lint:fix:
+    desc: Lint API code with auto-fix
+    dir: '{{.API_DIR}}'
+    cmds:
+      - golangci-lint run --fix
+
+  web:lint:fix:
+    desc: Lint frontend code with auto-fix
+    dir: '{{.WEB_DIR}}'
+    cmds:
+      - npm run lint -- --fix
+
+  # Dependency tasks
+  deps:update:
+    desc: Update dependencies within compatible versions (safe)
+    cmds:
+      - task: api:deps:update
+      - task: web:deps:update
+      - task: demo:deps:update
+
+  deps:upgrade:
+    desc: Upgrade all dependencies to latest versions (may include breaking changes)
+    cmds:
+      - task: api:deps:upgrade
+      - task: web:deps:upgrade
+      - task: demo:deps:upgrade
+
+  api:deps:update:
+    desc: Update Go dependencies within compatible versions (safe)
+    dir: '{{.API_DIR}}'
+    cmds:
+      - go get -u=patch ./...
+      - go mod tidy
+
+  api:deps:upgrade:
+    desc: Upgrade Go dependencies to latest versions
+    dir: '{{.API_DIR}}'
+    cmds:
+      - go get -u ./...
+      - go mod tidy
+
+  web:deps:update:
+    desc: Update web dependencies within semver ranges (safe)
+    dir: '{{.WEB_DIR}}'
+    cmds:
+      - npm update
+
+  web:deps:upgrade:
+    desc: Upgrade web dependencies to latest versions
+    dir: '{{.WEB_DIR}}'
+    cmds:
+      - npx npm-check-updates -u
+      - npm install
+
+  demo:deps:update:
+    desc: Update demo dependencies within semver ranges (safe)
+    dir: ./demo
+    cmds:
+      - npm update
+
+  demo:deps:upgrade:
+    desc: Upgrade demo dependencies to latest versions
+    dir: ./demo
+    cmds:
+      - npx npm-check-updates -u
+      - npm install
+
   # Cleanup
   clean:
     desc: Clean build artifacts
@@ -161,6 +248,8 @@ tasks:
       - rm -rf bin/
       - rm -rf web/.next/
       - rm -rf web/node_modules/
+      - rm -rf demo/node_modules/
+      - rm -rf demo/dist/
 
   # Version info
   version:
