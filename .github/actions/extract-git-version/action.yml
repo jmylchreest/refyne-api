@@ -1,0 +1,212 @@
+name: 'Extract Git Version'
+description: 'Extract semantic version info from git tags (gitversion style)'
+
+inputs:
+  prefix:
+    description: 'Tag prefix (default: v)'
+    required: false
+    default: 'v'
+
+outputs:
+  # Core version components
+  major:
+    description: 'Major version number'
+    value: ${{ steps.version.outputs.major }}
+  minor:
+    description: 'Minor version number'
+    value: ${{ steps.version.outputs.minor }}
+  patch:
+    description: 'Patch version number'
+    value: ${{ steps.version.outputs.patch }}
+  commits:
+    description: 'Commits since last tag'
+    value: ${{ steps.version.outputs.commits }}
+  sha:
+    description: 'Short commit SHA'
+    value: ${{ steps.version.outputs.sha }}
+  sha_full:
+    description: 'Full commit SHA'
+    value: ${{ steps.version.outputs.sha_full }}
+
+  # Version strings
+  version:
+    description: 'Semver-compliant version (uses + for build metadata)'
+    value: ${{ steps.version.outputs.version }}
+  version_tag:
+    description: 'Tag-compatible version (uses - instead of +)'
+    value: ${{ steps.version.outputs.version_tag }}
+  version_core:
+    description: 'Core version without prerelease/build metadata (MAJOR.MINOR.PATCH)'
+    value: ${{ steps.version.outputs.version_core }}
+
+  # Previous/Next versions
+  last_version:
+    description: 'Last tagged version (without prefix)'
+    value: ${{ steps.version.outputs.last_version }}
+  last_tag:
+    description: 'Last tag (with prefix)'
+    value: ${{ steps.version.outputs.last_tag }}
+  next_version:
+    description: 'Next patch version (for dev builds)'
+    value: ${{ steps.version.outputs.next_version }}
+
+  # State flags
+  is_tagged:
+    description: 'True if current commit has a version tag'
+    value: ${{ steps.version.outputs.is_tagged }}
+  is_release:
+    description: 'True if building from a version tag ref'
+    value: ${{ steps.version.outputs.is_release }}
+  is_prerelease:
+    description: 'True if version contains prerelease identifier'
+    value: ${{ steps.version.outputs.is_prerelease }}
+
+  # Build metadata
+  date:
+    description: 'Build timestamp (ISO 8601 UTC)'
+    value: ${{ steps.version.outputs.date }}
+  dirty:
+    description: 'True if working tree has uncommitted changes'
+    value: ${{ steps.version.outputs.dirty }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Extract version info
+      id: version
+      shell: bash
+      run: |
+        PREFIX="${{ inputs.prefix }}"
+
+        # Build metadata
+        SHA_FULL=$(git rev-parse HEAD)
+        SHA=$(git rev-parse --short=7 HEAD)
+        DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+        # Check for uncommitted changes
+        if git diff --quiet && git diff --cached --quiet; then
+          DIRTY="false"
+        else
+          DIRTY="true"
+        fi
+
+        # Check if current commit has a version tag
+        CURRENT_TAG=$(git tag --points-at HEAD | grep -E "^${PREFIX}[0-9]+\.[0-9]+\.[0-9]+$" | head -1 || true)
+        if [[ -n "$CURRENT_TAG" ]]; then
+          IS_TAGGED="true"
+        else
+          IS_TAGGED="false"
+        fi
+
+        # Check if this is a release (building from a tag ref)
+        if [[ "${{ github.ref }}" == refs/tags/${PREFIX}* ]]; then
+          IS_RELEASE="true"
+          TAG_VERSION="${GITHUB_REF_NAME#${PREFIX}}"
+        else
+          IS_RELEASE="false"
+          TAG_VERSION=""
+        fi
+
+        # Get last tag and parse version
+        if git describe --tags --always --long 2>/dev/null | grep -q "^${PREFIX}"; then
+          DESCRIBE=$(git describe --tags --always --long 2>/dev/null)
+
+          # Parse: vMAJOR.MINOR.PATCH-COMMITS-gHASH
+          if [[ $DESCRIBE =~ ^${PREFIX}([0-9]+)\.([0-9]+)\.([0-9]+)-([0-9]+)-g([a-f0-9]+)$ ]]; then
+            MAJOR=${BASH_REMATCH[1]}
+            MINOR=${BASH_REMATCH[2]}
+            PATCH=${BASH_REMATCH[3]}
+            COMMITS=${BASH_REMATCH[4]}
+            HASH=${BASH_REMATCH[5]}
+
+            LAST_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+            LAST_TAG="${PREFIX}${LAST_VERSION}"
+            NEXT_PATCH=$((PATCH + 1))
+            NEXT_VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}"
+
+            if [[ "$IS_RELEASE" == "true" ]]; then
+              # Release build: use tag version directly
+              VERSION="${TAG_VERSION}"
+              VERSION_TAG="${PREFIX}${TAG_VERSION}"
+              VERSION_CORE="${TAG_VERSION}"
+              IS_PRERELEASE="false"
+            elif [[ "$COMMITS" == "0" ]]; then
+              # Exactly on a tag
+              VERSION="${MAJOR}.${MINOR}.${PATCH}"
+              VERSION_TAG="${PREFIX}${VERSION}"
+              VERSION_CORE="${VERSION}"
+              IS_PRERELEASE="false"
+            else
+              # Dev build: increment patch, add prerelease
+              VERSION="${NEXT_VERSION}-dev.${COMMITS}+${HASH}"
+              VERSION_TAG="${PREFIX}${NEXT_VERSION}-dev.${COMMITS}-${HASH}"
+              VERSION_CORE="${NEXT_VERSION}"
+              IS_PRERELEASE="true"
+            fi
+          else
+            # Tag exists but doesn't match semver pattern
+            MAJOR=0
+            MINOR=0
+            PATCH=1
+            COMMITS=0
+            LAST_VERSION=""
+            LAST_TAG=""
+            NEXT_VERSION="0.0.1"
+            VERSION="0.0.1-dev.0+${SHA}"
+            VERSION_TAG="${PREFIX}0.0.1-dev.0-${SHA}"
+            VERSION_CORE="0.0.1"
+            IS_PRERELEASE="true"
+          fi
+        else
+          # No tags: initial version based on commit count
+          MAJOR=0
+          MINOR=0
+          PATCH=1
+          COMMITS=$(git rev-list --count HEAD)
+          LAST_VERSION=""
+          LAST_TAG=""
+          NEXT_VERSION="0.0.1"
+          VERSION="0.0.1-dev.${COMMITS}+${SHA}"
+          VERSION_TAG="${PREFIX}0.0.1-dev.${COMMITS}-${SHA}"
+          VERSION_CORE="0.0.1"
+          IS_PRERELEASE="true"
+        fi
+
+        # Output all values
+        echo "major=${MAJOR}" >> $GITHUB_OUTPUT
+        echo "minor=${MINOR}" >> $GITHUB_OUTPUT
+        echo "patch=${PATCH}" >> $GITHUB_OUTPUT
+        echo "commits=${COMMITS}" >> $GITHUB_OUTPUT
+        echo "sha=${SHA}" >> $GITHUB_OUTPUT
+        echo "sha_full=${SHA_FULL}" >> $GITHUB_OUTPUT
+
+        echo "version=${VERSION}" >> $GITHUB_OUTPUT
+        echo "version_tag=${VERSION_TAG}" >> $GITHUB_OUTPUT
+        echo "version_core=${VERSION_CORE}" >> $GITHUB_OUTPUT
+
+        echo "last_version=${LAST_VERSION}" >> $GITHUB_OUTPUT
+        echo "last_tag=${LAST_TAG}" >> $GITHUB_OUTPUT
+        echo "next_version=${NEXT_VERSION}" >> $GITHUB_OUTPUT
+
+        echo "is_tagged=${IS_TAGGED}" >> $GITHUB_OUTPUT
+        echo "is_release=${IS_RELEASE}" >> $GITHUB_OUTPUT
+        echo "is_prerelease=${IS_PRERELEASE}" >> $GITHUB_OUTPUT
+
+        echo "date=${DATE}" >> $GITHUB_OUTPUT
+        echo "dirty=${DIRTY}" >> $GITHUB_OUTPUT
+
+        # Summary
+        echo "::group::Version Info"
+        echo "Version: ${VERSION}"
+        echo "Version Tag: ${VERSION_TAG}"
+        echo "Version Core: ${VERSION_CORE}"
+        echo "Last Tag: ${LAST_TAG:-none}"
+        echo "Next Version: ${NEXT_VERSION}"
+        echo "Is Release: ${IS_RELEASE}"
+        echo "Is Tagged: ${IS_TAGGED}"
+        echo "Is Prerelease: ${IS_PRERELEASE}"
+        echo "Commits Since Tag: ${COMMITS}"
+        echo "SHA: ${SHA}"
+        echo "Date: ${DATE}"
+        echo "Dirty: ${DIRTY}"
+        echo "::endgroup::"
