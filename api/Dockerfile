@@ -1,5 +1,5 @@
-# Build stage - use bookworm to match runtime glibc version
-FROM golang:1.23-bookworm AS builder
+# Build stage
+FROM golang:latest AS builder
 
 WORKDIR /app
 
@@ -26,8 +26,8 @@ COPY . .
 # Build the binary with CGO enabled (required for libsql)
 RUN CGO_ENABLED=1 GOOS=linux go build -o /app/refyne-api ./cmd/refyne-api
 
-# Runtime stage
-FROM debian:bookworm-slim
+# Runtime stage - use Ubuntu 24.04 for glibc 2.39 compatibility
+FROM ubuntu:24.04
 
 WORKDIR /app
 

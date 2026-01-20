@@ -3,7 +3,8 @@
 #
 # Expects pre-built binaries in docker-build/linux/{amd64,arm64}/refyne-api
 
-FROM debian:bookworm-slim
+# Use Ubuntu 24.04 for glibc 2.39 compatibility
+FROM ubuntu:24.04
 
 ARG TARGETARCH
 ARG VERSION=dev
