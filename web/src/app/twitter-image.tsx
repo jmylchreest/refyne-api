@@ -1,7 +1,7 @@
 import { ImageResponse } from 'next/og';
 import { OG_FEATURES, OG_TAGLINE, OG_URL } from '@/lib/og-constants';
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 export const alt = `Refyne - ${OG_TAGLINE}`;
 export const size = {
   width: 1200,
