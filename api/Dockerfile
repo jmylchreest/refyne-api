@@ -7,13 +7,18 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libc6-dev \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy go mod files
 COPY go.mod go.sum ./
 
-# Download dependencies
-RUN go mod download
+# Download dependencies (using build secret for private repos)
+RUN --mount=type=secret,id=GH_TOKEN \
+    if [ -f /run/secrets/GH_TOKEN ]; then \
+        git config --global url."https://$(cat /run/secrets/GH_TOKEN)@github.com/".insteadOf "https://github.com/"; \
+    fi && \
+    GOPRIVATE=github.com/jmylchreest/* go mod download
 
 # Copy source code
 COPY . .

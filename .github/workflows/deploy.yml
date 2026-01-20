@@ -64,11 +64,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Clone sibling repos for Go replace directives
-      - name: Clone sibling repos
-        run: |
-          git clone --depth 1 https://x-access-token:${{ secrets.GH_PAT }}@github.com/jmylchreest/refyne.git ../refyne
-          git clone --depth 1 https://github.com/jmylchreest/slog-logfilter.git ../slog-logfilter
+      # Configure Git for private Go modules
+      - name: Configure Git for private modules
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -79,6 +77,8 @@ jobs:
       - name: Run API tests
         run: go test -timeout 120s ./...  # TODO: re-enable -race after fixing timeout middleware races
         working-directory: api
+        env:
+          GOPRIVATE: github.com/jmylchreest/*
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -117,7 +117,8 @@ jobs:
         run: |
           flyctl deploy --remote-only \
             --app ${{ needs.prepare.outputs.api_app }} \
-            --config fly.${{ needs.prepare.outputs.environment }}.toml
+            --config fly.${{ needs.prepare.outputs.environment }}.toml \
+            --build-secret GH_TOKEN=${{ secrets.GH_PAT }}
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 

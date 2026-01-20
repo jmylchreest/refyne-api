@@ -13,13 +13,14 @@ require (
 	github.com/go-chi/httprate v0.15.0
 	github.com/gocolly/colly/v2 v2.3.0
 	github.com/golang-jwt/jwt/v5 v5.2.2
+	github.com/jmylchreest/refyne v0.0.2
 	github.com/jmylchreest/slog-logfilter v0.0.1
 	github.com/oklog/ulid/v2 v2.1.0
-	github.com/jmylchreest/refyne v0.0.1
 	github.com/stripe/stripe-go/v78 v78.12.0
 	github.com/svix/svix-webhooks v1.84.1
 	github.com/tursodatabase/go-libsql v0.0.0-20251219133454-43644db490ff
 	golang.org/x/crypto v0.46.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -98,9 +99,4 @@ require (
 	golang.org/x/text v0.32.0 // indirect
 	google.golang.org/appengine v1.6.8 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace github.com/jmylchreest/refyne => ../../refyne
-
-replace github.com/jmylchreest/slog-logfilter => ../../slog-logfilter
