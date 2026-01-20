@@ -3,7 +3,7 @@
 # Manual deploy: fly deploy --config fly.production.toml --app refyne-api
 
 app = "refyne-api"
-primary_region = "dub"  # Dublin - close to Turso aws-eu-west-1
+primary_region = "lhr"  # London - close to Turso aws-eu-west-1
 
 [build]
   dockerfile = "Dockerfile"
