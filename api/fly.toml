@@ -3,7 +3,7 @@
 # Docs: https://fly.io/docs/reference/configuration/
 
 app = "refyne-api"
-primary_region = "sjc"  # San Jose - change to your preferred region
+primary_region = "lhr"  # London
 
 [build]
   dockerfile = "Dockerfile"
@@ -34,7 +34,7 @@ primary_region = "sjc"  # San Jose - change to your preferred region
   path = "/healthz"
 
 [[vm]]
-  memory = "512mb"
+  memory = "256mb"
   cpu_kind = "shared"
   cpus = 1
 

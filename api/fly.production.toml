@@ -10,7 +10,7 @@ primary_region = "lhr"  # London - close to Turso aws-eu-west-1
 
 [env]
   PORT = "8080"
-  LOG_LEVEL = "info"
+  LOG_LEVEL = "debug"
   # Secrets set via: fly secrets set KEY=value --app refyne-api
 
 [http_service]

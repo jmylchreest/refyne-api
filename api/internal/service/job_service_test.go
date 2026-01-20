@@ -234,7 +234,7 @@ func TestJobService_CreateCrawlJob(t *testing.T) {
 	}
 
 	logger := slog.Default()
-	svc := NewJobService(cfg, repos, logger)
+	svc := NewJobService(cfg, repos, nil, logger)
 
 	t.Run("creates crawl job with basic input", func(t *testing.T) {
 		schema := json.RawMessage(`{"type":"object"}`)
@@ -329,7 +329,7 @@ func TestJobService_CreateExtractJob(t *testing.T) {
 	}
 
 	logger := slog.Default()
-	svc := NewJobService(cfg, repos, logger)
+	svc := NewJobService(cfg, repos, nil, logger)
 
 	t.Run("creates extract job", func(t *testing.T) {
 		schema := json.RawMessage(`{"type":"object","properties":{"title":{"type":"string"}}}`)
@@ -386,7 +386,7 @@ func TestJobService_GetJob(t *testing.T) {
 	}
 
 	logger := slog.Default()
-	svc := NewJobService(cfg, repos, logger)
+	svc := NewJobService(cfg, repos, nil, logger)
 
 	// Create a job
 	job := &models.Job{
@@ -444,7 +444,7 @@ func TestJobService_ListJobs(t *testing.T) {
 	}
 
 	logger := slog.Default()
-	svc := NewJobService(cfg, repos, logger)
+	svc := NewJobService(cfg, repos, nil, logger)
 
 	// Create jobs for different users
 	for i := 0; i < 5; i++ {
@@ -521,7 +521,7 @@ func TestJobService_GetJobResults(t *testing.T) {
 	}
 
 	logger := slog.Default()
-	svc := NewJobService(cfg, repos, logger)
+	svc := NewJobService(cfg, repos, nil, logger)
 
 	// Create a job
 	mockJobRepo.Create(context.Background(), &models.Job{
@@ -576,7 +576,7 @@ func TestJobService_CompleteExtractJob(t *testing.T) {
 	}
 
 	logger := slog.Default()
-	svc := NewJobService(cfg, repos, logger)
+	svc := NewJobService(cfg, repos, nil, logger)
 
 	t.Run("completes running job", func(t *testing.T) {
 		// Create a running job
@@ -613,8 +613,9 @@ func TestJobService_CompleteExtractJob(t *testing.T) {
 		if job.Status != models.JobStatusCompleted {
 			t.Errorf("Status = %q, want %q", job.Status, models.JobStatusCompleted)
 		}
-		if job.ResultJSON != `{"title":"Test Title"}` {
-			t.Errorf("ResultJSON = %q, want %q", job.ResultJSON, `{"title":"Test Title"}`)
+		// Note: ResultJSON is no longer stored in DB - results go to S3 instead
+		if job.ResultJSON != "" {
+			t.Errorf("ResultJSON = %q, want empty (results stored in S3)", job.ResultJSON)
 		}
 		if job.TokenUsageInput != 500 {
 			t.Errorf("TokenUsageInput = %d, want 500", job.TokenUsageInput)
@@ -650,7 +651,7 @@ func TestJobService_FailExtractJob(t *testing.T) {
 	}
 
 	logger := slog.Default()
-	svc := NewJobService(cfg, repos, logger)
+	svc := NewJobService(cfg, repos, nil, logger)
 
 	t.Run("fails running job", func(t *testing.T) {
 		// Create a running job
@@ -719,7 +720,7 @@ func TestJobService_CountActiveJobsByUser(t *testing.T) {
 	}
 
 	logger := slog.Default()
-	svc := NewJobService(cfg, repos, logger)
+	svc := NewJobService(cfg, repos, nil, logger)
 
 	// Create jobs with various statuses
 	now := time.Now()
@@ -784,7 +785,7 @@ func TestJobService_GetCrawlMap(t *testing.T) {
 	}
 
 	logger := slog.Default()
-	svc := NewJobService(cfg, repos, logger)
+	svc := NewJobService(cfg, repos, nil, logger)
 
 	// Create a crawl job
 	mockJobRepo.Create(context.Background(), &models.Job{
@@ -845,7 +846,7 @@ func TestJobService_CountJobResults(t *testing.T) {
 	}
 
 	logger := slog.Default()
-	svc := NewJobService(cfg, repos, logger)
+	svc := NewJobService(cfg, repos, nil, logger)
 
 	// Create a job with results
 	mockJobRepo.Create(context.Background(), &models.Job{

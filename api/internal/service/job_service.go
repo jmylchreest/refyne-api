@@ -16,17 +16,19 @@ import (
 
 // JobService handles async job operations.
 type JobService struct {
-	cfg    *config.Config
-	repos  *repository.Repositories
-	logger *slog.Logger
+	cfg        *config.Config
+	repos      *repository.Repositories
+	storageSvc *StorageService
+	logger     *slog.Logger
 }
 
 // NewJobService creates a new job service.
-func NewJobService(cfg *config.Config, repos *repository.Repositories, logger *slog.Logger) *JobService {
+func NewJobService(cfg *config.Config, repos *repository.Repositories, storageSvc *StorageService, logger *slog.Logger) *JobService {
 	return &JobService{
-		cfg:    cfg,
-		repos:  repos,
-		logger: logger,
+		cfg:        cfg,
+		repos:      repos,
+		storageSvc: storageSvc,
+		logger:     logger,
 	}
 }
 
@@ -263,6 +265,7 @@ func (s *JobService) CreateExtractJob(ctx context.Context, userID string, input 
 }
 
 // CompleteExtractJob marks an extract job as completed with results.
+// Results are stored to S3/Tigris for later retrieval, not in the database.
 func (s *JobService) CompleteExtractJob(ctx context.Context, jobID string, input CompleteExtractJobInput) error {
 	job, err := s.repos.Job.GetByID(ctx, jobID)
 	if err != nil {
@@ -274,7 +277,7 @@ func (s *JobService) CompleteExtractJob(ctx context.Context, jobID string, input
 
 	now := time.Now()
 	job.Status = models.JobStatusCompleted
-	job.ResultJSON = input.ResultJSON
+	// Note: ResultJSON is no longer stored in DB - results go to S3 instead
 	job.PageCount = input.PageCount
 	job.TokenUsageInput = input.TokenUsageInput
 	job.TokenUsageOutput = input.TokenUsageOutput
@@ -286,6 +289,33 @@ func (s *JobService) CompleteExtractJob(ctx context.Context, jobID string, input
 
 	if err := s.repos.Job.Update(ctx, job); err != nil {
 		return fmt.Errorf("failed to update job: %w", err)
+	}
+
+	// Store results to S3/Tigris for later retrieval
+	if s.storageSvc != nil && s.storageSvc.IsEnabled() {
+		jobResults := &JobResults{
+			JobID:       job.ID,
+			UserID:      job.UserID,
+			Status:      string(job.Status),
+			TotalPages:  input.PageCount,
+			CompletedAt: now,
+			Results: []JobResultData{
+				{
+					ID:        job.URL, // Use URL as ID for single-page extracts
+					URL:       job.URL,
+					Data:      json.RawMessage(input.ResultJSON),
+					CreatedAt: now,
+				},
+			},
+		}
+
+		if err := s.storageSvc.StoreJobResults(ctx, jobResults); err != nil {
+			s.logger.Error("failed to store extract job results to S3",
+				"job_id", jobID,
+				"error", err,
+			)
+			// Don't fail the job completion - results are still tracked, just not in S3
+		}
 	}
 
 	s.logger.Info("completed extract job",

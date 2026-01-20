@@ -50,8 +50,14 @@ func NewServices(cfg *config.Config, repos *repository.Repositories, logger *slo
 		logger.Warn("no encryption key configured - BYOK feature will be unavailable")
 	}
 
+	// Create storage service first (needed by JobService for S3 result storage)
+	storageSvc, err := NewStorageService(cfg, logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create storage service: %w", err)
+	}
+
 	authSvc := NewAuthService(cfg, repos, logger)
-	jobSvc := NewJobService(cfg, repos, logger)
+	jobSvc := NewJobService(cfg, repos, storageSvc, logger)
 	apiKeySvc := NewAPIKeyService(repos, logger)
 	usageSvc := NewUsageService(repos, logger)
 	schemaSvc := NewSchemaService(repos, logger)
@@ -80,12 +86,6 @@ func NewServices(cfg *config.Config, repos *repository.Repositories, logger *slo
 
 	adminSvc := NewAdminServiceWithClerk(repos, encryptor, cfg.ClerkSecretKey, logger)
 	userLLMSvc := NewUserLLMService(repos, encryptor, logger)
-
-	// Create storage service (Tigris/S3-compatible)
-	storageSvc, err := NewStorageService(cfg, logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create storage service: %w", err)
-	}
 
 	// Create sitemap service for URL discovery
 	sitemapSvc := NewSitemapService(logger)
