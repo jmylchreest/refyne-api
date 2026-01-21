@@ -21,7 +21,7 @@ export default defineClientConfig({
 
         return fields.map(field => {
           // Match HTTP bearer auth fields
-          if (field.fieldName === 'header.Authorization' &&
+          if ((field.fieldName as unknown as string) === 'header.Authorization' &&
               field.original?.type === 'http') {
             return {
               ...field,

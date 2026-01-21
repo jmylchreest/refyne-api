@@ -325,6 +325,7 @@ func main() {
 	usageHandler := handlers.NewUsageHandler(services.Usage)
 	userLLMHandler := handlers.NewUserLLMHandler(services.UserLLM, services.Admin, providerRegistry)
 	adminHandler := handlers.NewAdminHandler(services.Admin, services.TierSync)
+	adminAnalyticsHandler := handlers.NewAdminAnalyticsHandler(repos.Analytics, services.Storage)
 	schemaCatalogHandler := handlers.NewSchemaCatalogHandler(repos.SchemaCatalog)
 	savedSitesHandler := handlers.NewSavedSitesHandler(repos.SavedSites)
 	var webhookEncryptor *crypto.Encryptor
@@ -494,6 +495,44 @@ func main() {
 		mw.WithTags("Admin"),
 		mw.WithSummary("Create platform schema"),
 		mw.WithOperationID("adminCreatePlatformSchema"),
+		mw.WithSuperadmin(),
+		mw.WithHidden())
+
+	// --- Admin Analytics Routes ---
+	mw.ProtectedGet(api, "/api/v1/admin/analytics/overview", adminAnalyticsHandler.GetOverview,
+		mw.WithTags("Admin"),
+		mw.WithSummary("Get analytics overview"),
+		mw.WithOperationID("adminGetAnalyticsOverview"),
+		mw.WithSuperadmin(),
+		mw.WithHidden())
+	mw.ProtectedGet(api, "/api/v1/admin/analytics/jobs", adminAnalyticsHandler.GetJobs,
+		mw.WithTags("Admin"),
+		mw.WithSummary("Get analytics jobs"),
+		mw.WithOperationID("adminGetAnalyticsJobs"),
+		mw.WithSuperadmin(),
+		mw.WithHidden())
+	mw.ProtectedGet(api, "/api/v1/admin/analytics/errors", adminAnalyticsHandler.GetErrors,
+		mw.WithTags("Admin"),
+		mw.WithSummary("Get analytics errors"),
+		mw.WithOperationID("adminGetAnalyticsErrors"),
+		mw.WithSuperadmin(),
+		mw.WithHidden())
+	mw.ProtectedGet(api, "/api/v1/admin/analytics/trends", adminAnalyticsHandler.GetTrends,
+		mw.WithTags("Admin"),
+		mw.WithSummary("Get analytics trends"),
+		mw.WithOperationID("adminGetAnalyticsTrends"),
+		mw.WithSuperadmin(),
+		mw.WithHidden())
+	mw.ProtectedGet(api, "/api/v1/admin/analytics/users", adminAnalyticsHandler.GetUsers,
+		mw.WithTags("Admin"),
+		mw.WithSummary("Get analytics users"),
+		mw.WithOperationID("adminGetAnalyticsUsers"),
+		mw.WithSuperadmin(),
+		mw.WithHidden())
+	mw.ProtectedGet(api, "/api/v1/admin/analytics/jobs/{id}/results", adminAnalyticsHandler.GetJobResults,
+		mw.WithTags("Admin"),
+		mw.WithSummary("Get job results download URL"),
+		mw.WithOperationID("adminGetJobResults"),
 		mw.WithSuperadmin(),
 		mw.WithHidden())
 

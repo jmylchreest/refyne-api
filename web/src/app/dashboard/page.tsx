@@ -9,7 +9,6 @@ import {
   analyze,
   createCrawlJob,
   getJobResults,
-  getJobResultsRaw,
   listSchemas,
   listSavedSites,
   createSavedSite,
@@ -148,6 +147,7 @@ export default function DashboardPage() {
     maxDepth: 1,
     useSitemap: false,
   });
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [crawlJobId, setCrawlJobId] = useState<string | null>(null);
   const [crawlUrls, setCrawlUrls] = useState<CrawlProgressUrl[]>([]);
   const [crawlFinalResult, setCrawlFinalResult] = useState<Record<string, unknown> | null>(null);

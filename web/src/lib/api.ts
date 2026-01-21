@@ -816,3 +816,165 @@ export async function syncTiers() {
   return request<{ message: string }>('POST', '/api/v1/admin/tiers/sync');
 }
 
+// ==================== Admin Analytics ====================
+
+export interface AnalyticsOverview {
+  total_jobs: number;
+  completed_jobs: number;
+  failed_jobs: number;
+  total_cost_usd: number;
+  total_llm_cost_usd: number;
+  total_tokens_input: number;
+  total_tokens_output: number;
+  active_users: number;
+  byok_jobs: number;
+  platform_jobs: number;
+  error_rate: number;
+}
+
+export interface AnalyticsJob {
+  id: string;
+  user_id: string;
+  type: string;
+  status: string;
+  url: string;
+  cost_usd: number;
+  llm_cost_usd: number;
+  tokens_input: number;
+  tokens_output: number;
+  error_category?: string;
+  error_message?: string;
+  provider?: string;
+  model?: string;
+  discovery_method?: string; // How URLs were discovered: "sitemap", "links", or ""
+  is_byok: boolean;
+  created_at: string;
+  completed_at?: string;
+}
+
+export interface AnalyticsJobsParams {
+  start_date?: string;
+  end_date?: string;
+  status?: string;
+  type?: string;
+  user_id?: string;
+  limit?: number;
+  offset?: number;
+  sort?: string;
+  order?: string;
+}
+
+export interface ErrorCategorySummary {
+  category: string;
+  count: number;
+  percentage: number;
+  sample_messages?: string[];
+}
+
+export interface FailingURL {
+  url: string;
+  count: number;
+}
+
+export interface ProviderError {
+  provider: string;
+  model: string;
+  count: number;
+}
+
+export interface AnalyticsErrorSummary {
+  by_category: ErrorCategorySummary[];
+  top_failing_urls: FailingURL[];
+  by_provider: ProviderError[];
+}
+
+export interface TrendDataPoint {
+  date: string;
+  job_count: number;
+  cost_usd: number;
+  llm_cost_usd: number;
+  error_count: number;
+  tokens: number;
+}
+
+export interface AnalyticsUserSummary {
+  user_id: string;
+  total_jobs: number;
+  completed_jobs: number;
+  failed_jobs: number;
+  total_cost_usd: number;
+  total_tokens: number;
+  last_active?: string;
+}
+
+export interface AnalyticsUsersParams {
+  start_date?: string;
+  end_date?: string;
+  limit?: number;
+  offset?: number;
+  sort?: string;
+  order?: string;
+}
+
+export async function getAnalyticsOverview(startDate?: string, endDate?: string) {
+  const params = new URLSearchParams();
+  if (startDate) params.append('start_date', startDate);
+  if (endDate) params.append('end_date', endDate);
+  const query = params.toString() ? `?${params.toString()}` : '';
+  return request<AnalyticsOverview>('GET', `/api/v1/admin/analytics/overview${query}`);
+}
+
+export async function getAnalyticsJobs(params: AnalyticsJobsParams = {}) {
+  const urlParams = new URLSearchParams();
+  if (params.start_date) urlParams.append('start_date', params.start_date);
+  if (params.end_date) urlParams.append('end_date', params.end_date);
+  if (params.status) urlParams.append('status', params.status);
+  if (params.type) urlParams.append('type', params.type);
+  if (params.user_id) urlParams.append('user_id', params.user_id);
+  if (params.limit) urlParams.append('limit', params.limit.toString());
+  if (params.offset) urlParams.append('offset', params.offset.toString());
+  if (params.sort) urlParams.append('sort', params.sort);
+  if (params.order) urlParams.append('order', params.order);
+  const query = urlParams.toString() ? `?${urlParams.toString()}` : '';
+  return request<{ jobs: AnalyticsJob[]; total_count: number }>('GET', `/api/v1/admin/analytics/jobs${query}`);
+}
+
+export async function getAnalyticsErrors(startDate?: string, endDate?: string) {
+  const params = new URLSearchParams();
+  if (startDate) params.append('start_date', startDate);
+  if (endDate) params.append('end_date', endDate);
+  const query = params.toString() ? `?${params.toString()}` : '';
+  return request<AnalyticsErrorSummary>('GET', `/api/v1/admin/analytics/errors${query}`);
+}
+
+export async function getAnalyticsTrends(startDate?: string, endDate?: string, interval: string = 'day') {
+  const params = new URLSearchParams();
+  if (startDate) params.append('start_date', startDate);
+  if (endDate) params.append('end_date', endDate);
+  params.append('interval', interval);
+  const query = `?${params.toString()}`;
+  return request<{ trends: TrendDataPoint[] }>('GET', `/api/v1/admin/analytics/trends${query}`);
+}
+
+export async function getAnalyticsUsers(params: AnalyticsUsersParams = {}) {
+  const urlParams = new URLSearchParams();
+  if (params.start_date) urlParams.append('start_date', params.start_date);
+  if (params.end_date) urlParams.append('end_date', params.end_date);
+  if (params.limit) urlParams.append('limit', params.limit.toString());
+  if (params.offset) urlParams.append('offset', params.offset.toString());
+  if (params.sort) urlParams.append('sort', params.sort);
+  if (params.order) urlParams.append('order', params.order);
+  const query = urlParams.toString() ? `?${urlParams.toString()}` : '';
+  return request<{ users: AnalyticsUserSummary[]; total_count: number }>('GET', `/api/v1/admin/analytics/users${query}`);
+}
+
+export interface AdminJobResultsResponse {
+  job_id: string;
+  download_url: string;
+  expires_at: string;
+}
+
+export async function getAdminJobResults(jobId: string) {
+  return request<AdminJobResultsResponse>('GET', `/api/v1/admin/analytics/jobs/${jobId}/results`);
+}
+

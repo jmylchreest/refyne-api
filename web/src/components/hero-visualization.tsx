@@ -78,26 +78,25 @@ function SyntaxHighlight({
   format: 'json' | 'yaml' | 'jsonl';
   theme: ColorTheme;
 }) {
-  const colors = theme === 'schema'
-    ? {
-        key: 'text-indigo-600 dark:text-indigo-400',
-        string: 'text-amber-600 dark:text-amber-400',
-        number: 'text-blue-600 dark:text-blue-400',
-        boolean: 'text-purple-600 dark:text-purple-400',
-        punctuation: 'text-zinc-400',
-        bracket: 'text-zinc-500',
-      }
-    : {
-        key: 'text-emerald-400',
-        string: 'text-amber-300',
-        number: 'text-blue-400',
-        boolean: 'text-purple-400',
-        punctuation: 'text-zinc-500',
-        bracket: 'text-zinc-500',
-      };
-
   // Tokenize and colorize the content
   const highlighted = useMemo(() => {
+    const colors = theme === 'schema'
+      ? {
+          key: 'text-indigo-600 dark:text-indigo-400',
+          string: 'text-amber-600 dark:text-amber-400',
+          number: 'text-blue-600 dark:text-blue-400',
+          boolean: 'text-purple-600 dark:text-purple-400',
+          punctuation: 'text-zinc-400',
+          bracket: 'text-zinc-500',
+        }
+      : {
+          key: 'text-emerald-400',
+          string: 'text-amber-300',
+          number: 'text-blue-400',
+          boolean: 'text-purple-400',
+          punctuation: 'text-zinc-500',
+          bracket: 'text-zinc-500',
+        };
     if (format === 'yaml') {
       return content.split('\n').map((line, i) => {
         // Match YAML patterns: key: value
@@ -166,10 +165,9 @@ function SyntaxHighlight({
     let idx = 0;
     const regex = /("(?:[^"\\]|\\.)*")|(\d+\.?\d*)|(\btrue\b|\bfalse\b|\bnull\b)|([{}\[\]:,])|(\s+)/g;
     let match;
-    let inKey = false;
 
     while ((match = regex.exec(content)) !== null) {
-      const [full, str, num, bool, punct, space] = match;
+      const [, str, num, bool, punct, space] = match;
       if (str) {
         // Check if this is a key (followed by colon)
         const afterMatch = content.slice(regex.lastIndex);
@@ -179,7 +177,6 @@ function SyntaxHighlight({
             {str}
           </span>
         );
-        inKey = isKey;
       } else if (num) {
         tokens.push(<span key={idx++} className={colors.number}>{num}</span>);
       } else if (bool) {
@@ -192,7 +189,7 @@ function SyntaxHighlight({
     }
 
     return tokens;
-  }, [content, format, colors]);
+  }, [content, format, theme]);
 
   return <code>{highlighted}</code>;
 }

@@ -59,11 +59,13 @@ type Job struct {
 	IsBYOK           bool       `json:"is_byok"`                  // True if user's own API key was used
 	LLMProvider      string     `json:"llm_provider,omitempty"`   // Last provider attempted
 	LLMModel         string     `json:"llm_model,omitempty"`      // Last model attempted
+	DiscoveryMethod  string     `json:"discovery_method,omitempty"` // How URLs were discovered: "sitemap", "links", or "" for single-page
 	URLsQueued       int        `json:"urls_queued"`              // Total URLs queued for processing (for progress tracking)
 	PageCount        int        `json:"page_count"`
 	TokenUsageInput  int        `json:"token_usage_input"`
 	TokenUsageOutput int        `json:"token_usage_output"`
-	CostUSD          float64    `json:"cost_usd"` // Actual USD cost charged to user (0 for BYOK)
+	CostUSD          float64    `json:"cost_usd"`     // USD cost charged to user (0 for BYOK)
+	LLMCostUSD       float64    `json:"llm_cost_usd"` // Actual LLM provider cost (always recorded)
 	WebhookURL       string     `json:"webhook_url,omitempty"`
 	WebhookStatus    string     `json:"webhook_status,omitempty"`
 	WebhookAttempts  int        `json:"webhook_attempts"`

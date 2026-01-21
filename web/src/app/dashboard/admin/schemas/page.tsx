@@ -44,12 +44,6 @@ const CATEGORIES = [
   { value: 'other', label: 'Other' },
 ];
 
-const VISIBILITY_OPTIONS = [
-  { value: 'platform', label: 'Platform', description: 'Visible to all users, managed by admins' },
-  { value: 'public', label: 'Public', description: 'Visible to all users, owned by creator' },
-  { value: 'private', label: 'Private', description: 'Visible only to the owner' },
-];
-
 type FilterType = 'all' | 'platform' | 'public' | 'private';
 
 export default function AdminSchemasPage() {

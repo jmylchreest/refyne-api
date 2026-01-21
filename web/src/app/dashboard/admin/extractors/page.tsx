@@ -128,6 +128,7 @@ export default function ExtractorsPage() {
     } else if (isLoaded) {
       setIsLoading(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoaded, isSuperadmin]);
 
   useEffect(() => {
@@ -138,6 +139,7 @@ export default function ExtractorsPage() {
         loadChainForTier(selectedTier);
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTier, isSuperadmin]);
 
   const handleSave = async (provider: 'openrouter' | 'anthropic' | 'openai') => {

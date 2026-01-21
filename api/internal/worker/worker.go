@@ -232,6 +232,17 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 		}
 	}
 
+	// Set discovery method based on how URLs were found
+	if len(sitemapURLs) > 0 {
+		job.DiscoveryMethod = "sitemap"
+	} else {
+		job.DiscoveryMethod = "links"
+	}
+	// Persist the discovery method early (it's useful for tracking)
+	if err := w.jobRepo.Update(ctx, job); err != nil {
+		w.logger.Error("failed to update job discovery_method", "job_id", job.ID, "error", err)
+	}
+
 	// Set defaults for crawl mode (only if not using sitemap)
 	if options.MaxDepth == 0 && len(sitemapURLs) == 0 {
 		options.MaxDepth = 2 // Default to following links one level from seed
@@ -255,16 +266,10 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 	pageCount := 0
 
 	// Callback to save each result incrementally for SSE streaming
+	// Note: We only save metadata to job_results for progress tracking.
+	// Full extracted data is accumulated and saved to S3 on completion.
 	resultCallback := func(pageResult service.PageResult) error {
 		now := time.Now()
-		dataJSON := ""
-		if pageResult.Data != nil {
-			// Resolve relative URLs in extracted data against the page URL
-			resolvedData := service.ResolveRelativeURLs(pageResult.Data, pageResult.URL)
-			if d, err := json.Marshal(resolvedData); err == nil {
-				dataJSON = string(d)
-			}
-		}
 
 		// Determine crawl status based on error
 		crawlStatus := models.CrawlStatusCompleted
@@ -284,6 +289,7 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 			w.logger.Error("failed to update job page count", "job_id", job.ID, "error", err)
 		}
 
+		// Save metadata only to job_results (no DataJSON - that goes to S3)
 		jobResult := &models.JobResult{
 			ID:                ulid.Make().String(),
 			JobID:             job.ID,
@@ -291,7 +297,7 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 			ParentURL:         pageResult.ParentURL,
 			Depth:             pageResult.Depth,
 			CrawlStatus:       crawlStatus,
-			DataJSON:          dataJSON,
+			// DataJSON removed - full results are stored in S3 on completion
 			ErrorMessage:      pageResult.Error,
 			ErrorDetails:      pageResult.ErrorDetails,
 			ErrorCategory:     pageResult.ErrorCategory,
@@ -376,6 +382,9 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 	job.TokenUsageInput = result.TotalTokensInput
 	job.TokenUsageOutput = result.TotalTokensOutput
 	job.CostUSD = result.TotalCostUSD
+	job.LLMCostUSD = result.TotalLLMCostUSD
+	job.LLMProvider = result.LLMProvider
+	job.LLMModel = result.LLMModel
 	job.ResultJSON = string(resultData)
 	job.CompletedAt = &completedAt
 
@@ -415,9 +424,8 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 		}
 
 		for _, pageResult := range result.PageResults {
-			// Resolve relative URLs in extracted data against the page URL
-			resolvedData := service.ResolveRelativeURLs(pageResult.Data, pageResult.URL)
-			dataJSON, _ := json.Marshal(resolvedData)
+			// Data is already processed by the service layer (URLs resolved, etc.)
+			dataJSON, _ := json.Marshal(pageResult.Data)
 			jobResults.Results = append(jobResults.Results, service.JobResultData{
 				ID:        pageResult.URL, // Use URL as ID for now
 				URL:       pageResult.URL,

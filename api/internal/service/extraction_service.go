@@ -378,8 +378,11 @@ func (s *ExtractionService) handleSuccessfulExtraction(
 		"is_byok", isBYOK,
 	)
 
+	// Apply shared post-extraction processing (URL resolution, etc.)
+	processedData := s.processExtractionResult(result.Data, result.URL)
+
 	return &ExtractOutput{
-		Data:      result.Data,
+		Data:      processedData,
 		URL:       result.URL,
 		FetchedAt: result.FetchedAt,
 		Usage:     usageInfo,
@@ -447,9 +450,12 @@ type CrawlResult struct {
 	PageCount         int          `json:"page_count"`
 	TotalTokensInput  int          `json:"total_tokens_input"`
 	TotalTokensOutput int          `json:"total_tokens_output"`
-	TotalCostUSD      float64      `json:"total_cost_usd"` // Actual USD cost charged to user
-	StoppedEarly      bool         `json:"stopped_early"`  // True if crawl terminated before completion
-	StopReason        string       `json:"stop_reason"`    // Reason for early stop (e.g., "insufficient_balance")
+	TotalCostUSD      float64      `json:"total_cost_usd"`     // Actual USD cost charged to user
+	TotalLLMCostUSD   float64      `json:"total_llm_cost_usd"` // Actual LLM provider cost
+	LLMProvider       string       `json:"llm_provider"`       // LLM provider used
+	LLMModel          string       `json:"llm_model"`          // LLM model used
+	StoppedEarly      bool         `json:"stopped_early"`      // True if crawl terminated before completion
+	StopReason        string       `json:"stop_reason"`        // Reason for early stop (e.g., "insufficient_balance")
 }
 
 // Crawl performs a multi-page crawl extraction.
@@ -582,12 +588,15 @@ func (s *ExtractionService) Crawl(ctx context.Context, userID string, input Craw
 			"is_byok", isBYOK,
 		)
 
-		data = append(data, result.Data)
+		// Apply shared post-extraction processing (URL resolution, etc.)
+		processedData := s.processExtractionResult(result.Data, result.URL)
+
+		data = append(data, processedData)
 		pageResults = append(pageResults, PageResult{
 			URL:               result.URL,
 			ParentURL:         parentURL,
 			Depth:             depth,
-			Data:              result.Data,
+			Data:              processedData,
 			TokenUsageInput:   result.TokenUsage.InputTokens,
 			TokenUsageOutput:  result.TokenUsage.OutputTokens,
 			FetchDurationMs:   int(result.FetchDuration.Milliseconds()),
@@ -633,6 +642,9 @@ func (s *ExtractionService) Crawl(ctx context.Context, userID string, input Craw
 		TotalTokensInput:  totalTokensInput,
 		TotalTokensOutput: totalTokensOutput,
 		TotalCostUSD:      userCostUSD,
+		TotalLLMCostUSD:   llmCostUSD,
+		LLMProvider:       llmCfg.Provider,
+		LLMModel:          llmCfg.Model,
 		StoppedEarly:      false, // Simple Crawl doesn't have mid-crawl balance check
 		StopReason:        "",
 	}, nil
@@ -835,12 +847,15 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 				"is_byok", isBYOK,
 			)
 
-			data = append(data, result.Data)
+			// Apply shared post-extraction processing (URL resolution, etc.)
+			processedData := s.processExtractionResult(result.Data, result.URL)
+
+			data = append(data, processedData)
 			pageResult = PageResult{
 				URL:               result.URL,
 				ParentURL:         parentURL,
 				Depth:             depth,
-				Data:              result.Data,
+				Data:              processedData,
 				TokenUsageInput:   result.TokenUsage.InputTokens,
 				TokenUsageOutput:  result.TokenUsage.OutputTokens,
 				FetchDurationMs:   int(result.FetchDuration.Milliseconds()),
@@ -923,6 +938,9 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 		TotalTokensInput:  totalTokensInput,
 		TotalTokensOutput: totalTokensOutput,
 		TotalCostUSD:      userCostUSD,
+		TotalLLMCostUSD:   llmCostUSD,
+		LLMProvider:       llmCfg.Provider,
+		LLMModel:          llmCfg.Model,
 		StoppedEarly:      stoppedEarly,
 		StopReason:        stopReason,
 	}, nil
@@ -1071,6 +1089,22 @@ func (s *ExtractionService) getDefaultLLMConfig(ctx context.Context) *LLMConfigI
 		Model:      "llama3.2",
 		StrictMode: s.getStrictMode(ctx, "ollama", "llama3.2", nil),
 	}
+}
+
+// ========================================
+// Shared Post-Extraction Processing
+// ========================================
+
+// processExtractionResult applies common post-processing to raw extraction results.
+// This is the single place where URL resolution and any other post-processing happens.
+// All extraction paths (single-page Extract, Crawl, CrawlWithCallback) should use this.
+func (s *ExtractionService) processExtractionResult(rawData any, pageURL string) any {
+	// 1. Resolve relative URLs to absolute
+	resolved := ResolveRelativeURLs(rawData, pageURL)
+
+	// 2. Future: any other post-processing (sanitization, validation, etc.)
+
+	return resolved
 }
 
 // ========================================

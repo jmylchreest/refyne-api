@@ -96,10 +96,15 @@ type AnalyzeInput struct {
 	FetchMode string `json:"fetch_mode"` // auto, static, dynamic
 }
 
-// AnalyzeTokenUsage represents token consumption for an analysis.
+// AnalyzeTokenUsage represents token consumption and cost info for an analysis.
 type AnalyzeTokenUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens  int     `json:"input_tokens"`
+	OutputTokens int     `json:"output_tokens"`
+	CostUSD      float64 `json:"cost_usd"`      // Total cost charged to user
+	LLMCostUSD   float64 `json:"llm_cost_usd"`  // Actual LLM cost from provider
+	IsBYOK       bool    `json:"is_byok"`       // True if user's own API key was used
+	LLMProvider  string  `json:"llm_provider"`  // Provider used
+	LLMModel     string  `json:"llm_model"`     // Model used
 }
 
 // AnalyzeOutput represents the output from analysis.
@@ -155,7 +160,7 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 		"is_byok", isBYOK,
 	)
 
-	// Pre-flight cost estimate (triggers pricing cache refresh if needed)
+	// Pre-flight cost estimate (triggers pricing cache refresh if needed) and balance check
 	if s.billing != nil {
 		estimatedCost := s.billing.EstimateCost(1, llmConfig.Model, llmConfig.Provider)
 		s.logger.Debug("pre-flight cost estimate",
@@ -166,6 +171,12 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 			"estimated_cost_usd", estimatedCost,
 			"is_byok", isBYOK,
 		)
+		// Only check balance for non-BYOK users
+		if !isBYOK {
+			if err := s.billing.CheckSufficientBalance(ctx, userID, estimatedCost); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	// Fetch main page content
@@ -330,17 +341,22 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 		result.Output.SampleLinks = links[:min(10, len(links))] // Return up to 10 sample links
 	}
 
-	// Add token usage to output
-	result.Output.TokenUsage = AnalyzeTokenUsage{
-		InputTokens:  result.InputTokens,
-		OutputTokens: result.OutputTokens,
-	}
-
-	// Calculate costs for logging
+	// Calculate costs
 	var llmCostUSD, userCostUSD float64
 	if s.billing != nil {
 		llmCostUSD = s.billing.GetActualCost(ctx, result.InputTokens, result.OutputTokens, llmConfig.Model, llmConfig.Provider)
 		userCostUSD, _, _ = s.billing.CalculateTotalCost(llmCostUSD, tier, isBYOK)
+	}
+
+	// Add token usage and cost info to output
+	result.Output.TokenUsage = AnalyzeTokenUsage{
+		InputTokens:  result.InputTokens,
+		OutputTokens: result.OutputTokens,
+		CostUSD:      userCostUSD,
+		LLMCostUSD:   llmCostUSD,
+		IsBYOK:       isBYOK,
+		LLMProvider:  llmConfig.Provider,
+		LLMModel:     llmConfig.Model,
 	}
 
 	s.logger.Info("URL analysis completed",

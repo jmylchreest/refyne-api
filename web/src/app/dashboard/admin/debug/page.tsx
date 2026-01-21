@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { ProgressAvatar, defaultStages } from '@/components/ui/progress-avatar';
+import { ProgressAvatar } from '@/components/ui/progress-avatar';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 

@@ -150,35 +150,23 @@ type CreateCrawlJobOutput struct {
 // CreateCrawlJob handles crawl job creation.
 // Supports both async mode (default) and sync mode (wait=true).
 func (h *JobHandler) CreateCrawlJob(ctx context.Context, input *CreateCrawlJobInput) (*CreateCrawlJobOutput, error) {
-	userID := getUserID(ctx)
-	if userID == "" {
+	// Extract user context from JWT claims
+	uc := ExtractUserContext(ctx)
+	if !uc.IsAuthenticated() {
 		return nil, huma.Error401Unauthorized("unauthorized")
-	}
-
-	// Get user's tier and feature eligibility from claims
-	tier := "free"
-	byokAllowed := false
-	modelsCustomAllowed := false
-	if claims := mw.GetUserClaims(ctx); claims != nil {
-		if claims.Tier != "" {
-			tier = claims.Tier
-		}
-		// Check if user has features from Clerk Commerce
-		byokAllowed = claims.HasFeature("provider_byok")
-		modelsCustomAllowed = claims.HasFeature("models_custom")
 	}
 
 	// Resolve LLM configs at job creation time
 	var llmConfigs []*service.LLMConfigInput
 	var isBYOK bool
 	if h.resolver != nil {
-		llmConfigs, isBYOK = h.resolver.ResolveConfigs(ctx, userID, nil, tier, byokAllowed, modelsCustomAllowed)
+		llmConfigs, isBYOK = h.resolver.ResolveConfigs(ctx, uc.UserID, nil, uc.Tier, uc.BYOKAllowed, uc.ModelsCustomAllowed)
 	}
 	if len(llmConfigs) == 0 {
 		return nil, huma.Error500InternalServerError("failed to resolve LLM configuration")
 	}
 
-	result, err := h.jobSvc.CreateCrawlJob(ctx, userID, service.CreateCrawlJobInput{
+	result, err := h.jobSvc.CreateCrawlJob(ctx, uc.UserID, service.CreateCrawlJobInput{
 		URL:    input.Body.URL,
 		Schema: input.Body.Schema,
 		Options: service.CrawlOptions{
@@ -196,7 +184,7 @@ func (h *JobHandler) CreateCrawlJob(ctx context.Context, input *CreateCrawlJobIn
 		},
 		WebhookURL: input.Body.WebhookURL,
 		LLMConfigs: llmConfigs,
-		Tier:       tier,
+		Tier:       uc.Tier,
 		IsBYOK:     isBYOK,
 	})
 	if err != nil {
@@ -245,7 +233,7 @@ func (h *JobHandler) CreateCrawlJob(ctx context.Context, input *CreateCrawlJobIn
 		}
 
 		// Poll job status
-		job, err = h.jobSvc.GetJob(ctx, userID, result.JobID)
+		job, err = h.jobSvc.GetJob(ctx, uc.UserID, result.JobID)
 		if err != nil {
 			time.Sleep(pollInterval)
 			continue
@@ -296,7 +284,7 @@ func (h *JobHandler) CreateCrawlJob(ctx context.Context, input *CreateCrawlJobIn
 
 	// For completed jobs, collect results into { items: [...] }
 	if job.Status == models.JobStatusCompleted {
-		results, err := h.jobSvc.GetJobResults(ctx, userID, job.ID)
+		results, err := h.jobSvc.GetJobResults(ctx, uc.UserID, job.ID)
 		if err == nil && len(results) > 0 {
 			output.Body.Data = collectAllResults(results)
 		}
@@ -487,18 +475,18 @@ func (h *JobHandler) StreamResults(w http.ResponseWriter, r *http.Request) {
 		"page_count":  job.PageCount,
 	})
 
-	// If job is already completed, send results and close
+	// If job is already completed, send result metadata and close
+	// Note: Full extracted data is NOT included in SSE events to reduce bandwidth.
+	// Clients should fetch full results from /jobs/{id}/results after completion.
 	if job.Status == models.JobStatusCompleted || job.Status == models.JobStatusFailed {
-		// Send final results (including failed pages for error visibility)
-		results, _ := h.jobSvc.GetJobResults(r.Context(), userID, jobID)
+		// Send final results metadata (status/errors only, no extracted data)
+		results, _ := h.jobSvc.GetJobResultsAfterID(r.Context(), userID, jobID, "")
 		for _, result := range results {
 			event := map[string]any{
 				"id":     result.ID,
 				"url":    result.URL,
 				"status": string(result.CrawlStatus),
-			}
-			if result.DataJSON != "" {
-				event["data"] = json.RawMessage(result.DataJSON)
+				// data is NOT included - fetch from /results endpoint
 			}
 			// Add result info with BYOK-aware sanitization
 			ResultInfo{
@@ -517,6 +505,7 @@ func (h *JobHandler) StreamResults(w http.ResponseWriter, r *http.Request) {
 			"page_count":     job.PageCount,
 			"error_message":  job.ErrorMessage,
 			"error_category": job.ErrorCategory,
+			"results_url":    fmt.Sprintf("/api/v1/jobs/%s/results", job.ID), // Where to fetch full results
 		})
 		return
 	}
@@ -549,15 +538,13 @@ func (h *JobHandler) StreamResults(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			// Send new results
+			// Send new results metadata (no extracted data - fetch from /results endpoint)
 			for _, result := range results {
 				event := map[string]any{
 					"id":     result.ID,
 					"url":    result.URL,
 					"status": string(result.CrawlStatus),
-				}
-				if result.DataJSON != "" {
-					event["data"] = json.RawMessage(result.DataJSON)
+					// data is NOT included - fetch from /results endpoint
 				}
 				// Add result info with BYOK-aware sanitization
 				ResultInfo{
@@ -595,6 +582,7 @@ func (h *JobHandler) StreamResults(w http.ResponseWriter, r *http.Request) {
 					"error_message":  job.ErrorMessage,
 					"error_category": job.ErrorCategory,
 					"cost_usd":       job.CostUSD,
+					"results_url":    fmt.Sprintf("/api/v1/jobs/%s/results", job.ID), // Where to fetch full results
 				})
 				return
 			}
@@ -1367,24 +1355,27 @@ type SSEStatusEvent struct {
 }
 
 // SSEResultEvent is sent for each extracted result.
+// Note: Full extracted data is NOT included in SSE events to reduce bandwidth.
+// Clients should fetch full results from the results_url after the complete event.
 type SSEResultEvent struct {
-	ID            string          `json:"id" doc:"Result ID"`
-	URL           string          `json:"url" doc:"Source URL"`
-	Status        string          `json:"status" doc:"Crawl status (pending, completed, failed)"`
-	Data          json.RawMessage `json:"data,omitempty" doc:"Extracted data matching the schema"`
-	ErrorMessage  string          `json:"error_message,omitempty" doc:"Error message if failed"`
-	ErrorCategory string          `json:"error_category,omitempty" doc:"Error category if failed"`
-	LLMProvider   string          `json:"llm_provider,omitempty" doc:"LLM provider used"`
-	LLMModel      string          `json:"llm_model,omitempty" doc:"LLM model used"`
+	ID            string `json:"id" doc:"Result ID"`
+	URL           string `json:"url" doc:"Source URL"`
+	Status        string `json:"status" doc:"Crawl status (pending, completed, failed)"`
+	ErrorMessage  string `json:"error_message,omitempty" doc:"Error message if failed"`
+	ErrorCategory string `json:"error_category,omitempty" doc:"Error category if failed"`
+	LLMProvider   string `json:"llm_provider,omitempty" doc:"LLM provider used"`
+	LLMModel      string `json:"llm_model,omitempty" doc:"LLM model used"`
 }
 
 // SSECompleteEvent is sent when the job completes.
 type SSECompleteEvent struct {
-	JobID         string `json:"job_id" doc:"Job ID"`
-	Status        string `json:"status" doc:"Final job status"`
-	PageCount     int    `json:"page_count" doc:"Total pages processed"`
-	ErrorMessage  string `json:"error_message,omitempty" doc:"Error message if job failed"`
-	ErrorCategory string `json:"error_category,omitempty" doc:"Error category if job failed"`
+	JobID         string  `json:"job_id" doc:"Job ID"`
+	Status        string  `json:"status" doc:"Final job status"`
+	PageCount     int     `json:"page_count" doc:"Total pages processed"`
+	ErrorMessage  string  `json:"error_message,omitempty" doc:"Error message if job failed"`
+	ErrorCategory string  `json:"error_category,omitempty" doc:"Error category if job failed"`
+	CostUSD       float64 `json:"cost_usd,omitempty" doc:"Total cost in USD"`
+	ResultsURL    string  `json:"results_url" doc:"URL to fetch full results"`
 }
 
 // SSEErrorEvent is sent when an error occurs during streaming.

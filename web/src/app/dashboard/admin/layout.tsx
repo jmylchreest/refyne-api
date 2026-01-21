@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
 
 const adminTabs = [
+  { name: 'Analytics', href: '/dashboard/admin/analytics' },
   { name: 'Extractors', href: '/dashboard/admin/extractors' },
   { name: 'Schema Catalog', href: '/dashboard/admin/schemas' },
   { name: 'System', href: '/dashboard/admin/system' },
@@ -46,8 +47,11 @@ export default function AdminLayout({
     );
   }
 
+  // Analytics page needs full width for wide tables
+  const isAnalytics = pathname === '/dashboard/admin/analytics';
+
   return (
-    <div className="max-w-5xl">
+    <div className={isAnalytics ? 'w-full' : 'max-w-5xl'}>
       <div className="mb-8">
         <h1 className="text-3xl font-bold tracking-tight">Admin Settings</h1>
         <p className="mt-2 text-zinc-600 dark:text-zinc-400">

@@ -264,6 +264,7 @@ type Repositories struct {
 	UserFallbackChain UserFallbackChainRepository
 	Webhook           WebhookRepository
 	WebhookDelivery   WebhookDeliveryRepository
+	Analytics         *SQLiteAnalyticsRepository
 }
 
 // NewRepositories creates all repository instances.
@@ -287,5 +288,6 @@ func NewRepositories(db *sql.DB) *Repositories {
 		UserFallbackChain: NewSQLiteUserFallbackChainRepository(db),
 		Webhook:           NewSQLiteWebhookRepository(db),
 		WebhookDelivery:   NewSQLiteWebhookDeliveryRepository(db),
+		Analytics:         NewSQLiteAnalyticsRepository(db),
 	}
 }

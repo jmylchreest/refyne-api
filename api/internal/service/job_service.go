@@ -85,9 +85,11 @@ type CompleteExtractJobInput struct {
 	PageCount        int     `json:"page_count"`
 	TokenUsageInput  int     `json:"token_usage_input"`
 	TokenUsageOutput int     `json:"token_usage_output"`
-	CostUSD          float64 `json:"cost_usd"`
+	CostUSD          float64 `json:"cost_usd"`     // Cost charged to user (0 for BYOK)
+	LLMCostUSD       float64 `json:"llm_cost_usd"` // Actual LLM provider cost (always recorded)
 	LLMProvider      string  `json:"llm_provider"`
 	LLMModel         string  `json:"llm_model"`
+	IsBYOK           bool    `json:"is_byok"` // Whether user's own API key was used (determined after extraction)
 }
 
 // FailExtractJobInput represents input for failing an extract job.
@@ -172,8 +174,8 @@ func (s *JobService) ListJobs(ctx context.Context, userID string, limit, offset 
 }
 
 // GetJobResults retrieves results for a job.
-// For crawl jobs, results come from the database (JobResult table).
-// For extract jobs, results are fetched from S3/Tigris storage.
+// Results are fetched from S3/Tigris storage for both extract and crawl jobs.
+// The job_results table contains only metadata for SSE progress tracking.
 func (s *JobService) GetJobResults(ctx context.Context, userID, jobID string) ([]*models.JobResult, error) {
 	// Verify job belongs to user
 	job, err := s.GetJob(ctx, userID, jobID)
@@ -181,54 +183,103 @@ func (s *JobService) GetJobResults(ctx context.Context, userID, jobID string) ([
 		return nil, err
 	}
 
-	// For extract jobs, fetch from S3 storage
-	if job.Type == models.JobTypeExtract {
-		return s.getExtractJobResultsFromStorage(ctx, job)
-	}
-
-	// For crawl jobs, fetch from database
-	return s.repos.JobResult.GetByJobID(ctx, jobID)
+	// All job types now use S3 storage for full results
+	return s.getJobResultsFromStorage(ctx, job)
 }
 
-// getExtractJobResultsFromStorage retrieves extract job results from S3/Tigris.
+// getJobResultsFromStorage retrieves job results from S3/Tigris.
 // Converts the S3 storage format to JobResult models for API consistency.
-func (s *JobService) getExtractJobResultsFromStorage(ctx context.Context, job *models.Job) ([]*models.JobResult, error) {
+// For crawl jobs, this also fetches metadata from job_results table and merges
+// the extracted data from S3 with the metadata (status, tokens, timing, etc.).
+func (s *JobService) getJobResultsFromStorage(ctx context.Context, job *models.Job) ([]*models.JobResult, error) {
 	if s.storageSvc == nil || !s.storageSvc.IsEnabled() {
-		s.logger.Debug("storage not enabled, returning empty results for extract job",
+		s.logger.Debug("storage not enabled, returning metadata-only results",
 			"job_id", job.ID,
+			"job_type", job.Type,
 		)
+		// Fall back to database metadata (without extracted data)
+		if job.Type == models.JobTypeCrawl {
+			return s.repos.JobResult.GetByJobID(ctx, job.ID)
+		}
 		return []*models.JobResult{}, nil
 	}
 
 	// Only completed jobs have results in storage
 	if job.Status != models.JobStatusCompleted {
+		// For incomplete jobs, return metadata from database
+		if job.Type == models.JobTypeCrawl {
+			return s.repos.JobResult.GetByJobID(ctx, job.ID)
+		}
 		return []*models.JobResult{}, nil
 	}
 
-	// Fetch from S3
+	// Fetch full results from S3
 	storageResults, err := s.storageSvc.GetJobResults(ctx, job.ID)
 	if err != nil {
-		s.logger.Warn("failed to get extract job results from storage",
+		s.logger.Warn("failed to get job results from storage, falling back to metadata",
+			"job_id", job.ID,
+			"job_type", job.Type,
+			"error", err,
+		)
+		// Fall back to database metadata
+		if job.Type == models.JobTypeCrawl {
+			return s.repos.JobResult.GetByJobID(ctx, job.ID)
+		}
+		return []*models.JobResult{}, nil
+	}
+
+	// For extract jobs, convert S3 format directly to JobResult
+	if job.Type == models.JobTypeExtract {
+		results := make([]*models.JobResult, 0, len(storageResults.Results))
+		for _, r := range storageResults.Results {
+			results = append(results, &models.JobResult{
+				ID:          r.ID,
+				JobID:       job.ID,
+				URL:         r.URL,
+				DataJSON:    string(r.Data),
+				CrawlStatus: models.CrawlStatusCompleted,
+				CreatedAt:   r.CreatedAt,
+			})
+		}
+		return results, nil
+	}
+
+	// For crawl jobs, fetch metadata from database and merge with S3 data
+	metadataResults, err := s.repos.JobResult.GetByJobID(ctx, job.ID)
+	if err != nil {
+		s.logger.Warn("failed to get job metadata from database",
 			"job_id", job.ID,
 			"error", err,
 		)
-		return []*models.JobResult{}, nil
+		// Return S3 data without metadata
+		results := make([]*models.JobResult, 0, len(storageResults.Results))
+		for _, r := range storageResults.Results {
+			results = append(results, &models.JobResult{
+				ID:          r.ID,
+				JobID:       job.ID,
+				URL:         r.URL,
+				DataJSON:    string(r.Data),
+				CrawlStatus: models.CrawlStatusCompleted,
+				CreatedAt:   r.CreatedAt,
+			})
+		}
+		return results, nil
 	}
 
-	// Convert storage format to JobResult models
-	results := make([]*models.JobResult, 0, len(storageResults.Results))
+	// Build a map of URL -> S3 data for efficient lookup
+	s3DataByURL := make(map[string]json.RawMessage, len(storageResults.Results))
 	for _, r := range storageResults.Results {
-		results = append(results, &models.JobResult{
-			ID:          r.ID,
-			JobID:       job.ID,
-			URL:         r.URL,
-			DataJSON:    string(r.Data),
-			CrawlStatus: models.CrawlStatusCompleted,
-			CreatedAt:   r.CreatedAt,
-		})
+		s3DataByURL[r.URL] = r.Data
 	}
 
-	return results, nil
+	// Merge S3 data into metadata results
+	for _, result := range metadataResults {
+		if data, ok := s3DataByURL[result.URL]; ok {
+			result.DataJSON = string(data)
+		}
+	}
+
+	return metadataResults, nil
 }
 
 // GetJobResultsAfterID retrieves results with ID greater than afterID (for SSE streaming).
@@ -331,8 +382,10 @@ func (s *JobService) CompleteExtractJob(ctx context.Context, jobID string, input
 	job.TokenUsageInput = input.TokenUsageInput
 	job.TokenUsageOutput = input.TokenUsageOutput
 	job.CostUSD = input.CostUSD
+	job.LLMCostUSD = input.LLMCostUSD
 	job.LLMProvider = input.LLMProvider
 	job.LLMModel = input.LLMModel
+	job.IsBYOK = input.IsBYOK // Update with actual BYOK status from extraction
 	job.CompletedAt = &now
 	job.UpdatedAt = now
 

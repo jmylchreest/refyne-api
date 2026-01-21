@@ -397,9 +397,6 @@ function GeneratingPixelAnimation({ frame }: { frame: number }) {
 }
 
 function CompleteAnimation({ frame }: { frame: number }) {
-  // Checkmark draws progressively: frame 0-1 = short stroke, frame 2-3 = full check
-  const checkProgress = frame >= 2 ? 'full' : 'partial';
-
   return (
     <div className="relative">
       <div className="w-12 h-12 relative">

@@ -8,7 +8,6 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/oklog/ulid/v2"
 
-	"github.com/jmylchreest/refyne-api/internal/http/mw"
 	"github.com/jmylchreest/refyne-api/internal/models"
 	"github.com/jmylchreest/refyne-api/internal/repository"
 	"github.com/jmylchreest/refyne-api/internal/service"
@@ -72,22 +71,10 @@ type FollowPatternOutput struct {
 
 // Analyze handles URL analysis requests.
 func (h *AnalyzeHandler) Analyze(ctx context.Context, input *AnalyzeInput) (*AnalyzeOutput, error) {
-	userID := getUserID(ctx)
-	if userID == "" {
+	// Extract user context from JWT claims
+	uc := ExtractUserContext(ctx)
+	if !uc.IsAuthenticated() {
 		return nil, huma.Error401Unauthorized("unauthorized")
-	}
-
-	// Get user's tier and feature eligibility from claims
-	tier := "free"
-	byokAllowed := false
-	modelsCustomAllowed := false
-	if claims := mw.GetUserClaims(ctx); claims != nil {
-		if claims.Tier != "" {
-			tier = claims.Tier
-		}
-		// Check if user has features from Clerk Commerce
-		byokAllowed = claims.HasFeature("provider_byok")
-		modelsCustomAllowed = claims.HasFeature("models_custom")
 	}
 
 	// Create job record to track this analysis
@@ -95,7 +82,7 @@ func (h *AnalyzeHandler) Analyze(ctx context.Context, input *AnalyzeInput) (*Ana
 	startedAt := now
 	job := &models.Job{
 		ID:        ulid.Make().String(),
-		UserID:    userID,
+		UserID:    uc.UserID,
 		Type:      models.JobTypeAnalyze,
 		Status:    models.JobStatusRunning,
 		URL:       input.Body.URL,
@@ -114,39 +101,34 @@ func (h *AnalyzeHandler) Analyze(ctx context.Context, input *AnalyzeInput) (*Ana
 	}
 
 	// Perform analysis
-	result, err := h.analyzerSvc.Analyze(ctx, userID, service.AnalyzeInput{
+	result, err := h.analyzerSvc.Analyze(ctx, uc.UserID, service.AnalyzeInput{
 		URL:       input.Body.URL,
 		Depth:     depth,
 		FetchMode: input.Body.FetchMode,
-	}, tier, byokAllowed, modelsCustomAllowed)
+	}, uc.Tier, uc.BYOKAllowed, uc.ModelsCustomAllowed)
 
 	if err != nil {
-		// Update job with failure
-		completedAt := time.Now()
-		job.Status = models.JobStatusFailed
-		job.ErrorMessage = err.Error()
-		job.CompletedAt = &completedAt
-		job.UpdatedAt = completedAt
-		_ = h.jobRepo.Update(ctx, job) // Best effort update
+		// Update job with failure using shared utilities
+		_ = FailJobDirect(ctx, h.jobRepo, job, JobFailureInput{
+			ErrorMessage: err.Error(),
+		})
 
 		return nil, huma.Error500InternalServerError("analysis failed: " + err.Error())
 	}
 
-	// Update job with success
-	completedAt := time.Now()
-	job.Status = models.JobStatusCompleted
-	job.PageCount = 1
-	job.TokenUsageInput = result.TokenUsage.InputTokens
-	job.TokenUsageOutput = result.TokenUsage.OutputTokens
-	job.CompletedAt = &completedAt
-	job.UpdatedAt = completedAt
-
-	// Store analysis result as JSON
-	if resultJSON, err := json.Marshal(result); err == nil {
-		job.ResultJSON = string(resultJSON)
-	}
-
-	_ = h.jobRepo.Update(ctx, job) // Best effort update
+	// Update job with success using shared utilities
+	resultJSON, _ := json.Marshal(result)
+	_ = CompleteJobDirect(ctx, h.jobRepo, job, JobCompletionInput{
+		TokensInput:  result.TokenUsage.InputTokens,
+		TokensOutput: result.TokenUsage.OutputTokens,
+		CostUSD:      result.TokenUsage.CostUSD,
+		LLMCostUSD:   result.TokenUsage.LLMCostUSD,
+		IsBYOK:       result.TokenUsage.IsBYOK,
+		LLMProvider:  result.TokenUsage.LLMProvider,
+		LLMModel:     result.TokenUsage.LLMModel,
+		PageCount:    1,
+		ResultJSON:   string(resultJSON),
+	})
 
 	// Convert result to output format
 	output := &AnalyzeOutput{
