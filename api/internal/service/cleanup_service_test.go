@@ -60,9 +60,9 @@ func TestCleanupService_CleanupOldJobs(t *testing.T) {
 			JobID: "old-job-2",
 		})
 
-		// Cleanup jobs older than 7 days
+		// Cleanup jobs older than 7 days (results and debug)
 		maxAge := 7 * 24 * time.Hour
-		result, err := svc.CleanupOldJobs(context.Background(), maxAge)
+		result, err := svc.CleanupOldJobs(context.Background(), maxAge, maxAge)
 
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
@@ -89,7 +89,7 @@ func TestCleanupService_CleanupOldJobs(t *testing.T) {
 		mockJobRepo2 := newMockJobRepository()
 		svc2 := NewCleanupService(mockJobRepo2, mockJobResultRepo, nil, logger)
 
-		result, err := svc2.CleanupOldJobs(context.Background(), 7*24*time.Hour)
+		result, err := svc2.CleanupOldJobs(context.Background(), 7*24*time.Hour, 7*24*time.Hour)
 
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
@@ -119,14 +119,14 @@ func TestCleanupService_CleanupOldJobs(t *testing.T) {
 			CreatedAt: oldTime,
 		})
 
-		result, err := svc3.CleanupOldJobs(context.Background(), 7*24*time.Hour)
+		result, err := svc3.CleanupOldJobs(context.Background(), 7*24*time.Hour, 7*24*time.Hour)
 
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}
 		// Storage should be skipped when disabled
-		if result.StorageObjectsDeleted != 0 {
-			t.Errorf("StorageObjectsDeleted = %d, want 0 (storage disabled)", result.StorageObjectsDeleted)
+		if result.StorageResultsDeleted != 0 {
+			t.Errorf("StorageResultsDeleted = %d, want 0 (storage disabled)", result.StorageResultsDeleted)
 		}
 	})
 }
@@ -139,7 +139,8 @@ func TestCleanupResult_Fields(t *testing.T) {
 	result := &CleanupResult{
 		JobsDeleted:           10,
 		JobResultsDeleted:     50,
-		StorageObjectsDeleted: 5,
+		StorageResultsDeleted: 5,
+		StorageDebugDeleted:   3,
 		Errors:                []error{},
 	}
 
@@ -149,8 +150,11 @@ func TestCleanupResult_Fields(t *testing.T) {
 	if result.JobResultsDeleted != 50 {
 		t.Errorf("JobResultsDeleted = %d, want 50", result.JobResultsDeleted)
 	}
-	if result.StorageObjectsDeleted != 5 {
-		t.Errorf("StorageObjectsDeleted = %d, want 5", result.StorageObjectsDeleted)
+	if result.StorageResultsDeleted != 5 {
+		t.Errorf("StorageResultsDeleted = %d, want 5", result.StorageResultsDeleted)
+	}
+	if result.StorageDebugDeleted != 3 {
+		t.Errorf("StorageDebugDeleted = %d, want 3", result.StorageDebugDeleted)
 	}
 	if len(result.Errors) != 0 {
 		t.Errorf("Errors length = %d, want 0", len(result.Errors))
@@ -183,7 +187,7 @@ func TestCleanupService_RunScheduledCleanup(t *testing.T) {
 		// Start scheduled cleanup in a goroutine with very short interval
 		done := make(chan struct{})
 		go func() {
-			svc.RunScheduledCleanup(ctx, 7*24*time.Hour, 50*time.Millisecond)
+			svc.RunScheduledCleanup(ctx, 7*24*time.Hour, 7*24*time.Hour, 50*time.Millisecond)
 			close(done)
 		}()
 
@@ -213,7 +217,7 @@ func TestCleanupService_RunScheduledCleanup(t *testing.T) {
 
 		done := make(chan struct{})
 		go func() {
-			svc.RunScheduledCleanup(ctx, time.Hour, time.Second)
+			svc.RunScheduledCleanup(ctx, time.Hour, time.Hour, time.Second)
 			close(done)
 		}()
 
