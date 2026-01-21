@@ -1,0 +1,181 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import Card from '../../components/Card.astro';
+import CategoryFilter from '../../components/CategoryFilter.astro';
+import Pagination from '../../components/Pagination.astro';
+import {
+  getRecipes,
+  getRecipeCuisines,
+  getRecipeDifficulties,
+  formatTime,
+  formatRating,
+  getDifficultyColor,
+} from '../../lib/recipes';
+
+const url = Astro.url;
+const cuisine = url.searchParams.get('cuisine') || undefined;
+const difficulty = url.searchParams.get('difficulty') || undefined;
+const page = parseInt(url.searchParams.get('page') || '1', 10);
+const perPage = 12;
+
+let allRecipes = await getRecipes();
+const cuisines = await getRecipeCuisines();
+const difficulties = await getRecipeDifficulties();
+
+// Apply filters
+if (cuisine) {
+  allRecipes = allRecipes.filter((recipe) => recipe.cuisine === cuisine);
+}
+if (difficulty) {
+  allRecipes = allRecipes.filter((recipe) => recipe.difficulty === difficulty);
+}
+
+const totalPages = Math.ceil(allRecipes.length / perPage);
+const recipes = allRecipes.slice((page - 1) * perPage, page * perPage);
+
+function getFilterUrl(params: Record<string, string | undefined>): string {
+  const searchParams = new URLSearchParams();
+  if (params.cuisine) searchParams.set('cuisine', params.cuisine);
+  if (params.difficulty) searchParams.set('difficulty', params.difficulty);
+  const qs = searchParams.toString();
+  return qs ? `/recipes?${qs}` : '/recipes';
+}
+
+const totalRecipes = (await getRecipes()).length;
+---
+
+<Layout title="Recipes" description="Discover delicious recipes from around the world">
+  <!-- Header -->
+  <section class="page-header page-header-recipes">
+    <div class="container">
+      <div class="flex items-center justify-between">
+        <div>
+          <h1 class="text-2xl font-bold text-gray-900 dark:text-gray-100">Recipes</h1>
+          <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
+            Discover delicious recipes from cuisines around the world
+          </p>
+        </div>
+        <div class="counter-badge counter-badge-recipes hidden sm:inline-flex">
+          <span class="counter-badge-tab">Recipes</span>
+          <span class="counter-badge-value">{totalRecipes}</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Filters -->
+  <section class="filter-bar sticky top-16 z-40">
+    <div class="container py-4 space-y-3">
+      <div>
+        <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Cuisine</label>
+        <CategoryFilter
+          categories={cuisines}
+          currentCategory={cuisine}
+          basePath="/recipes"
+          paramName="cuisine"
+        />
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Difficulty</label>
+        <div class="flex flex-wrap gap-2">
+          <a
+            href={getFilterUrl({ cuisine, difficulty: undefined })}
+            class:list={[
+              'filter-btn',
+              !difficulty
+                ? 'bg-orange-600 text-white'
+                : 'filter-btn-inactive',
+            ]}
+          >
+            All
+          </a>
+          {difficulties.map((diff) => (
+            <a
+              href={getFilterUrl({ cuisine, difficulty: diff })}
+              class:list={[
+                'filter-btn',
+                difficulty === diff
+                  ? 'bg-orange-600 text-white'
+                  : 'filter-btn-inactive',
+              ]}
+            >
+              {diff}
+            </a>
+          ))}
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Results -->
+  <section class="py-8">
+    <div class="container">
+      <div class="flex items-center justify-between mb-6">
+        <p class="text-gray-600 dark:text-gray-400">
+          Showing <span class="font-medium text-gray-900 dark:text-gray-100">{recipes.length}</span> of <span class="font-medium text-gray-900 dark:text-gray-100">{allRecipes.length}</span> recipes
+        </p>
+      </div>
+
+      {recipes.length > 0 ? (
+        <div class="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+          {recipes.map((recipe) => (
+            <Card href={`/recipes/${recipe.id}`}>
+              <div class="aspect-[4/3] bg-gray-100 dark:bg-gray-800 relative overflow-hidden">
+                <img
+                  src={recipe.image}
+                  alt={recipe.name}
+                  class="w-full h-full object-cover"
+                  loading="lazy"
+                />
+                <span class={`absolute top-2 right-2 ${getDifficultyColor(recipe.difficulty)}`}>
+                  {recipe.difficulty}
+                </span>
+              </div>
+              <div class="p-4">
+                <p class="text-xs text-orange-600 dark:text-orange-400 font-medium uppercase tracking-wide">{recipe.cuisine}</p>
+                <h2 class="font-medium text-gray-900 dark:text-gray-100 mt-1 line-clamp-2">{recipe.name}</h2>
+                <div class="flex items-center gap-3 mt-3 text-sm text-gray-500 dark:text-gray-400">
+                  <div class="flex items-center gap-1">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span>{formatTime(recipe.total_time_minutes)}</span>
+                  </div>
+                  <div class="flex items-center gap-1">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                    </svg>
+                    <span>{recipe.servings} servings</span>
+                  </div>
+                </div>
+                <div class="flex items-center justify-between mt-3">
+                  <div class="flex items-center gap-1">
+                    <svg class="w-4 h-4 text-yellow-400 fill-current" viewBox="0 0 20 20">
+                      <path d="M10 15l-5.878 3.09 1.123-6.545L.489 6.91l6.572-.955L10 0l2.939 5.955 6.572.955-4.756 4.635 1.123 6.545z"/>
+                    </svg>
+                    <span class="text-sm text-gray-600 dark:text-gray-400">{formatRating(recipe.rating)}</span>
+                    <span class="text-sm text-gray-400 dark:text-gray-500">({recipe.review_count})</span>
+                  </div>
+                  <span class="text-sm text-gray-500 dark:text-gray-400">{recipe.calories_per_serving} cal</span>
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      ) : (
+        <div class="text-center py-12">
+          <p class="text-gray-500 dark:text-gray-400">No recipes found with these filters.</p>
+          <a href="/recipes" class="text-orange-600 dark:text-orange-400 hover:text-orange-700 dark:hover:text-orange-300 font-medium mt-2 inline-block">
+            View all recipes
+          </a>
+        </div>
+      )}
+
+      <Pagination
+        currentPage={page}
+        totalPages={totalPages}
+        basePath={getFilterUrl({ cuisine, difficulty })}
+      />
+    </div>
+  </section>
+</Layout>

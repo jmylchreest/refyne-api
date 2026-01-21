@@ -4,13 +4,14 @@ interface Props {
   currentCategory?: string;
   basePath: string;
   allLabel?: string;
+  paramName?: string;
 }
 
-const { categories, currentCategory, basePath, allLabel = 'All' } = Astro.props;
+const { categories, currentCategory, basePath, allLabel = 'All', paramName = 'category' } = Astro.props;
 
 function getCategoryUrl(category?: string): string {
   if (!category) return basePath;
-  return `${basePath}?category=${encodeURIComponent(category)}`;
+  return `${basePath}?${paramName}=${encodeURIComponent(category)}`;
 }
 ---
 
@@ -18,10 +19,10 @@ function getCategoryUrl(category?: string): string {
   <a
     href={getCategoryUrl()}
     class:list={[
-      'px-3 py-1.5 rounded-full text-sm font-medium transition-colors',
+      'filter-btn',
       !currentCategory
         ? 'bg-indigo-600 text-white'
-        : 'bg-gray-100 text-gray-700 hover:bg-gray-200',
+        : 'filter-btn-inactive',
     ]}
   >
     {allLabel}
@@ -31,10 +32,10 @@ function getCategoryUrl(category?: string): string {
     <a
       href={getCategoryUrl(category)}
       class:list={[
-        'px-3 py-1.5 rounded-full text-sm font-medium transition-colors',
+        'filter-btn',
         currentCategory === category
           ? 'bg-indigo-600 text-white'
-          : 'bg-gray-100 text-gray-700 hover:bg-gray-200',
+          : 'filter-btn-inactive',
       ]}
     >
       {category}

@@ -80,7 +80,7 @@ const relatedPosts = allPosts
             {post.tags.map((tag) => (
               <a
                 href={`/blog?tag=${tag}`}
-                class="px-3 py-1 bg-gray-100 text-gray-600 rounded-full text-sm hover:bg-gray-200 transition-colors"
+                class="px-3 py-1 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 rounded-full text-sm hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
               >
                 #{tag}
               </a>
@@ -95,14 +95,14 @@ const relatedPosts = allPosts
 
         <!-- Original Source -->
         {post.url && post.url !== '#' && (
-          <div class="mt-8 p-4 bg-gray-50 rounded-xl border border-gray-200">
-            <p class="text-sm text-gray-600">
+          <div class="mt-8 p-4 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-gray-200 dark:border-gray-700">
+            <p class="text-sm text-gray-600 dark:text-gray-400">
               Originally published on Dev.to:
               <a
                 href={post.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                class="text-indigo-600 hover:text-indigo-700 ml-1"
+                class="text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 ml-1"
               >
                 View original article &rarr;
               </a>
@@ -111,8 +111,8 @@ const relatedPosts = allPosts
         )}
 
         <!-- Share -->
-        <div class="mt-8 pt-8 border-t border-gray-200">
-          <p class="text-sm font-medium text-gray-500 uppercase tracking-wide mb-4">Share this article</p>
+        <div class="mt-8 pt-8 border-t border-gray-200 dark:border-gray-700">
+          <p class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-4">Share this article</p>
           <div class="flex gap-3">
             <a
               href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(post.title)}&url=${encodeURIComponent(`https://demo.refyne.uk/blog/${post.slug}`)}`}
@@ -138,13 +138,13 @@ const relatedPosts = allPosts
 
   <!-- Related Posts -->
   {relatedPosts.length > 0 && (
-    <section class="py-8 md:py-12 bg-gray-50">
+    <section class="py-8 md:py-12 bg-gray-50 dark:bg-gray-900/50">
       <div class="container">
-        <h2 class="text-2xl font-bold text-gray-900 mb-6">Related Posts</h2>
+        <h2 class="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-6">Related Posts</h2>
         <div class="grid md:grid-cols-3 gap-6">
           {relatedPosts.map((relatedPost) => (
             <a href={`/blog/${relatedPost.slug}`} class="card block">
-              <div class="aspect-video bg-gray-100">
+              <div class="aspect-video bg-gray-100 dark:bg-gray-800">
                 <img
                   src={relatedPost.image_url}
                   alt={relatedPost.title}
@@ -153,8 +153,8 @@ const relatedPosts = allPosts
                 />
               </div>
               <div class="p-4">
-                <h3 class="font-semibold text-gray-900 line-clamp-2">{relatedPost.title}</h3>
-                <p class="text-sm text-gray-500 mt-2">{relatedPost.reading_time} min read</p>
+                <h3 class="font-semibold text-gray-900 dark:text-gray-100 line-clamp-2">{relatedPost.title}</h3>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mt-2">{relatedPost.reading_time} min read</p>
               </div>
             </a>
           ))}

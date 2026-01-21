@@ -1,6 +1,6 @@
 ---
 import Layout from '../../layouts/Layout.astro';
-import { getJobs, getJobById, formatSalary, formatJobType } from '../../lib/jobs';
+import { getJobs, getJobById, formatSalary, formatJobType, formatWorkMode } from '../../lib/jobs';
 
 export function getStaticPaths() {
   const jobs = getJobs();
@@ -58,7 +58,13 @@ if (!job) {
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              {formatSalary(job.salary_min, job.salary_max)}
+              {formatSalary(job.salary_min, job.salary_max, job.currency)}
+            </span>
+            <span class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white/20 rounded-full text-sm">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+              </svg>
+              {formatWorkMode(job.work_mode)}
             </span>
           </div>
         </div>
@@ -73,40 +79,40 @@ if (!job) {
         <!-- Main Content -->
         <div class="lg:col-span-2 space-y-8">
           <!-- Description -->
-          <div class="bg-white rounded-xl border border-gray-200 p-6">
-            <h2 class="text-xl font-semibold text-gray-900 mb-4">Job Description</h2>
-            <div class="prose prose-gray max-w-none">
+          <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
+            <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">Job Description</h2>
+            <div class="prose prose-gray dark:prose-invert max-w-none">
               {job.description.split('\n\n').map((paragraph) => (
-                <p class="text-gray-600 mb-4">{paragraph}</p>
+                <p class="text-gray-600 dark:text-gray-300 mb-4">{paragraph}</p>
               ))}
             </div>
           </div>
 
           <!-- Requirements -->
-          <div class="bg-white rounded-xl border border-gray-200 p-6">
-            <h2 class="text-xl font-semibold text-gray-900 mb-4">Requirements</h2>
+          <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
+            <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">Requirements</h2>
             <ul class="space-y-3">
               {job.requirements.map((requirement) => (
                 <li class="flex items-start gap-3">
-                  <svg class="w-5 h-5 text-indigo-600 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg class="w-5 h-5 text-indigo-600 dark:text-indigo-400 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                   </svg>
-                  <span class="text-gray-600">{requirement}</span>
+                  <span class="text-gray-600 dark:text-gray-300">{requirement}</span>
                 </li>
               ))}
             </ul>
           </div>
 
           <!-- Benefits -->
-          <div class="bg-white rounded-xl border border-gray-200 p-6">
-            <h2 class="text-xl font-semibold text-gray-900 mb-4">Benefits</h2>
+          <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
+            <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">Benefits</h2>
             <ul class="grid sm:grid-cols-2 gap-3">
               {job.benefits.map((benefit) => (
                 <li class="flex items-start gap-3">
-                  <svg class="w-5 h-5 text-green-600 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg class="w-5 h-5 text-green-600 dark:text-green-400 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
-                  <span class="text-gray-600">{benefit}</span>
+                  <span class="text-gray-600 dark:text-gray-300">{benefit}</span>
                 </li>
               ))}
             </ul>
@@ -116,22 +122,22 @@ if (!job) {
         <!-- Sidebar -->
         <div class="space-y-6">
           <!-- Apply Card -->
-          <div class="bg-white rounded-xl border border-gray-200 p-6 sticky top-24">
-            <h3 class="text-lg font-semibold text-gray-900 mb-4">Apply for this position</h3>
+          <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 sticky top-24">
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Apply for this position</h3>
             <button
               class="w-full btn-primary mb-4"
               onclick="alert('This is a demo site. No actual application will be submitted.')"
             >
               Apply Now
             </button>
-            <p class="text-sm text-gray-500 text-center">
+            <p class="text-sm text-gray-500 dark:text-gray-400 text-center">
               Posted {job.posted_at.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
             </p>
           </div>
 
           <!-- Company Info -->
-          <div class="bg-white rounded-xl border border-gray-200 p-6">
-            <h3 class="text-lg font-semibold text-gray-900 mb-4">About the Company</h3>
+          <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">About the Company</h3>
             <div class="flex items-center gap-4 mb-4">
               <img
                 src={job.company_logo}
@@ -139,34 +145,42 @@ if (!job) {
                 class="w-12 h-12 rounded-lg"
               />
               <div>
-                <p class="font-medium text-gray-900">{job.company}</p>
-                <p class="text-sm text-gray-500">{job.category}</p>
+                <p class="font-medium text-gray-900 dark:text-gray-100">{job.company}</p>
+                <p class="text-sm text-gray-500 dark:text-gray-400">{job.category}</p>
               </div>
             </div>
-            <p class="text-sm text-gray-600">
+            <p class="text-sm text-gray-600 dark:text-gray-300">
               {job.company} is a leading company in the {job.category.toLowerCase()} space, committed to building innovative solutions.
             </p>
           </div>
 
           <!-- Job Details -->
-          <div class="bg-white rounded-xl border border-gray-200 p-6">
-            <h3 class="text-lg font-semibold text-gray-900 mb-4">Job Details</h3>
+          <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Job Details</h3>
             <dl class="space-y-3 text-sm">
               <div class="flex justify-between">
-                <dt class="text-gray-500">Category</dt>
-                <dd class="font-medium text-gray-900">{job.category}</dd>
+                <dt class="text-gray-500 dark:text-gray-400">Category</dt>
+                <dd class="font-medium text-gray-900 dark:text-gray-100">{job.category}</dd>
               </div>
               <div class="flex justify-between">
-                <dt class="text-gray-500">Type</dt>
-                <dd class="font-medium text-gray-900">{formatJobType(job.type)}</dd>
+                <dt class="text-gray-500 dark:text-gray-400">Type</dt>
+                <dd class="font-medium text-gray-900 dark:text-gray-100">{formatJobType(job.type)}</dd>
               </div>
               <div class="flex justify-between">
-                <dt class="text-gray-500">Location</dt>
-                <dd class="font-medium text-gray-900">{job.location}</dd>
+                <dt class="text-gray-500 dark:text-gray-400">Work Mode</dt>
+                <dd class="font-medium text-gray-900 dark:text-gray-100">{formatWorkMode(job.work_mode)}</dd>
               </div>
               <div class="flex justify-between">
-                <dt class="text-gray-500">Salary</dt>
-                <dd class="font-medium text-gray-900">{formatSalary(job.salary_min, job.salary_max)}</dd>
+                <dt class="text-gray-500 dark:text-gray-400">Location</dt>
+                <dd class="font-medium text-gray-900 dark:text-gray-100">{job.location}</dd>
+              </div>
+              <div class="flex justify-between">
+                <dt class="text-gray-500 dark:text-gray-400">Country</dt>
+                <dd class="font-medium text-gray-900 dark:text-gray-100">{job.country}</dd>
+              </div>
+              <div class="flex justify-between">
+                <dt class="text-gray-500 dark:text-gray-400">Salary</dt>
+                <dd class="font-medium text-gray-900 dark:text-gray-100">{formatSalary(job.salary_min, job.salary_max, job.currency)}</dd>
               </div>
             </dl>
           </div>

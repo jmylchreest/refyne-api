@@ -1,0 +1,174 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import Card from '../../components/Card.astro';
+import CategoryFilter from '../../components/CategoryFilter.astro';
+import Pagination from '../../components/Pagination.astro';
+import {
+  getReviews,
+  getReviewTypes,
+  getTypeColor,
+  formatRelativeTime,
+  type ReviewType,
+} from '../../lib/reviews';
+
+const url = Astro.url;
+const typeParam = url.searchParams.get('type') as ReviewType | null;
+const page = parseInt(url.searchParams.get('page') || '1', 10);
+const perPage = 12;
+
+let allReviews = await getReviews();
+const types = await getReviewTypes();
+
+// Apply filters
+if (typeParam) {
+  allReviews = allReviews.filter((review) => review.type === typeParam);
+}
+
+const totalPages = Math.ceil(allReviews.length / perPage);
+const reviews = allReviews.slice((page - 1) * perPage, page * perPage);
+
+const totalReviews = (await getReviews()).length;
+
+function getFilterUrl(params: Record<string, string | undefined>): string {
+  const searchParams = new URLSearchParams();
+  if (params.type) searchParams.set('type', params.type);
+  const qs = searchParams.toString();
+  return qs ? `/reviews?${qs}` : '/reviews';
+}
+
+function capitalizeFirst(str: string): string {
+  return str.charAt(0).toUpperCase() + str.slice(1);
+}
+---
+
+<Layout title="Reviews & Feedback" description="Browse user reviews, comments, and feedback">
+  <!-- Header -->
+  <section class="page-header page-header-reviews">
+    <div class="container">
+      <div class="flex items-center justify-between">
+        <div>
+          <h1 class="text-2xl font-bold text-gray-900 dark:text-gray-100">Reviews & Feedback</h1>
+          <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
+            User reviews, comments, and product feedback
+          </p>
+        </div>
+        <div class="counter-badge counter-badge-reviews hidden sm:inline-flex">
+          <span class="counter-badge-tab">Reviews</span>
+          <span class="counter-badge-value">{totalReviews}</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Filters -->
+  <section class="filter-bar sticky top-16 z-40">
+    <div class="container py-4">
+      <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Type</label>
+      <div class="flex flex-wrap gap-2">
+        <a
+          href={getFilterUrl({ type: undefined })}
+          class:list={[
+            'filter-btn',
+            !typeParam
+              ? 'bg-emerald-600 text-white'
+              : 'filter-btn-inactive',
+          ]}
+        >
+          All Types
+        </a>
+        {types.map((type) => (
+          <a
+            href={getFilterUrl({ type })}
+            class:list={[
+              'filter-btn',
+              typeParam === type
+                ? 'bg-emerald-600 text-white'
+                : 'filter-btn-inactive',
+            ]}
+          >
+            {capitalizeFirst(type)}
+          </a>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- Results -->
+  <section class="py-8">
+    <div class="container">
+      <div class="flex items-center justify-between mb-6">
+        <p class="text-gray-600 dark:text-gray-400">
+          Showing <span class="font-medium text-gray-900 dark:text-gray-100">{reviews.length}</span> of <span class="font-medium text-gray-900 dark:text-gray-100">{allReviews.length}</span> reviews
+        </p>
+      </div>
+
+      {reviews.length > 0 ? (
+        <div class="grid md:grid-cols-2 gap-6">
+          {reviews.map((review) => (
+            <Card href={`/reviews/${review.id}`}>
+              <div class="p-5">
+                <div class="flex items-start justify-between mb-3">
+                  <div class="flex items-center gap-3">
+                    <img
+                      src={review.author.avatar}
+                      alt={review.author.name}
+                      class="w-10 h-10 rounded-full bg-gray-100 dark:bg-gray-800"
+                      loading="lazy"
+                    />
+                    <div>
+                      <p class="font-medium text-gray-900 dark:text-gray-100">{review.author.name}</p>
+                      <p class="text-xs text-gray-500 dark:text-gray-400">@{review.author.username}</p>
+                    </div>
+                  </div>
+                  <span class="text-xs text-gray-500 dark:text-gray-400">{formatRelativeTime(review.created_at)}</span>
+                </div>
+
+                {review.title && (
+                  <h3 class="font-semibold text-gray-900 dark:text-gray-100 mb-2">{review.title}</h3>
+                )}
+
+                <p class="text-gray-600 dark:text-gray-400 text-sm line-clamp-3 mb-3">{review.body}</p>
+
+                <div class="flex items-center gap-2">
+                  <span class={getTypeColor(review.type)}>{capitalizeFirst(review.type)}</span>
+                  {review.rating && (
+                    <div class="flex items-center gap-1">
+                      <svg class="w-4 h-4 text-yellow-400 fill-current" viewBox="0 0 20 20">
+                        <path d="M10 15l-5.878 3.09 1.123-6.545L.489 6.91l6.572-.955L10 0l2.939 5.955 6.572.955-4.756 4.635 1.123 6.545z"/>
+                      </svg>
+                      <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{review.rating}</span>
+                    </div>
+                  )}
+                  {review.verified_purchase && (
+                    <span class="text-xs text-green-600 dark:text-green-400 font-medium">Verified</span>
+                  )}
+                </div>
+
+                {review.product && (
+                  <div class="mt-3 pt-3 border-t border-gray-100 dark:border-gray-800">
+                    <p class="text-xs text-gray-500 dark:text-gray-400">
+                      Product: <span class="text-gray-700 dark:text-gray-300">{review.product.name}</span>
+                    </p>
+                  </div>
+                )}
+              </div>
+            </Card>
+          ))}
+        </div>
+      ) : (
+        <div class="text-center py-12">
+          <p class="text-gray-500 dark:text-gray-400">No reviews found with these filters.</p>
+          <a href="/reviews" class="text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300 font-medium mt-2 inline-block">
+            View all reviews
+          </a>
+        </div>
+      )}
+
+      <Pagination
+        currentPage={page}
+        totalPages={totalPages}
+        basePath={getFilterUrl({ type: typeParam || undefined })}
+      />
+    </div>
+  </section>
+</Layout>

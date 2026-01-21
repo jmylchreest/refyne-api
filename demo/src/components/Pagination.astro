@@ -35,8 +35,9 @@ if (totalPages <= 7) {
 }
 
 function getPageUrl(page: number): string {
+  const separator = basePath.includes('?') ? '&' : '?';
   if (page === 1) return basePath;
-  return `${basePath}?page=${page}`;
+  return `${basePath}${separator}page=${page}`;
 }
 ---
 
@@ -47,8 +48,8 @@ function getPageUrl(page: number): string {
       class:list={[
         'px-3 py-2 rounded-lg text-sm font-medium transition-colors',
         currentPage > 1
-          ? 'text-gray-700 hover:bg-gray-100'
-          : 'text-gray-300 cursor-not-allowed pointer-events-none',
+          ? 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'
+          : 'text-gray-300 dark:text-gray-600 cursor-not-allowed pointer-events-none',
       ]}
       aria-disabled={currentPage <= 1}
     >
@@ -58,7 +59,7 @@ function getPageUrl(page: number): string {
     <div class="flex items-center gap-1">
       {pages.map((page) =>
         page === 'ellipsis' ? (
-          <span class="px-3 py-2 text-gray-400">...</span>
+          <span class="px-3 py-2 text-gray-400 dark:text-gray-500">...</span>
         ) : (
           <a
             href={getPageUrl(page)}
@@ -66,7 +67,7 @@ function getPageUrl(page: number): string {
               'px-3 py-2 rounded-lg text-sm font-medium transition-colors',
               page === currentPage
                 ? 'bg-indigo-600 text-white'
-                : 'text-gray-700 hover:bg-gray-100',
+                : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800',
             ]}
             aria-current={page === currentPage ? 'page' : undefined}
           >
@@ -81,8 +82,8 @@ function getPageUrl(page: number): string {
       class:list={[
         'px-3 py-2 rounded-lg text-sm font-medium transition-colors',
         currentPage < totalPages
-          ? 'text-gray-700 hover:bg-gray-100'
-          : 'text-gray-300 cursor-not-allowed pointer-events-none',
+          ? 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'
+          : 'text-gray-300 dark:text-gray-600 cursor-not-allowed pointer-events-none',
       ]}
       aria-disabled={currentPage >= totalPages}
     >

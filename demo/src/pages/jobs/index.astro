@@ -8,15 +8,18 @@ import {
   getJobCategories,
   getJobTypes,
   getJobLocations,
+  getJobWorkModes,
   formatSalary,
   formatJobType,
+  formatWorkMode,
   type Job,
+  type WorkMode,
 } from '../../lib/jobs';
 
 const url = Astro.url;
 const category = url.searchParams.get('category') || undefined;
 const type = url.searchParams.get('type') || undefined;
-const location = url.searchParams.get('location') || undefined;
+const workMode = url.searchParams.get('work_mode') as WorkMode | undefined;
 const page = parseInt(url.searchParams.get('page') || '1', 10);
 const perPage = 12;
 
@@ -29,8 +32,8 @@ if (category) {
 if (type) {
   allJobs = allJobs.filter((job) => job.type === type);
 }
-if (location) {
-  allJobs = allJobs.filter((job) => job.location === location);
+if (workMode) {
+  allJobs = allJobs.filter((job) => job.work_mode === workMode);
 }
 
 const totalPages = Math.ceil(allJobs.length / perPage);
@@ -38,36 +41,57 @@ const jobs = allJobs.slice((page - 1) * perPage, page * perPage);
 
 const categories = getJobCategories();
 const types = getJobTypes();
-const locations = getJobLocations();
+const workModes = getJobWorkModes();
 
 function getFilterUrl(params: Record<string, string | undefined>): string {
   const searchParams = new URLSearchParams();
   if (params.category) searchParams.set('category', params.category);
   if (params.type) searchParams.set('type', params.type);
-  if (params.location) searchParams.set('location', params.location);
+  if (params.work_mode) searchParams.set('work_mode', params.work_mode);
   const qs = searchParams.toString();
   return qs ? `/jobs?${qs}` : '/jobs';
+}
+
+function getWorkModeColor(mode: WorkMode): string {
+  switch (mode) {
+    case 'remote':
+      return 'badge-green';
+    case 'hybrid':
+      return 'badge-yellow';
+    case 'on-site':
+      return 'badge-gray';
+    default:
+      return 'badge-gray';
+  }
 }
 ---
 
 <Layout title="Jobs" description="Browse our latest job listings">
   <!-- Header -->
-  <section class="bg-gradient-to-br from-indigo-600 to-purple-700 text-white">
-    <div class="container py-12">
-      <h1 class="text-3xl md:text-4xl font-bold mb-4">Job Listings</h1>
-      <p class="text-lg text-indigo-100 max-w-2xl">
-        Discover {getJobs().length} exciting opportunities across engineering, design, product, and more.
-      </p>
+  <section class="page-header page-header-jobs">
+    <div class="container">
+      <div class="flex items-center justify-between">
+        <div>
+          <h1 class="text-2xl font-bold text-gray-900 dark:text-gray-100">Job Listings</h1>
+          <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
+            {getJobs().length} opportunities across engineering, design, product, and more
+          </p>
+        </div>
+        <div class="counter-badge counter-badge-jobs hidden sm:inline-flex">
+          <span class="counter-badge-tab">Jobs</span>
+          <span class="counter-badge-value">{getJobs().length}</span>
+        </div>
+      </div>
     </div>
   </section>
 
   <!-- Filters -->
-  <section class="bg-white border-b border-gray-200 sticky top-16 z-40">
+  <section class="filter-bar sticky top-16 z-40">
     <div class="container py-4">
       <div class="flex flex-col lg:flex-row gap-4">
         <!-- Category Filter -->
         <div class="flex-1">
-          <label class="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Category</label>
+          <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Category</label>
           <CategoryFilter
             categories={categories}
             currentCategory={category}
@@ -77,26 +101,53 @@ function getFilterUrl(params: Record<string, string | undefined>): string {
 
         <!-- Type Filter -->
         <div>
-          <label class="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Type</label>
+          <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Type</label>
           <div class="flex flex-wrap gap-2">
             <a
-              href={getFilterUrl({ category, location })}
+              href={getFilterUrl({ category, work_mode: workMode })}
               class:list={[
-                'px-3 py-1.5 rounded-full text-sm font-medium transition-colors',
-                !type ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200',
+                'filter-btn',
+                !type ? 'bg-indigo-600 text-white' : 'filter-btn-inactive',
               ]}
             >
               All
             </a>
             {types.map((t) => (
               <a
-                href={getFilterUrl({ category, type: t, location })}
+                href={getFilterUrl({ category, type: t, work_mode: workMode })}
                 class:list={[
-                  'px-3 py-1.5 rounded-full text-sm font-medium transition-colors',
-                  type === t ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200',
+                  'filter-btn',
+                  type === t ? 'bg-indigo-600 text-white' : 'filter-btn-inactive',
                 ]}
               >
                 {formatJobType(t)}
+              </a>
+            ))}
+          </div>
+        </div>
+
+        <!-- Work Mode Filter -->
+        <div>
+          <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Work Mode</label>
+          <div class="flex flex-wrap gap-2">
+            <a
+              href={getFilterUrl({ category, type })}
+              class:list={[
+                'filter-btn',
+                !workMode ? 'bg-indigo-600 text-white' : 'filter-btn-inactive',
+              ]}
+            >
+              All
+            </a>
+            {workModes.map((wm) => (
+              <a
+                href={getFilterUrl({ category, type, work_mode: wm })}
+                class:list={[
+                  'filter-btn',
+                  workMode === wm ? 'bg-indigo-600 text-white' : 'filter-btn-inactive',
+                ]}
+              >
+                {formatWorkMode(wm)}
               </a>
             ))}
           </div>
@@ -109,8 +160,8 @@ function getFilterUrl(params: Record<string, string | undefined>): string {
   <section class="py-8">
     <div class="container">
       <div class="flex items-center justify-between mb-6">
-        <p class="text-gray-600">
-          Showing <span class="font-medium">{jobs.length}</span> of <span class="font-medium">{allJobs.length}</span> jobs
+        <p class="text-gray-600 dark:text-gray-400">
+          Showing <span class="font-medium text-gray-900 dark:text-gray-100">{jobs.length}</span> of <span class="font-medium text-gray-900 dark:text-gray-100">{allJobs.length}</span> jobs
         </p>
       </div>
 
@@ -127,21 +178,24 @@ function getFilterUrl(params: Record<string, string | undefined>): string {
                   />
                   <div class="flex-1 min-w-0">
                     <div class="flex flex-col md:flex-row md:items-center gap-2 md:gap-4">
-                      <h2 class="text-lg font-semibold text-gray-900">{job.title}</h2>
+                      <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100">{job.title}</h2>
                       <div class="flex flex-wrap gap-2">
                         <span class="badge-blue">{job.category}</span>
                         <span class="badge-gray">{formatJobType(job.type)}</span>
+                        <span class={getWorkModeColor(job.work_mode)}>{formatWorkMode(job.work_mode)}</span>
                       </div>
                     </div>
-                    <div class="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-sm text-gray-600">
+                    <div class="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-sm text-gray-600 dark:text-gray-400">
                       <span>{job.company}</span>
-                      <span class="hidden md:inline">&bull;</span>
+                      <span class="hidden md:inline text-gray-400 dark:text-gray-600">&bull;</span>
                       <span>{job.location}</span>
+                      <span class="hidden md:inline text-gray-400 dark:text-gray-600">&bull;</span>
+                      <span>{job.country}</span>
                     </div>
                   </div>
                   <div class="text-left md:text-right">
-                    <div class="font-semibold text-gray-900">{formatSalary(job.salary_min, job.salary_max)}</div>
-                    <div class="text-sm text-gray-500">
+                    <div class="font-semibold text-gray-900 dark:text-gray-100">{formatSalary(job.salary_min, job.salary_max, job.currency)}</div>
+                    <div class="text-sm text-gray-500 dark:text-gray-400">
                       {job.posted_at.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                     </div>
                   </div>
@@ -152,8 +206,8 @@ function getFilterUrl(params: Record<string, string | undefined>): string {
         </div>
       ) : (
         <div class="text-center py-12">
-          <p class="text-gray-500">No jobs found matching your criteria.</p>
-          <a href="/jobs" class="text-indigo-600 hover:text-indigo-700 font-medium mt-2 inline-block">
+          <p class="text-gray-500 dark:text-gray-400">No jobs found matching your criteria.</p>
+          <a href="/jobs" class="text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 font-medium mt-2 inline-block">
             Clear filters
           </a>
         </div>
@@ -162,7 +216,7 @@ function getFilterUrl(params: Record<string, string | undefined>): string {
       <Pagination
         currentPage={page}
         totalPages={totalPages}
-        basePath={getFilterUrl({ category, type, location })}
+        basePath={getFilterUrl({ category, type, work_mode: workMode })}
       />
     </div>
   </section>

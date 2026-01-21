@@ -52,24 +52,24 @@ const relatedNews = allNews
     <div class="container">
       <div class="max-w-3xl mx-auto">
         <!-- Summary -->
-        <div class="bg-white rounded-xl border border-gray-200 p-6 mb-8">
-          <h2 class="text-lg font-semibold text-gray-900 mb-4">Summary</h2>
-          <p class="text-gray-600">
+        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 mb-8">
+          <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Summary</h2>
+          <p class="text-gray-600 dark:text-gray-300">
             {newsItem.summary || 'No summary available for this article.'}
           </p>
         </div>
 
         <!-- Source Link -->
-        <div class="bg-indigo-50 rounded-xl border border-indigo-100 p-6 mb-8">
+        <div class="bg-indigo-50 dark:bg-indigo-950/30 rounded-xl border border-indigo-100 dark:border-indigo-900 p-6 mb-8">
           <div class="flex items-start gap-4">
-            <div class="w-12 h-12 bg-indigo-100 rounded-lg flex items-center justify-center shrink-0">
-              <svg class="w-6 h-6 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div class="w-12 h-12 bg-indigo-100 dark:bg-indigo-900/50 rounded-lg flex items-center justify-center shrink-0">
+              <svg class="w-6 h-6 text-indigo-600 dark:text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
               </svg>
             </div>
             <div class="flex-1">
-              <h3 class="font-semibold text-gray-900 mb-1">Read Full Article</h3>
-              <p class="text-sm text-gray-600 mb-3">
+              <h3 class="font-semibold text-gray-900 dark:text-gray-100 mb-1">Read Full Article</h3>
+              <p class="text-sm text-gray-600 dark:text-gray-400 mb-3">
                 This is a preview of the article. Click below to read the full article on {newsItem.source}.
               </p>
               <a
@@ -88,20 +88,20 @@ const relatedNews = allNews
         </div>
 
         <!-- Metadata -->
-        <div class="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 class="text-lg font-semibold text-gray-900 mb-4">Article Details</h2>
+        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
+          <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Article Details</h2>
           <dl class="grid sm:grid-cols-2 gap-4 text-sm">
             <div>
-              <dt class="text-gray-500">Source</dt>
-              <dd class="font-medium text-gray-900 mt-1">{newsItem.source}</dd>
+              <dt class="text-gray-500 dark:text-gray-400">Source</dt>
+              <dd class="font-medium text-gray-900 dark:text-gray-100 mt-1">{newsItem.source}</dd>
             </div>
             <div>
-              <dt class="text-gray-500">Category</dt>
-              <dd class="font-medium text-gray-900 mt-1">{newsItem.category}</dd>
+              <dt class="text-gray-500 dark:text-gray-400">Category</dt>
+              <dd class="font-medium text-gray-900 dark:text-gray-100 mt-1">{newsItem.category}</dd>
             </div>
             <div>
-              <dt class="text-gray-500">Published</dt>
-              <dd class="font-medium text-gray-900 mt-1">
+              <dt class="text-gray-500 dark:text-gray-400">Published</dt>
+              <dd class="font-medium text-gray-900 dark:text-gray-100 mt-1">
                 {newsItem.published_at.toLocaleDateString('en-US', {
                   weekday: 'long',
                   year: 'numeric',
@@ -111,8 +111,8 @@ const relatedNews = allNews
               </dd>
             </div>
             <div>
-              <dt class="text-gray-500">Time</dt>
-              <dd class="font-medium text-gray-900 mt-1">
+              <dt class="text-gray-500 dark:text-gray-400">Time</dt>
+              <dd class="font-medium text-gray-900 dark:text-gray-100 mt-1">
                 {newsItem.published_at.toLocaleTimeString('en-US', {
                   hour: '2-digit',
                   minute: '2-digit',
@@ -123,8 +123,8 @@ const relatedNews = allNews
         </div>
 
         <!-- Share -->
-        <div class="mt-8 pt-8 border-t border-gray-200">
-          <p class="text-sm font-medium text-gray-500 uppercase tracking-wide mb-4">Share this article</p>
+        <div class="mt-8 pt-8 border-t border-gray-200 dark:border-gray-700">
+          <p class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-4">Share this article</p>
           <div class="flex gap-3">
             <a
               href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(newsItem.title)}&url=${encodeURIComponent(newsItem.url)}`}
@@ -150,18 +150,18 @@ const relatedNews = allNews
 
   <!-- Related News -->
   {relatedNews.length > 0 && (
-    <section class="py-8 md:py-12 bg-gray-50">
+    <section class="py-8 md:py-12 bg-gray-50 dark:bg-gray-900/50">
       <div class="container">
-        <h2 class="text-2xl font-bold text-gray-900 mb-6">More from {newsItem.source}</h2>
+        <h2 class="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-6">More from {newsItem.source}</h2>
         <div class="grid md:grid-cols-2 gap-4">
           {relatedNews.map((item) => (
             <Card href={`/news/${item.id}`}>
               <div class="p-5">
                 <div class="flex items-center gap-2 mb-2">
                   <span class={getSourceColor(item.source)}>{item.source}</span>
-                  <span class="text-sm text-gray-500">{formatRelativeTime(item.published_at)}</span>
+                  <span class="text-sm text-gray-500 dark:text-gray-400">{formatRelativeTime(item.published_at)}</span>
                 </div>
-                <h3 class="font-semibold text-gray-900 line-clamp-2">{item.title}</h3>
+                <h3 class="font-semibold text-gray-900 dark:text-gray-100 line-clamp-2">{item.title}</h3>
               </div>
             </Card>
           ))}

@@ -1,13 +1,28 @@
 @import "tailwindcss";
 
+/* Enable dark mode with system preference */
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+  }
+}
+
 /* Custom styles */
 @layer base {
   html {
     scroll-behavior: smooth;
   }
 
+  /* Light mode (default) */
   body {
-    @apply bg-gray-50 text-gray-900 antialiased;
+    @apply bg-white text-gray-900 antialiased;
+  }
+
+  /* Dark mode */
+  @media (prefers-color-scheme: dark) {
+    body {
+      @apply bg-gray-950 text-gray-100;
+    }
   }
 }
 
@@ -77,10 +92,65 @@
     box-shadow: 0 0 0 2px white, 0 0 0 4px #6366f1;
   }
 
-  .card {
-    @apply bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden transition-shadow hover:shadow-md;
+  @media (prefers-color-scheme: dark) {
+    .btn-secondary {
+      background-color: #1f2937;
+      color: #e5e7eb;
+      border-color: #374151;
+    }
+
+    .btn-secondary:hover {
+      background-color: #374151;
+    }
   }
 
+  /* Card component */
+  .card {
+    @apply bg-white rounded-xl border border-gray-200 overflow-hidden transition-all;
+  }
+
+  .card:hover {
+    @apply shadow-lg border-gray-300;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .card {
+      @apply bg-gray-900 border-gray-800;
+    }
+
+    .card:hover {
+      @apply border-gray-700;
+    }
+  }
+
+  /* Text colors that work in both modes */
+  .text-primary {
+    @apply text-gray-900;
+  }
+
+  .text-secondary {
+    @apply text-gray-600;
+  }
+
+  .text-muted {
+    @apply text-gray-500;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .text-primary {
+      @apply text-gray-100;
+    }
+
+    .text-secondary {
+      @apply text-gray-300;
+    }
+
+    .text-muted {
+      @apply text-gray-400;
+    }
+  }
+
+  /* Badge styles */
   .badge {
     display: inline-flex;
     align-items: center;
@@ -143,5 +213,243 @@
     font-weight: 500;
     background-color: #f3f4f6;
     color: #1f2937;
+  }
+
+  .badge-orange {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.125rem 0.625rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    background-color: #ffedd5;
+    color: #c2410c;
+  }
+
+  .badge-purple {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.125rem 0.625rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    background-color: #f3e8ff;
+    color: #7c3aed;
+  }
+
+  .badge-teal {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.125rem 0.625rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    background-color: #ccfbf1;
+    color: #0f766e;
+  }
+
+  /* Dark mode badges */
+  @media (prefers-color-scheme: dark) {
+    .badge-blue {
+      background-color: #1e3a5f;
+      color: #93c5fd;
+    }
+
+    .badge-green {
+      background-color: #14532d;
+      color: #86efac;
+    }
+
+    .badge-yellow {
+      background-color: #422006;
+      color: #fde047;
+    }
+
+    .badge-red {
+      background-color: #450a0a;
+      color: #fca5a5;
+    }
+
+    .badge-gray {
+      background-color: #374151;
+      color: #d1d5db;
+    }
+
+    .badge-orange {
+      background-color: #431407;
+      color: #fdba74;
+    }
+
+    .badge-purple {
+      background-color: #2e1065;
+      color: #c4b5fd;
+    }
+
+    .badge-teal {
+      background-color: #134e4a;
+      color: #5eead4;
+    }
+  }
+
+  /* Filter bar styling */
+  .filter-bar {
+    @apply bg-white border-b border-gray-200;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .filter-bar {
+      @apply bg-gray-900 border-gray-800;
+    }
+  }
+
+  /* Filter button styles */
+  .filter-btn {
+    @apply px-3 py-1.5 rounded-full text-sm font-medium transition-colors;
+  }
+
+  .filter-btn-inactive {
+    @apply bg-gray-100 text-gray-700 hover:bg-gray-200;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .filter-btn-inactive {
+      @apply bg-gray-800 text-gray-300 hover:bg-gray-700;
+    }
+  }
+
+  /* Section backgrounds */
+  .section-alt {
+    @apply bg-gray-50;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .section-alt {
+      @apply bg-gray-900/50;
+    }
+  }
+
+  /* Category page header styles */
+  .page-header {
+    @apply border-b-4 py-4;
+  }
+
+  .page-header-jobs {
+    @apply border-indigo-500 bg-indigo-50;
+  }
+
+  .page-header-products {
+    @apply border-sky-500 bg-sky-50;
+  }
+
+  .page-header-recipes {
+    @apply border-amber-500 bg-amber-50;
+  }
+
+  .page-header-reviews {
+    @apply border-emerald-500 bg-emerald-50;
+  }
+
+  .page-header-blog {
+    @apply border-violet-500 bg-violet-50;
+  }
+
+  .page-header-news {
+    @apply border-rose-500 bg-rose-50;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .page-header-jobs {
+      @apply border-indigo-400 bg-indigo-950/30;
+    }
+
+    .page-header-products {
+      @apply border-sky-400 bg-sky-950/30;
+    }
+
+    .page-header-recipes {
+      @apply border-amber-400 bg-amber-950/30;
+    }
+
+    .page-header-reviews {
+      @apply border-emerald-400 bg-emerald-950/30;
+    }
+
+    .page-header-blog {
+      @apply border-violet-400 bg-violet-950/30;
+    }
+
+    .page-header-news {
+      @apply border-rose-400 bg-rose-950/30;
+    }
+  }
+
+  /* Counter badge with tab style */
+  .counter-badge {
+    @apply relative inline-flex flex-col items-stretch;
+  }
+
+  .counter-badge-tab {
+    @apply text-xs font-semibold uppercase tracking-wider px-4 py-1 rounded-t-lg text-center;
+  }
+
+  .counter-badge-value {
+    @apply text-3xl font-bold px-6 py-2 rounded-b-lg text-center;
+  }
+
+  .counter-badge-jobs .counter-badge-tab {
+    @apply bg-indigo-600 text-white;
+  }
+  .counter-badge-jobs .counter-badge-value {
+    @apply bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300;
+  }
+
+  .counter-badge-products .counter-badge-tab {
+    @apply bg-sky-600 text-white;
+  }
+  .counter-badge-products .counter-badge-value {
+    @apply bg-sky-100 text-sky-700 dark:bg-sky-900/50 dark:text-sky-300;
+  }
+
+  .counter-badge-recipes .counter-badge-tab {
+    @apply bg-amber-600 text-white;
+  }
+  .counter-badge-recipes .counter-badge-value {
+    @apply bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300;
+  }
+
+  .counter-badge-reviews .counter-badge-tab {
+    @apply bg-emerald-600 text-white;
+  }
+  .counter-badge-reviews .counter-badge-value {
+    @apply bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300;
+  }
+
+  .counter-badge-blog .counter-badge-tab {
+    @apply bg-violet-600 text-white;
+  }
+  .counter-badge-blog .counter-badge-value {
+    @apply bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300;
+  }
+
+  .counter-badge-news .counter-badge-tab {
+    @apply bg-rose-600 text-white;
+  }
+  .counter-badge-news .counter-badge-value {
+    @apply bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300;
+  }
+
+  /* Line clamp utilities */
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .line-clamp-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 }
