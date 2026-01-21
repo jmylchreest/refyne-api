@@ -219,9 +219,21 @@ jobs:
           NEXT_PUBLIC_API_URL: ${{ needs.prepare.outputs.api_url }}
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
 
+      - name: Set project name in wrangler config
+        run: |
+          cat > wrangler.jsonc << 'EOF'
+          {
+            "$schema": "node_modules/wrangler/config-schema.json",
+            "name": "${{ needs.prepare.outputs.web_project }}",
+            "compatibility_date": "2025-01-01",
+            "compatibility_flags": ["nodejs_compat"]
+          }
+          EOF
+        working-directory: web
+
       - name: Deploy to Cloudflare Pages
         id: deploy
-        run: npx opennextjs-cloudflare deploy --project-name=${{ needs.prepare.outputs.web_project }}
+        run: npx opennextjs-cloudflare deploy
         working-directory: web
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
