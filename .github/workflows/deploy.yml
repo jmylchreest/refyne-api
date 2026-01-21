@@ -21,6 +21,10 @@ concurrency:
   group: deploy-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  GO_VERSION: "stable"
+  NODE_VERSION: "20"
+
 jobs:
   # Determine deployment environment
   prepare:
@@ -31,6 +35,7 @@ jobs:
       api_app: ${{ steps.env.outputs.api_app }}
       web_project: ${{ steps.env.outputs.web_project }}
       api_url: ${{ steps.env.outputs.api_url }}
+      web_url: ${{ steps.env.outputs.web_url }}
     steps:
       - name: Determine environment
         id: env
@@ -47,12 +52,14 @@ jobs:
 
           if [[ "$ENV" == "production" ]]; then
             echo "api_app=refyne-api" >> $GITHUB_OUTPUT
-            echo "web_project=refyne-web" >> $GITHUB_OUTPUT
+            echo "web_project=refyne-web-production" >> $GITHUB_OUTPUT
             echo "api_url=https://api.refyne.uk" >> $GITHUB_OUTPUT
+            echo "web_url=https://refyne.uk" >> $GITHUB_OUTPUT
           else
             echo "api_app=refyne-api-staging" >> $GITHUB_OUTPUT
             echo "web_project=refyne-web-staging" >> $GITHUB_OUTPUT
             echo "api_url=https://api-staging.refyne.uk" >> $GITHUB_OUTPUT
+            echo "web_url=https://staging.refyne.uk" >> $GITHUB_OUTPUT
           fi
 
           echo "Deploying to: ${ENV}"
@@ -71,11 +78,11 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: stable
+          go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: api/go.sum
 
       - name: Run API tests
-        run: go test -timeout 120s ./...  # TODO: re-enable -race after fixing timeout middleware races
+        run: go test -timeout 120s ./...
         working-directory: api
         env:
           GOPRIVATE: github.com/jmylchreest/*
@@ -83,7 +90,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
           cache-dependency-path: web/package-lock.json
 
@@ -94,6 +101,40 @@ jobs:
       - name: Lint web
         run: npm run lint
         working-directory: web
+
+  # Build OpenAPI spec using refyne-openapi binary
+  build-openapi:
+    name: Build OpenAPI Spec
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure Git for private modules
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: api/go.sum
+
+      - name: Build refyne-openapi
+        run: go build -o refyne-openapi ./cmd/refyne-openapi
+        working-directory: api
+        env:
+          GOPRIVATE: github.com/jmylchreest/*
+
+      - name: Generate OpenAPI spec
+        run: ./refyne-openapi -output openapi.json
+        working-directory: api
+
+      - name: Upload OpenAPI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-spec
+          path: api/openapi.json
+          retention-days: 1
 
   # Deploy API to Fly.io
   deploy-api:
@@ -110,7 +151,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Need full history for version detection
+          fetch-depth: 0
 
       - name: Extract version
         id: version
@@ -140,16 +181,16 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
-  # Deploy Web to Vercel
+  # Deploy Web to Cloudflare Pages (SSR via OpenNext)
   deploy-web:
     name: Deploy Web (${{ needs.prepare.outputs.environment }})
     runs-on: ubuntu-latest
-    needs: [prepare, test, deploy-api]  # Deploy after API so web can connect
+    needs: [prepare, build-openapi, deploy-api]
     outputs:
-      url: ${{ steps.deploy.outputs.url }}
+      url: ${{ steps.deploy.outputs.deployment-url }}
     environment:
       name: ${{ needs.prepare.outputs.environment }}-web
-      url: ${{ steps.deploy.outputs.url }}
+      url: ${{ steps.deploy.outputs.deployment-url }}
 
     steps:
       - uses: actions/checkout@v4
@@ -157,42 +198,41 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
           cache-dependency-path: web/package-lock.json
+
+      - name: Download OpenAPI spec
+        uses: actions/download-artifact@v4
+        with:
+          name: openapi-spec
+          path: web
 
       - name: Install dependencies
         run: npm ci
         working-directory: web
 
-      - name: Install Vercel CLI
-        run: npm install -g vercel
+      - name: Generate API reference docs from OpenAPI
+        run: npm run generate:openapi
+        working-directory: web
 
-      - name: Pull Vercel environment
-        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+      - name: Build with OpenNext
+        run: npm run build:cloudflare
+        working-directory: web
         env:
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ needs.prepare.outputs.environment == 'production' && secrets.VERCEL_PROJECT_ID_PRODUCTION || secrets.VERCEL_PROJECT_ID_STAGING }}
-
-      - name: Build with Vercel
-        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
-        env:
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ needs.prepare.outputs.environment == 'production' && secrets.VERCEL_PROJECT_ID_PRODUCTION || secrets.VERCEL_PROJECT_ID_STAGING }}
           NEXT_PUBLIC_API_URL: ${{ needs.prepare.outputs.api_url }}
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
 
-      - name: Deploy to Vercel
+      - name: Deploy to Cloudflare Pages
         id: deploy
-        run: |
-          URL=$(vercel deploy --prebuilt --archive=tgz --prod --token=${{ secrets.VERCEL_TOKEN }})
-          echo "url=${URL}" >> $GITHUB_OUTPUT
-          echo "Deployed to: ${URL}"
-        env:
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ needs.prepare.outputs.environment == 'production' && secrets.VERCEL_PROJECT_ID_PRODUCTION || secrets.VERCEL_PROJECT_ID_STAGING }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy .open-next --project-name=${{ needs.prepare.outputs.web_project }}
+          workingDirectory: web
 
-  # Post-deployment notification (optional)
+  # Post-deployment notification
   notify:
     name: Notify
     runs-on: ubuntu-latest
@@ -205,7 +245,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Environment:** ${{ needs.prepare.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
           echo "**API:** ${{ needs.prepare.outputs.api_url }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Web:** ${{ needs.deploy-web.outputs.url || 'N/A' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Web:** ${{ needs.deploy-web.outputs.url || needs.prepare.outputs.web_url }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Component | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
