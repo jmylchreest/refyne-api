@@ -81,11 +81,12 @@ type LLMConfigInput struct {
 
 // ExtractOutput represents extraction output.
 type ExtractOutput struct {
-	Data      any         `json:"data"`
-	URL       string      `json:"url"`
-	FetchedAt time.Time   `json:"fetched_at"`
-	Usage     UsageInfo   `json:"usage"`
-	Metadata  ExtractMeta `json:"metadata"`
+	Data       any         `json:"data"`
+	URL        string      `json:"url"`
+	FetchedAt  time.Time   `json:"fetched_at"`
+	Usage      UsageInfo   `json:"usage"`
+	Metadata   ExtractMeta `json:"metadata"`
+	RawContent string      `json:"-"` // Raw page content (not serialized, for debug capture only)
 }
 
 // UsageInfo represents token usage and cost information.
@@ -382,10 +383,11 @@ func (s *ExtractionService) handleSuccessfulExtraction(
 	processedData := s.processExtractionResult(result.Data, result.URL)
 
 	return &ExtractOutput{
-		Data:      processedData,
-		URL:       result.URL,
-		FetchedAt: result.FetchedAt,
-		Usage:     usageInfo,
+		Data:       processedData,
+		URL:        result.URL,
+		FetchedAt:  result.FetchedAt,
+		Usage:      usageInfo,
+		RawContent: result.RawContent,
 		Metadata: ExtractMeta{
 			FetchDurationMs:   int(result.FetchDuration.Milliseconds()),
 			ExtractDurationMs: int(result.ExtractDuration.Milliseconds()),
@@ -441,6 +443,7 @@ type PageResult struct {
 	TokenUsageOutput  int     `json:"token_usage_output"`
 	FetchDurationMs   int     `json:"fetch_duration_ms,omitempty"`
 	ExtractDurationMs int     `json:"extract_duration_ms,omitempty"`
+	RawContent        string  `json:"-"` // Raw page content (not serialized, for debug capture only)
 }
 
 // CrawlResult represents the result of a crawl operation.
@@ -603,6 +606,7 @@ func (s *ExtractionService) Crawl(ctx context.Context, userID string, input Craw
 			ExtractDurationMs: int(result.ExtractDuration.Milliseconds()),
 			LLMProvider:       result.Provider,
 			LLMModel:          result.Model,
+			RawContent:        result.RawContent,
 		})
 		totalTokensInput += result.TokenUsage.InputTokens
 		totalTokensOutput += result.TokenUsage.OutputTokens
@@ -863,6 +867,7 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 				LLMProvider:       result.Provider,
 				LLMModel:          result.Model,
 				GenerationID:      result.GenerationID,
+				RawContent:        result.RawContent,
 			}
 			totalTokensInput += result.TokenUsage.InputTokens
 			totalTokensOutput += result.TokenUsage.OutputTokens

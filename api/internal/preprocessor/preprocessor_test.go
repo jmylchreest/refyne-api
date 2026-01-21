@@ -175,8 +175,8 @@ func TestHints_ToPromptSection_MultipleDetectedTypes(t *testing.T) {
 
 	result := hints.ToPromptSection()
 
-	if !strings.Contains(result, "MIXED CONTENT") {
-		t.Error("should indicate mixed content")
+	if !strings.Contains(result, "MULTIPLE content categories") {
+		t.Error("should indicate multiple content categories")
 	}
 	if !strings.Contains(result, "10 products") {
 		t.Error("should list products count")
@@ -184,8 +184,11 @@ func TestHints_ToPromptSection_MultipleDetectedTypes(t *testing.T) {
 	if !strings.Contains(result, "5 articles") {
 		t.Error("should list articles count")
 	}
-	if !strings.Contains(result, "content_type") {
-		t.Error("should suggest content_type field")
+	if !strings.Contains(result, "products[] for products") {
+		t.Error("should suggest separate arrays per category")
+	}
+	if !strings.Contains(result, "articles[] for articles") {
+		t.Error("should suggest separate arrays per category")
 	}
 }
 
@@ -573,4 +576,423 @@ func TestLLMPreProcessor_Interface(t *testing.T) {
 	var _ LLMPreProcessor = (*Noop)(nil)
 	var _ LLMPreProcessor = (*HintRepeats)(nil)
 	var _ LLMPreProcessor = (*Chain)(nil)
+	var _ LLMPreProcessor = (*HintFeedback)(nil)
+}
+
+// ========================================
+// HintFeedback Tests
+// ========================================
+
+func TestNewHintFeedback_Defaults(t *testing.T) {
+	hf := NewHintFeedback()
+	if hf == nil {
+		t.Fatal("expected HintFeedback, got nil")
+	}
+	if hf.MinRepeats != 3 {
+		t.Errorf("MinRepeats = %d, want 3 (default)", hf.MinRepeats)
+	}
+	if hf.MinScore != 0.3 {
+		t.Errorf("MinScore = %f, want 0.3 (default)", hf.MinScore)
+	}
+}
+
+func TestNewHintFeedback_WithOptions(t *testing.T) {
+	hf := NewHintFeedback(WithFeedbackMinRepeats(5), WithFeedbackMinScore(0.5))
+	if hf.MinRepeats != 5 {
+		t.Errorf("MinRepeats = %d, want 5", hf.MinRepeats)
+	}
+	if hf.MinScore != 0.5 {
+		t.Errorf("MinScore = %f, want 0.5", hf.MinScore)
+	}
+}
+
+func TestHintFeedback_Name(t *testing.T) {
+	hf := NewHintFeedback()
+	if hf.Name() != "hint_feedback" {
+		t.Errorf("Name() = %q, want %q", hf.Name(), "hint_feedback")
+	}
+}
+
+func TestHintFeedback_DetectURLPatterns_Reviews(t *testing.T) {
+	// URL pattern alone is not enough - needs actual review content too
+	hf := NewHintFeedback(WithFeedbackMinRepeats(2))
+	content := `<html>
+		<body>
+			<div class="review">Review 1</div>
+			<div class="review">Review 2</div>
+			<div class="review">Review 3</div>
+		</body>
+	</html>`
+	hints, err := hf.ProcessWithURL(content, "https://example.com/product/123/reviews")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if hints.Custom["feedback_detected"] != "true" {
+		t.Error("should detect feedback from URL pattern + content")
+	}
+	// Both URL and CSS class should be detected
+	if hints.Custom["detection_methods"] == "" {
+		t.Error("detection_methods should be populated")
+	}
+}
+
+func TestHintFeedback_DetectURLPatterns_Testimonials(t *testing.T) {
+	// URL pattern alone is not enough - needs actual testimonial content too
+	hf := NewHintFeedback(WithFeedbackMinRepeats(2))
+	content := `<html>
+		<body>
+			<div class="testimonial">Testimonial 1</div>
+			<div class="testimonial">Testimonial 2</div>
+			<div class="testimonial">Testimonial 3</div>
+		</body>
+	</html>`
+	hints, err := hf.ProcessWithURL(content, "https://example.com/testimonials")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if hints.Custom["feedback_detected"] != "true" {
+		t.Error("should detect feedback from URL pattern + content")
+	}
+	if !strings.Contains(hints.Custom["feedback_types"], "testimonials") {
+		t.Errorf("feedback_types should include testimonials, got: %s", hints.Custom["feedback_types"])
+	}
+}
+
+func TestHintFeedback_DetectSchemaOrg_Review(t *testing.T) {
+	hf := NewHintFeedback()
+	content := `<html>
+		<head>
+			<script type="application/ld+json">
+			{
+				"@context": "https://schema.org",
+				"@type": "Product",
+				"name": "Test Product",
+				"review": [
+					{"@type": "Review", "reviewBody": "Great product!", "reviewRating": {"@type": "Rating", "ratingValue": 5}},
+					{"@type": "Review", "reviewBody": "Not bad", "reviewRating": {"@type": "Rating", "ratingValue": 4}},
+					{"@type": "Review", "reviewBody": "Could be better", "reviewRating": {"@type": "Rating", "ratingValue": 3}}
+				]
+			}
+			</script>
+		</head>
+		<body></body>
+	</html>`
+
+	hints, err := hf.Process(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if hints.Custom["feedback_detected"] != "true" {
+		t.Error("should detect feedback from schema.org")
+	}
+	if !strings.Contains(hints.Custom["detection_methods"], "schema_org") {
+		t.Error("detection_methods should include 'schema_org'")
+	}
+}
+
+func TestHintFeedback_DetectSchemaOrg_AggregateRating(t *testing.T) {
+	// AggregateRating alone is metadata - needs actual review content to trigger
+	hf := NewHintFeedback(WithFeedbackMinRepeats(2))
+	content := `<html>
+		<head>
+			<script type="application/ld+json">
+			{
+				"@context": "https://schema.org",
+				"@type": "Product",
+				"name": "Test Product",
+				"aggregateRating": {
+					"@type": "AggregateRating",
+					"ratingValue": 4.5,
+					"reviewCount": 100
+				}
+			}
+			</script>
+		</head>
+		<body>
+			<div class="review">Review 1</div>
+			<div class="review">Review 2</div>
+			<div class="review">Review 3</div>
+		</body>
+	</html>`
+
+	hints, err := hf.Process(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if hints.Custom["feedback_detected"] != "true" {
+		t.Error("should detect feedback from schema.org AggregateRating + content")
+	}
+}
+
+func TestHintFeedback_DetectTextPatterns_StarRatings(t *testing.T) {
+	hf := NewHintFeedback(WithFeedbackMinRepeats(2))
+	content := `<html>
+		<body>
+			<div class="review-item">
+				<span class="rating">★★★★☆</span>
+				<p>Great product!</p>
+			</div>
+			<div class="review-item">
+				<span class="rating">★★★★★</span>
+				<p>Excellent!</p>
+			</div>
+			<div class="review-item">
+				<span class="rating">★★★☆☆</span>
+				<p>It's okay</p>
+			</div>
+		</body>
+	</html>`
+
+	hints, err := hf.Process(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if hints.Custom["feedback_detected"] != "true" {
+		t.Error("should detect feedback from star ratings")
+	}
+	if !strings.Contains(hints.Custom["detection_methods"], "text_pattern") {
+		t.Error("detection_methods should include 'text_pattern'")
+	}
+}
+
+func TestHintFeedback_DetectTextPatterns_NumericRatings(t *testing.T) {
+	hf := NewHintFeedback(WithFeedbackMinRepeats(2))
+	content := `<html>
+		<body>
+			<div>Rating: 4.5/5</div>
+			<div>Rated 5 out of 5</div>
+			<div>4 stars</div>
+		</body>
+	</html>`
+
+	hints, err := hf.Process(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if hints.Custom["feedback_detected"] != "true" {
+		t.Error("should detect feedback from numeric ratings")
+	}
+}
+
+func TestHintFeedback_DetectTextPatterns_Headings(t *testing.T) {
+	// Headings alone are not enough - needs actual review content
+	hf := NewHintFeedback(WithFeedbackMinRepeats(2))
+	content := `<html>
+		<body>
+			<h2>Customer Reviews</h2>
+			<p>What our customers say about us:</p>
+			<div>Latest reviews from verified buyers</div>
+			<div class="review">Review 1</div>
+			<div class="review">Review 2</div>
+			<div class="review">Review 3</div>
+		</body>
+	</html>`
+
+	hints, err := hf.Process(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if hints.Custom["feedback_detected"] != "true" {
+		t.Error("should detect feedback from review headings + content")
+	}
+}
+
+func TestHintFeedback_DetectTextPatterns_VerifiedPurchase(t *testing.T) {
+	hf := NewHintFeedback(WithFeedbackMinRepeats(2))
+	content := `<html>
+		<body>
+			<div class="review">
+				<span>Verified Purchase</span>
+				<p>Great product!</p>
+			</div>
+			<div class="review">
+				<span>Verified Buyer</span>
+				<p>Love it!</p>
+			</div>
+			<div class="review">
+				<span>Verified Purchase</span>
+				<p>Amazing!</p>
+			</div>
+		</body>
+	</html>`
+
+	hints, err := hf.Process(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if hints.Custom["feedback_detected"] != "true" {
+		t.Error("should detect feedback from verified purchase indicators")
+	}
+}
+
+func TestHintFeedback_DetectCSSPatterns(t *testing.T) {
+	hf := NewHintFeedback(WithFeedbackMinRepeats(2))
+	content := `<html>
+		<body>
+			<div class="review">Review 1</div>
+			<div class="review">Review 2</div>
+			<div class="review">Review 3</div>
+		</body>
+	</html>`
+
+	hints, err := hf.Process(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if hints.Custom["feedback_detected"] != "true" {
+		t.Error("should detect feedback from CSS classes")
+	}
+	if !strings.Contains(hints.Custom["detection_methods"], "css_class") {
+		t.Error("detection_methods should include 'css_class'")
+	}
+}
+
+func TestHintFeedback_MultipleSignalsCombined(t *testing.T) {
+	hf := NewHintFeedback(WithFeedbackMinRepeats(2))
+	content := `<html>
+		<head>
+			<script type="application/ld+json">
+			{"@type": "Product", "aggregateRating": {"@type": "AggregateRating", "ratingValue": 4.5}}
+			</script>
+		</head>
+		<body>
+			<h2>Customer Reviews</h2>
+			<div class="review">
+				<span>★★★★☆</span>
+				<span>Verified Purchase</span>
+				<p>Great product!</p>
+			</div>
+			<div class="review">
+				<span>★★★★★</span>
+				<p>Excellent!</p>
+			</div>
+			<div class="review">
+				<span>★★★☆☆</span>
+				<p>It's okay</p>
+			</div>
+		</body>
+	</html>`
+
+	hints, err := hf.ProcessWithURL(content, "https://example.com/product/123/reviews")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if hints.Custom["feedback_detected"] != "true" {
+		t.Error("should detect feedback from multiple signals")
+	}
+
+	methods := hints.Custom["detection_methods"]
+	if methods == "" {
+		t.Error("detection_methods should be populated")
+	}
+}
+
+func TestHintFeedback_TailwindSiteWithNoClasses(t *testing.T) {
+	// This simulates a Tailwind site where reviews don't have semantic class names
+	// but can be detected via schema.org, text patterns, or URL
+	hf := NewHintFeedback(WithFeedbackMinRepeats(2))
+	content := `<html>
+		<head>
+			<script type="application/ld+json">
+			{
+				"@type": "Product",
+				"review": [
+					{"@type": "Review", "reviewBody": "Great!"},
+					{"@type": "Review", "reviewBody": "Amazing!"},
+					{"@type": "Review", "reviewBody": "Excellent!"}
+				]
+			}
+			</script>
+		</head>
+		<body>
+			<div class="flex flex-col gap-4">
+				<div class="p-4 border rounded-lg">
+					<div class="flex gap-2">⭐⭐⭐⭐⭐</div>
+					<p class="text-gray-700">Amazing product!</p>
+					<span class="text-sm text-green-600">Verified Purchase</span>
+				</div>
+				<div class="p-4 border rounded-lg">
+					<div class="flex gap-2">⭐⭐⭐⭐☆</div>
+					<p class="text-gray-700">Pretty good!</p>
+				</div>
+				<div class="p-4 border rounded-lg">
+					<div class="flex gap-2">⭐⭐⭐☆☆</div>
+					<p class="text-gray-700">It's okay</p>
+				</div>
+			</div>
+		</body>
+	</html>`
+
+	hints, err := hf.ProcessWithURL(content, "https://demo.refyne.uk/reviews")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if hints.Custom["feedback_detected"] != "true" {
+		t.Error("should detect feedback on Tailwind sites without semantic classes")
+	}
+}
+
+func TestHintFeedback_NoFeedback(t *testing.T) {
+	hf := NewHintFeedback()
+	content := `<html>
+		<body>
+			<h1>About Us</h1>
+			<p>We are a great company.</p>
+			<div class="product-info">
+				<h2>Product Details</h2>
+				<p>This is a wonderful product.</p>
+			</div>
+		</body>
+	</html>`
+
+	hints, err := hf.Process(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if hints.Custom["feedback_detected"] == "true" {
+		t.Error("should not detect feedback on non-feedback pages")
+	}
+}
+
+func TestHintFeedback_OutputsGuidance(t *testing.T) {
+	hf := NewHintFeedback(WithFeedbackMinRepeats(2))
+	content := `<html>
+		<head>
+			<script type="application/ld+json">
+			{
+				"@type": "Product",
+				"review": [
+					{"@type": "Review", "reviewBody": "Great!"},
+					{"@type": "Review", "reviewBody": "Amazing!"},
+					{"@type": "Review", "reviewBody": "Excellent!"}
+				]
+			}
+			</script>
+		</head>
+		<body></body>
+	</html>`
+
+	hints, err := hf.Process(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if hints.Custom["sentiment_guidance"] == "" {
+		t.Error("should output sentiment guidance")
+	}
+	if hints.Custom["persona_guidance"] == "" {
+		t.Error("should output persona guidance")
+	}
 }

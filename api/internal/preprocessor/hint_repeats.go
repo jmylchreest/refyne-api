@@ -83,6 +83,7 @@ func (h *HintRepeats) detectAllRepeatedElements(content string) []DetectedConten
 		{h.countProductPatterns, "products"},
 		{h.countArticlePatterns, "articles"},
 		{h.countJobPatterns, "jobs"},
+		{h.countRecipePatterns, "recipes"},
 		{h.countCaseStudyPatterns, "case_studies"},
 		{h.countEventPatterns, "events"},
 		{h.countServicePatterns, "services"},
@@ -142,13 +143,17 @@ func (h *HintRepeats) detectAllRepeatedElements(content string) []DetectedConten
 }
 
 // countProductPatterns counts product-related repeated elements.
+// Uses specific product-related patterns to avoid false positives from generic "item" classes.
 func (h *HintRepeats) countProductPatterns(content string) int {
 	patterns := []string{
 		`class="[^"]*product[^"]*"`,
-		`class="[^"]*item[^"]*"`,
-		`class="[^"]*listing[^"]*"`,
+		`class="[^"]*product-card[^"]*"`,
+		`class="[^"]*product-item[^"]*"`,
+		`class="[^"]*shop-item[^"]*"`,
+		`class="[^"]*store-item[^"]*"`,
 		`data-product`,
 		`itemprop="product"`,
+		`itemtype="[^"]*Product"`,
 	}
 	return h.countPatterns(content, patterns)
 }
@@ -174,6 +179,21 @@ func (h *HintRepeats) countJobPatterns(content string) int {
 		`class="[^"]*position[^"]*"`,
 		`class="[^"]*vacancy[^"]*"`,
 		`class="[^"]*opening[^"]*"`,
+	}
+	return h.countPatterns(content, patterns)
+}
+
+// countRecipePatterns counts recipe-related repeated elements.
+func (h *HintRepeats) countRecipePatterns(content string) int {
+	patterns := []string{
+		`class="[^"]*recipe[^"]*"`,
+		`class="[^"]*recipe-card[^"]*"`,
+		`class="[^"]*meal[^"]*"`,
+		`class="[^"]*dish[^"]*"`,
+		`class="[^"]*food-item[^"]*"`,
+		`class="[^"]*cooking[^"]*"`,
+		`itemprop="recipe"`,
+		`itemtype="[^"]*Recipe"`,
 	}
 	return h.countPatterns(content, patterns)
 }

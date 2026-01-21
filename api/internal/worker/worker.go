@@ -163,6 +163,39 @@ func (w *Worker) processExtractJob(ctx context.Context, job *models.Job) {
 		w.logger.Error("failed to update job", "job_id", job.ID, "error", err)
 	}
 
+	// Store debug capture if enabled
+	if job.CaptureDebug && result.RawContent != "" && w.storageSvc != nil && w.storageSvc.IsEnabled() {
+		capture := service.LLMRequestCapture{
+			ID:        ulid.Make().String(),
+			URL:       result.URL,
+			Timestamp: now,
+			JobType:   string(job.Type),
+			Request: service.LLMRequestMeta{
+				Provider:    result.Metadata.Provider,
+				Model:       result.Metadata.Model,
+				ContentSize: len(result.RawContent),
+			},
+			Response: service.LLMResponseMeta{
+				InputTokens:  result.Usage.InputTokens,
+				OutputTokens: result.Usage.OutputTokens,
+				DurationMs:   int64(result.Metadata.ExtractDurationMs),
+				Success:      true,
+			},
+			RawContent: result.RawContent,
+			Schema:     job.SchemaJSON,
+		}
+		jobDebugCapture := &service.JobDebugCapture{
+			JobID:    job.ID,
+			Enabled:  true,
+			Captures: []service.LLMRequestCapture{capture},
+		}
+		if err := w.storageSvc.StoreDebugCapture(ctx, jobDebugCapture); err != nil {
+			w.logger.Error("failed to store debug capture", "job_id", job.ID, "error", err)
+		} else {
+			w.logger.Info("stored debug capture", "job_id", job.ID)
+		}
+	}
+
 	// Send webhook if configured
 	if job.WebhookURL != "" {
 		ephemeralConfig := &service.WebhookConfig{
@@ -265,6 +298,10 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 	var pageCountMu sync.Mutex
 	pageCount := 0
 
+	// Collect debug captures if enabled
+	var capturesMu sync.Mutex
+	var debugCaptures []service.LLMRequestCapture
+
 	// Callback to save each result incrementally for SSE streaming
 	// Note: We only save metadata to job_results for progress tracking.
 	// Full extracted data is accumulated and saved to S3 on completion.
@@ -316,6 +353,33 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 
 		if err := w.jobResultRepo.Create(ctx, jobResult); err != nil {
 			w.logger.Error("failed to save job result", "job_id", job.ID, "url", pageResult.URL, "error", err)
+		}
+
+		// Collect debug capture if enabled
+		if job.CaptureDebug && pageResult.RawContent != "" {
+			capture := service.LLMRequestCapture{
+				ID:        ulid.Make().String(),
+				URL:       pageResult.URL,
+				Timestamp: now,
+				JobType:   string(job.Type),
+				Request: service.LLMRequestMeta{
+					Provider:    pageResult.LLMProvider,
+					Model:       pageResult.LLMModel,
+					ContentSize: len(pageResult.RawContent),
+				},
+				Response: service.LLMResponseMeta{
+					InputTokens:  pageResult.TokenUsageInput,
+					OutputTokens: pageResult.TokenUsageOutput,
+					DurationMs:   int64(pageResult.ExtractDurationMs),
+					Success:      pageResult.Error == "",
+					Error:        pageResult.Error,
+				},
+				RawContent: pageResult.RawContent,
+				Schema:     job.SchemaJSON,
+			}
+			capturesMu.Lock()
+			debugCaptures = append(debugCaptures, capture)
+			capturesMu.Unlock()
 		}
 
 		return nil
@@ -436,6 +500,23 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 
 		if err := w.storageSvc.StoreJobResults(ctx, jobResults); err != nil {
 			w.logger.Error("failed to store job results to object storage", "job_id", job.ID, "error", err)
+		}
+
+		// Store debug captures if enabled and we have any
+		if job.CaptureDebug && len(debugCaptures) > 0 {
+			jobDebugCapture := &service.JobDebugCapture{
+				JobID:    job.ID,
+				Enabled:  true,
+				Captures: debugCaptures,
+			}
+			if err := w.storageSvc.StoreDebugCapture(ctx, jobDebugCapture); err != nil {
+				w.logger.Error("failed to store debug captures", "job_id", job.ID, "error", err)
+			} else {
+				w.logger.Info("stored debug captures",
+					"job_id", job.ID,
+					"capture_count", len(debugCaptures),
+				)
+			}
 		}
 	}
 

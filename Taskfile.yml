@@ -162,6 +162,24 @@ tasks:
       - task: web:lint
       - task: demo:lint
 
+  demo:dev:
+    desc: Run demo site in development mode
+    dir: ./demo
+    cmds:
+      - npm run dev
+
+  demo:build:
+    desc: Build demo site
+    dir: ./demo
+    cmds:
+      - npm run build
+
+  demo:preview:
+    desc: Preview demo site build
+    dir: ./demo
+    cmds:
+      - npm run preview
+
   demo:lint:
     desc: Lint demo code
     dir: ./demo

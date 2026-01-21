@@ -65,7 +65,8 @@ type Job struct {
 	TokenUsageInput  int        `json:"token_usage_input"`
 	TokenUsageOutput int        `json:"token_usage_output"`
 	CostUSD          float64    `json:"cost_usd"`     // USD cost charged to user (0 for BYOK)
-	LLMCostUSD       float64    `json:"llm_cost_usd"` // Actual LLM provider cost (always recorded)
+	LLMCostUSD       float64    `json:"llm_cost_usd"`     // Actual LLM provider cost (always recorded)
+	CaptureDebug     bool       `json:"capture_debug"`    // Whether to capture LLM requests for debugging
 	WebhookURL       string     `json:"webhook_url,omitempty"`
 	WebhookStatus    string     `json:"webhook_status,omitempty"`
 	WebhookAttempts  int        `json:"webhook_attempts"`

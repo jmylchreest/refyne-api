@@ -78,13 +78,16 @@ func (h *Hints) ToPromptSection() string {
 			result += "- Found " + strconv.Itoa(dt.Count) + " repeated " + dt.Name + " elements\n"
 			result += "- This is a listing page - use " + dt.Name + "[] array\n"
 		} else {
-			// Multiple content types - mixed content page
-			result += "- This is a MIXED CONTENT page with multiple content types:\n"
+			// Multiple content types - use separate arrays for each category
+			result += "- This is a page with MULTIPLE content categories:\n"
 			for _, dt := range h.DetectedTypes {
 				result += "  - " + strconv.Itoa(dt.Count) + " " + dt.Name + "\n"
 			}
-			result += "- Use items[] with a content_type field to distinguish between types\n"
-			result += "- Add a metadata object for type-specific fields\n"
+			result += "- Group items by category using separate arrays for each type:\n"
+			for _, dt := range h.DetectedTypes {
+				result += "  - " + dt.Name + "[] for " + dt.Name + "\n"
+			}
+			result += "- Each array should contain items of that specific category\n"
 		}
 	} else if h.RepeatedElements > 0 {
 		// Fallback to legacy single-type detection

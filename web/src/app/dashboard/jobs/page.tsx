@@ -21,6 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { toast } from 'sonner';
 import {
@@ -40,7 +41,9 @@ import {
   XCircle,
   AlertCircle,
   Timer,
+  Search,
 } from 'lucide-react';
+import { JobInspector } from '@/components/job-inspector';
 import { cn } from '@/lib/utils';
 
 // Format helpers using date-fns
@@ -589,12 +592,23 @@ export default function JobsPage() {
                   )}
                 </div>
 
-                {/* Results section for completed jobs */}
+                {/* Results/Inspector section for completed jobs */}
                 {selectedJob.status === 'completed' && (
-                  <div className="flex-1 flex flex-col min-h-0">
-                    {/* Results header */}
+                  <Tabs key={selectedJob.id} defaultValue="results" className="flex-1 flex flex-col min-h-0">
+                    {/* Tab header */}
                     <div className="px-4 py-2 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between shrink-0">
-                      <span className="text-sm font-medium">Results</span>
+                      <TabsList className="h-8">
+                        <TabsTrigger value="results" className="text-xs px-3">
+                          <FileText className="h-3.5 w-3.5 mr-1.5" />
+                          Results
+                        </TabsTrigger>
+                        {selectedJob.capture_debug && (
+                          <TabsTrigger value="inspector" className="text-xs px-3">
+                            <Search className="h-3.5 w-3.5 mr-1.5" />
+                            Inspector
+                          </TabsTrigger>
+                        )}
+                      </TabsList>
                       <div className="flex items-center gap-2">
                         <Button
                           variant="outline"
@@ -655,8 +669,8 @@ export default function JobsPage() {
                       </div>
                     </div>
 
-                    {/* Results content */}
-                    <div className="flex-1 overflow-auto min-h-0">
+                    {/* Results tab content */}
+                    <TabsContent value="results" className="flex-1 overflow-auto min-h-0 m-0">
                       {!showResults ? (
                         <div className="flex items-center justify-center h-full text-zinc-400">
                           <p className="text-sm">Click &quot;Load Results&quot; to view extracted data</p>
@@ -672,8 +686,15 @@ export default function JobsPage() {
                           No results found
                         </div>
                       )}
-                    </div>
-                  </div>
+                    </TabsContent>
+
+                    {/* Inspector tab content */}
+                    {selectedJob.capture_debug && (
+                      <TabsContent value="inspector" className="flex-1 min-h-0 m-0">
+                        <JobInspector jobId={selectedJob.id} />
+                      </TabsContent>
+                    )}
+                  </Tabs>
                 )}
 
                 {/* For running jobs */}

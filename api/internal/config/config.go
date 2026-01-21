@@ -78,9 +78,10 @@ type Config struct {
 	BlocklistBucket  string // Optional separate bucket for blocklist (defaults to StorageBucket)
 
 	// Cleanup
-	CleanupEnabled     bool          // Enable automatic cleanup
-	CleanupMaxAge      time.Duration // Max age of job data to keep (default 30 days)
-	CleanupInterval    time.Duration // How often to run cleanup (default 24 hours)
+	CleanupEnabled       bool          // Enable automatic cleanup
+	CleanupMaxAgeResults time.Duration // Max age of job results to keep (default 30 days)
+	CleanupMaxAgeDebug   time.Duration // Max age of debug captures to keep (default 7 days)
+	CleanupInterval      time.Duration // How often to run cleanup (default 24 hours)
 }
 
 // Load reads configuration from environment variables.
@@ -138,8 +139,9 @@ func Load() (*Config, error) {
 
 	// Cleanup configuration
 	cfg.CleanupEnabled = getEnvBool("CLEANUP_ENABLED", true)
-	cfg.CleanupMaxAge = getEnvDuration("CLEANUP_MAX_AGE", 30*24*time.Hour) // 30 days default
-	cfg.CleanupInterval = getEnvDuration("CLEANUP_INTERVAL", 24*time.Hour) // Daily default
+	cfg.CleanupMaxAgeResults = getEnvDuration("CLEANUP_MAX_AGE_RESULTS", 30*24*time.Hour) // 30 days default
+	cfg.CleanupMaxAgeDebug = getEnvDuration("CLEANUP_MAX_AGE_DEBUG", 7*24*time.Hour)     // 7 days default
+	cfg.CleanupInterval = getEnvDuration("CLEANUP_INTERVAL", 24*time.Hour)               // Daily default
 
 	// Validate required fields for hosted mode
 	if cfg.DeploymentMode == "hosted" {

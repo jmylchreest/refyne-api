@@ -34,25 +34,28 @@ func NewCleanupService(
 
 // CleanupResult contains the results of a cleanup operation.
 type CleanupResult struct {
-	JobsDeleted          int
-	JobResultsDeleted    int
-	StorageObjectsDeleted int
-	Errors               []error
+	JobsDeleted           int
+	JobResultsDeleted     int
+	StorageResultsDeleted int
+	StorageDebugDeleted   int
+	Errors                []error
 }
 
 // CleanupOldJobs removes job data older than the specified duration.
 // This cleans up:
 // - Job records from the database (completed/failed only)
 // - Job result records from the database
-// - Result files from object storage
+// - Result files from object storage (using maxAgeResults)
+// - Debug capture files from object storage (using maxAgeDebug)
 //
 // Note: Usage records are NOT deleted as they're needed for billing history.
-func (s *CleanupService) CleanupOldJobs(ctx context.Context, maxAge time.Duration) (*CleanupResult, error) {
+func (s *CleanupService) CleanupOldJobs(ctx context.Context, maxAgeResults, maxAgeDebug time.Duration) (*CleanupResult, error) {
 	result := &CleanupResult{}
-	cutoff := time.Now().Add(-maxAge)
+	cutoff := time.Now().Add(-maxAgeResults)
 
 	s.logger.Info("starting job cleanup",
-		"max_age", maxAge.String(),
+		"max_age_results", maxAgeResults.String(),
+		"max_age_debug", maxAgeDebug.String(),
 		"cutoff", cutoff.Format(time.RFC3339),
 	)
 
@@ -78,21 +81,32 @@ func (s *CleanupService) CleanupOldJobs(ctx context.Context, maxAge time.Duratio
 		}
 	}
 
-	// Step 3: Clean up old objects from storage
+	// Step 3: Clean up old result objects from storage
 	if s.storageSvc != nil && s.storageSvc.IsEnabled() {
-		count, err := s.storageSvc.DeleteOldJobResults(ctx, maxAge)
+		count, err := s.storageSvc.DeleteOldJobResults(ctx, maxAgeResults)
 		if err != nil {
-			s.logger.Error("failed to delete old storage objects", "error", err)
+			s.logger.Error("failed to delete old result storage objects", "error", err)
 			result.Errors = append(result.Errors, err)
 		} else {
-			result.StorageObjectsDeleted = count
-			s.logger.Info("deleted old storage objects", "count", count)
+			result.StorageResultsDeleted = count
+			s.logger.Info("deleted old result storage objects", "count", count)
+		}
+
+		// Step 4: Clean up old debug capture objects from storage
+		debugCount, err := s.storageSvc.DeleteOldDebugCaptures(ctx, maxAgeDebug)
+		if err != nil {
+			s.logger.Error("failed to delete old debug storage objects", "error", err)
+			result.Errors = append(result.Errors, err)
+		} else {
+			result.StorageDebugDeleted = debugCount
+			s.logger.Info("deleted old debug storage objects", "count", debugCount)
 		}
 	}
 
 	s.logger.Info("cleanup completed",
 		"jobs_deleted", result.JobsDeleted,
-		"storage_objects_deleted", result.StorageObjectsDeleted,
+		"storage_results_deleted", result.StorageResultsDeleted,
+		"storage_debug_deleted", result.StorageDebugDeleted,
 		"errors", len(result.Errors),
 	)
 
@@ -101,14 +115,15 @@ func (s *CleanupService) CleanupOldJobs(ctx context.Context, maxAge time.Duratio
 
 // RunScheduledCleanup runs the cleanup task as a background goroutine.
 // It runs immediately on start and then at the specified interval.
-func (s *CleanupService) RunScheduledCleanup(ctx context.Context, maxAge time.Duration, interval time.Duration) {
+func (s *CleanupService) RunScheduledCleanup(ctx context.Context, maxAgeResults, maxAgeDebug, interval time.Duration) {
 	s.logger.Info("starting scheduled cleanup",
-		"max_age", maxAge.String(),
+		"max_age_results", maxAgeResults.String(),
+		"max_age_debug", maxAgeDebug.String(),
 		"interval", interval.String(),
 	)
 
 	// Run immediately on start
-	if _, err := s.CleanupOldJobs(ctx, maxAge); err != nil {
+	if _, err := s.CleanupOldJobs(ctx, maxAgeResults, maxAgeDebug); err != nil {
 		s.logger.Error("initial cleanup failed", "error", err)
 	}
 
@@ -122,7 +137,7 @@ func (s *CleanupService) RunScheduledCleanup(ctx context.Context, maxAge time.Du
 			s.logger.Info("scheduled cleanup stopped")
 			return
 		case <-ticker.C:
-			if _, err := s.CleanupOldJobs(ctx, maxAge); err != nil {
+			if _, err := s.CleanupOldJobs(ctx, maxAgeResults, maxAgeDebug); err != nil {
 				s.logger.Error("scheduled cleanup failed", "error", err)
 			}
 		}

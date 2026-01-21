@@ -317,6 +317,7 @@ type JobResponse struct {
 	TokenUsageInput  int     `json:"token_usage_input"`
 	TokenUsageOutput int     `json:"token_usage_output"`
 	CostUSD          float64 `json:"cost_usd"` // Actual USD cost charged (0 for BYOK)
+	CaptureDebug     bool    `json:"capture_debug"` // Whether debug capture was enabled
 	ErrorMessage     string  `json:"error_message,omitempty"`
 	ErrorCategory    string  `json:"error_category,omitempty"`
 	StartedAt        string  `json:"started_at,omitempty"`
@@ -348,6 +349,7 @@ func (h *JobHandler) ListJobs(ctx context.Context, input *ListJobsInput) (*ListJ
 			TokenUsageInput:  job.TokenUsageInput,
 			TokenUsageOutput: job.TokenUsageOutput,
 			CostUSD:          job.CostUSD,
+			CaptureDebug:     job.CaptureDebug,
 			ErrorMessage:     job.ErrorMessage,
 			ErrorCategory:    job.ErrorCategory,
 			CreatedAt:        job.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
@@ -405,6 +407,7 @@ func (h *JobHandler) GetJob(ctx context.Context, input *GetJobInput) (*GetJobOut
 		TokenUsageInput:  job.TokenUsageInput,
 		TokenUsageOutput: job.TokenUsageOutput,
 		CostUSD:          job.CostUSD,
+		CaptureDebug:     job.CaptureDebug,
 		ErrorMessage:     job.ErrorMessage,
 		ErrorCategory:    job.ErrorCategory,
 		CreatedAt:        job.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
@@ -1338,6 +1341,122 @@ func (h *JobHandler) GetJobResultsDownload(ctx context.Context, input *GetJobRes
 			JobID:       input.ID,
 			DownloadURL: downloadURL,
 			ExpiresAt:   time.Now().Add(expiry).Format(time.RFC3339),
+		},
+	}, nil
+}
+
+// GetJobDebugCaptureInput represents debug capture retrieval request.
+type GetJobDebugCaptureInput struct {
+	ID string `path:"id" doc:"Job ID"`
+}
+
+// DebugCaptureLLMRequest represents metadata about an LLM request.
+type DebugCaptureLLMRequest struct {
+	Provider    string `json:"provider" doc:"LLM provider used"`
+	Model       string `json:"model" doc:"LLM model used"`
+	FetchMode   string `json:"fetch_mode,omitempty" doc:"Content fetch mode"`
+	ContentSize int    `json:"content_size" doc:"Size of content sent to LLM"`
+	PromptSize  int    `json:"prompt_size" doc:"Total prompt size including system instructions"`
+}
+
+// DebugCaptureLLMResponse represents metadata about an LLM response.
+type DebugCaptureLLMResponse struct {
+	InputTokens  int    `json:"input_tokens" doc:"Input tokens consumed"`
+	OutputTokens int    `json:"output_tokens" doc:"Output tokens generated"`
+	DurationMs   int64  `json:"duration_ms" doc:"Request duration in milliseconds"`
+	Success      bool   `json:"success" doc:"Whether the request succeeded"`
+	Error        string `json:"error,omitempty" doc:"Error message if failed"`
+}
+
+// DebugCaptureEntry represents a single captured LLM request/response.
+type DebugCaptureEntry struct {
+	ID         string                  `json:"id" doc:"Capture ID"`
+	URL        string                  `json:"url" doc:"Page URL being processed"`
+	Timestamp  string                  `json:"timestamp" doc:"When the request was made"`
+	JobType    string                  `json:"job_type" doc:"Job type (analyze, extract, crawl)"`
+	Request    DebugCaptureLLMRequest  `json:"request" doc:"LLM request metadata"`
+	Response   DebugCaptureLLMResponse `json:"response" doc:"LLM response metadata"`
+	Prompt     string                  `json:"prompt,omitempty" doc:"Full prompt sent to LLM (for analyze jobs)"`
+	RawContent string                  `json:"raw_content,omitempty" doc:"Page content (for extract/crawl jobs)"`
+	Schema     string                  `json:"schema,omitempty" doc:"Schema used for extraction"`
+	Hints      map[string]string       `json:"hints_applied,omitempty" doc:"Preprocessing hints applied"`
+}
+
+// GetJobDebugCaptureOutput represents debug capture response.
+type GetJobDebugCaptureOutput struct {
+	Body struct {
+		JobID    string              `json:"job_id" doc:"Job ID"`
+		Enabled  bool                `json:"enabled" doc:"Whether debug capture was enabled for this job"`
+		Captures []DebugCaptureEntry `json:"captures" doc:"Captured LLM requests"`
+	}
+}
+
+// GetJobDebugCapture returns the debug captures for a job.
+// This includes LLM prompts, metadata, and responses for debugging extraction issues.
+func (h *JobHandler) GetJobDebugCapture(ctx context.Context, input *GetJobDebugCaptureInput) (*GetJobDebugCaptureOutput, error) {
+	userID := getUserID(ctx)
+	if userID == "" {
+		return nil, huma.Error401Unauthorized("unauthorized")
+	}
+
+	// Verify job exists and belongs to user
+	job, err := h.jobSvc.GetJob(ctx, userID, input.ID)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to get job: " + err.Error())
+	}
+	if job == nil {
+		return nil, huma.Error404NotFound("job not found")
+	}
+
+	// Check if storage is enabled
+	if h.storageSvc == nil || !h.storageSvc.IsEnabled() {
+		return nil, huma.Error503ServiceUnavailable("debug capture storage is not configured")
+	}
+
+	// Get debug captures from storage
+	capture, err := h.storageSvc.GetDebugCapture(ctx, input.ID)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to get debug capture: " + err.Error())
+	}
+
+	// Convert to response format
+	entries := make([]DebugCaptureEntry, 0, len(capture.Captures))
+	for _, c := range capture.Captures {
+		entries = append(entries, DebugCaptureEntry{
+			ID:        c.ID,
+			URL:       c.URL,
+			Timestamp: c.Timestamp.Format(time.RFC3339),
+			JobType:   c.JobType,
+			Request: DebugCaptureLLMRequest{
+				Provider:    c.Request.Provider,
+				Model:       c.Request.Model,
+				FetchMode:   c.Request.FetchMode,
+				ContentSize: c.Request.ContentSize,
+				PromptSize:  c.Request.PromptSize,
+			},
+			Response: DebugCaptureLLMResponse{
+				InputTokens:  c.Response.InputTokens,
+				OutputTokens: c.Response.OutputTokens,
+				DurationMs:   c.Response.DurationMs,
+				Success:      c.Response.Success,
+				Error:        c.Response.Error,
+			},
+			Prompt:     c.Prompt,
+			RawContent: c.RawContent,
+			Schema:     c.Schema,
+			Hints:      c.Hints,
+		})
+	}
+
+	return &GetJobDebugCaptureOutput{
+		Body: struct {
+			JobID    string              `json:"job_id" doc:"Job ID"`
+			Enabled  bool                `json:"enabled" doc:"Whether debug capture was enabled for this job"`
+			Captures []DebugCaptureEntry `json:"captures" doc:"Captured LLM requests"`
+		}{
+			JobID:    input.ID,
+			Enabled:  capture.Enabled,
+			Captures: entries,
 		},
 	}, nil
 }

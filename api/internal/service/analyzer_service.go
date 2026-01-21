@@ -72,8 +72,10 @@ func NewAnalyzerServiceWithBilling(cfg *config.Config, repos *repository.Reposit
 
 	// Create preprocessor chain for generating LLM hints
 	// HintRepeats detects repeated HTML patterns to suggest array-based schemas
+	// HintFeedback detects human feedback (reviews, comments) and adds sentiment analysis hints
 	llmPreprocessor := preprocessor.NewChain(
 		preprocessor.NewHintRepeats(),
+		preprocessor.NewHintFeedback(),
 	)
 
 	return &AnalyzerService{
@@ -118,6 +120,17 @@ type AnalyzeOutput struct {
 	RecommendedFetchMode models.FetchMode         `json:"recommended_fetch_mode"`
 	SampleData           any                      `json:"sample_data,omitempty"` // Preview extraction result
 	TokenUsage           AnalyzeTokenUsage        `json:"token_usage"`
+	// Debug capture data (only populated when debug capture is enabled)
+	DebugCapture *AnalyzeDebugCapture `json:"-"` // Internal use only, not serialized in API response
+}
+
+// AnalyzeDebugCapture contains debug information for an analysis.
+type AnalyzeDebugCapture struct {
+	RawContent  string `json:"raw_content"`  // Raw HTML content fetched
+	Prompt      string `json:"prompt"`       // Full prompt sent to LLM
+	LLMResponse string `json:"llm_response"` // Raw LLM response
+	FetchMode   string `json:"fetch_mode"`   // Fetch mode used
+	DurationMs  int64  `json:"duration_ms"`  // Total duration
 }
 
 // llmCallResult holds the result of an LLM API call including token usage.
@@ -357,6 +370,15 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 		IsBYOK:       isBYOK,
 		LLMProvider:  llmConfig.Provider,
 		LLMModel:     llmConfig.Model,
+	}
+
+	// Populate debug capture data (always - handler decides whether to store)
+	result.Output.DebugCapture = &AnalyzeDebugCapture{
+		RawContent:  mainContent,
+		Prompt:      result.Prompt,
+		LLMResponse: result.LLMResponse,
+		FetchMode:   string(fetchMode),
+		DurationMs:  time.Since(startTime).Milliseconds(),
 	}
 
 	s.logger.Info("URL analysis completed",
@@ -657,6 +679,8 @@ type analyzeResult struct {
 	Output       *AnalyzeOutput
 	InputTokens  int
 	OutputTokens int
+	Prompt       string // Full prompt sent to LLM (for debug capture)
+	LLMResponse  string // Raw LLM response (for debug capture)
 }
 
 // analyzeWithLLM calls the LLM to analyze page content and generate a schema.
@@ -710,6 +734,8 @@ func (s *AnalyzerService) analyzeWithLLM(ctx context.Context, mainContent string
 		Output:       output,
 		InputTokens:  llmResult.InputTokens,
 		OutputTokens: llmResult.OutputTokens,
+		Prompt:       prompt,
+		LLMResponse:  llmResult.Content,
 	}, nil
 }
 
@@ -778,13 +804,23 @@ Generate a schema that works across listing AND detail pages. Fields should be o
 
 ### Schema Approach
 
-Use a descriptive array name matching the content: products[], jobs[], articles[], episodes[], case_studies[], services[], etc.
+**Group content by its natural category using separate arrays.** Identify what types of content are on the page and create appropriately named arrays for each:
+- Blog posts/news → articles[]
+- Products for sale → products[]
+- Job listings → jobs[]
+- Recipes/meals → recipes[]
+- Podcast episodes → episodes[]
+- Case studies → case_studies[]
+- Services offered → services[]
+- Team members → team_members[]
+- Events → events[]
+- Or any other category that fits the content
+
+**IMPORTANT**: Do NOT use a generic items[] array with a content_type field. Instead, create separate arrays for each distinct content type you identify. If a page has blog posts AND recipes, create both articles[] and recipes[] arrays.
 
 **Required fields**: title, url (always include these as required)
 **Common fields**: description, image_url, date, category, price, currency
 **Add relevant fields** based on what you observe in the content - don't limit yourself to a fixed template.
-
-**Mixed content sites** (e.g., /blog/ AND /solutions/ AND /podcasts/): Use items[] with a content_type field, plus a metadata object for type-specific fields the LLM can populate dynamically.
 
 ### Schema Rules
 
@@ -807,7 +843,7 @@ The suggested_schema MUST be a YAML string with this exact structure:
 name: SchemaName
 description: What this schema extracts
 fields:
-  - name: items
+  - name: [category_name]  # e.g., products, articles, recipes, jobs
     type: array
     items:
       type: object
@@ -820,11 +856,40 @@ fields:
           required: true
         - name: description
           type: string
-        - name: category
+        # Add category-specific fields as needed
+
+Example for a site with both blog posts and recipes:
+fields:
+  - name: articles
+    type: array
+    items:
+      type: object
+      properties:
+        - name: title
           type: string
-        - name: metadata
-          type: object
-          description: Additional type-specific fields
+          required: true
+        - name: url
+          type: string
+          required: true
+        - name: published_date
+          type: string
+        - name: author
+          type: string
+  - name: recipes
+    type: array
+    items:
+      type: object
+      properties:
+        - name: title
+          type: string
+          required: true
+        - name: url
+          type: string
+          required: true
+        - name: cooking_time
+          type: string
+        - name: servings
+          type: integer
 
 Valid types: string, integer, number, boolean, array, object. Use "items" for arrays, "properties" for objects.
 

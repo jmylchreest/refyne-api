@@ -17,6 +17,7 @@ import (
 type AnalyzeHandler struct {
 	analyzerSvc *service.AnalyzerService
 	jobRepo     repository.JobRepository
+	storageSvc  *service.StorageService
 }
 
 // NewAnalyzeHandler creates a new analyze handler.
@@ -27,12 +28,22 @@ func NewAnalyzeHandler(analyzerSvc *service.AnalyzerService, jobRepo repository.
 	}
 }
 
+// NewAnalyzeHandlerWithStorage creates a new analyze handler with storage service for debug capture.
+func NewAnalyzeHandlerWithStorage(analyzerSvc *service.AnalyzerService, jobRepo repository.JobRepository, storageSvc *service.StorageService) *AnalyzeHandler {
+	return &AnalyzeHandler{
+		analyzerSvc: analyzerSvc,
+		jobRepo:     jobRepo,
+		storageSvc:  storageSvc,
+	}
+}
+
 // AnalyzeInput represents analyze request.
 type AnalyzeInput struct {
 	Body struct {
 		URL       string `json:"url" minLength:"1" doc:"URL to analyze"`
 		Depth     *int   `json:"depth,omitempty" minimum:"0" maximum:"1" default:"0" doc:"Crawl depth: 0=single page, 1=one level deep"`
 		FetchMode string `json:"fetch_mode,omitempty" enum:"auto,static,dynamic" default:"auto" doc:"Fetch mode: auto, static, or dynamic"`
+		Debug     *bool  `json:"debug,omitempty" doc:"Capture debug information (LLM prompts/responses). Defaults to true for analyze jobs."`
 	}
 }
 
@@ -77,18 +88,25 @@ func (h *AnalyzeHandler) Analyze(ctx context.Context, input *AnalyzeInput) (*Ana
 		return nil, huma.Error401Unauthorized("unauthorized")
 	}
 
+	// Debug capture defaults to true for analyze jobs (unlike crawl/extract which default to false)
+	captureDebug := true
+	if input.Body.Debug != nil {
+		captureDebug = *input.Body.Debug
+	}
+
 	// Create job record to track this analysis
 	now := time.Now()
 	startedAt := now
 	job := &models.Job{
-		ID:        ulid.Make().String(),
-		UserID:    uc.UserID,
-		Type:      models.JobTypeAnalyze,
-		Status:    models.JobStatusRunning,
-		URL:       input.Body.URL,
-		StartedAt: &startedAt,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:           ulid.Make().String(),
+		UserID:       uc.UserID,
+		Type:         models.JobTypeAnalyze,
+		Status:       models.JobStatusRunning,
+		URL:          input.Body.URL,
+		CaptureDebug: captureDebug,
+		StartedAt:    &startedAt,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 
 	// Best effort: create job record. Analysis proceeds regardless.
@@ -129,6 +147,38 @@ func (h *AnalyzeHandler) Analyze(ctx context.Context, input *AnalyzeInput) (*Ana
 		PageCount:    1,
 		ResultJSON:   string(resultJSON),
 	})
+
+	// Store debug capture if enabled and storage is available
+	if captureDebug && h.storageSvc != nil && h.storageSvc.IsEnabled() && result.DebugCapture != nil {
+		capture := service.LLMRequestCapture{
+			ID:        ulid.Make().String(),
+			URL:       input.Body.URL,
+			Timestamp: now,
+			Request: service.LLMRequestMeta{
+				Provider:    result.TokenUsage.LLMProvider,
+				Model:       result.TokenUsage.LLMModel,
+				FetchMode:   result.DebugCapture.FetchMode,
+				ContentSize: len(result.DebugCapture.RawContent),
+				PromptSize:  len(result.DebugCapture.Prompt),
+			},
+			Response: service.LLMResponseMeta{
+				InputTokens:  result.TokenUsage.InputTokens,
+				OutputTokens: result.TokenUsage.OutputTokens,
+				DurationMs:   result.DebugCapture.DurationMs,
+				Success:      true,
+			},
+			Prompt:     result.DebugCapture.Prompt,
+			RawContent: result.DebugCapture.RawContent,
+		}
+
+		jobDebugCapture := &service.JobDebugCapture{
+			JobID:    job.ID,
+			Enabled:  true,
+			Captures: []service.LLMRequestCapture{capture},
+		}
+		// Best effort - don't fail the request if debug storage fails
+		_ = h.storageSvc.StoreDebugCapture(ctx, jobDebugCapture)
+	}
 
 	// Convert result to output format
 	output := &AnalyzeOutput{

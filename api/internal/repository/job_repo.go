@@ -27,13 +27,17 @@ func (r *SQLiteJobRepository) Create(ctx context.Context, job *models.Job) error
 		INSERT INTO jobs (id, user_id, type, status, url, schema_json, crawl_options_json,
 			result_json, error_message, error_details, error_category,
 			llm_configs_json, tier, is_byok, llm_provider, llm_model, discovery_method, urls_queued, page_count,
-			token_usage_input, token_usage_output, cost_usd, llm_cost_usd, webhook_url, webhook_status,
+			token_usage_input, token_usage_output, cost_usd, llm_cost_usd, capture_debug, webhook_url, webhook_status,
 			webhook_attempts, started_at, completed_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	isBYOK := 0
 	if job.IsBYOK {
 		isBYOK = 1
+	}
+	captureDebug := 0
+	if job.CaptureDebug {
+		captureDebug = 1
 	}
 	_, err := r.db.ExecContext(ctx, query,
 		job.ID,
@@ -59,6 +63,7 @@ func (r *SQLiteJobRepository) Create(ctx context.Context, job *models.Job) error
 		job.TokenUsageOutput,
 		job.CostUSD,
 		job.LLMCostUSD,
+		captureDebug,
 		nullString(job.WebhookURL),
 		nullString(job.WebhookStatus),
 		job.WebhookAttempts,
@@ -78,7 +83,7 @@ func (r *SQLiteJobRepository) GetByID(ctx context.Context, id string) (*models.J
 		SELECT id, user_id, type, status, url, schema_json, crawl_options_json,
 			result_json, error_message, error_details, error_category,
 			llm_configs_json, tier, is_byok, llm_provider, llm_model, discovery_method, urls_queued, page_count,
-			token_usage_input, token_usage_output, cost_usd, llm_cost_usd, webhook_url, webhook_status,
+			token_usage_input, token_usage_output, cost_usd, llm_cost_usd, capture_debug, webhook_url, webhook_status,
 			webhook_attempts, started_at, completed_at, created_at, updated_at
 		FROM jobs WHERE id = ?
 	`
@@ -90,7 +95,7 @@ func (r *SQLiteJobRepository) GetByUserID(ctx context.Context, userID string, li
 		SELECT id, user_id, type, status, url, schema_json, crawl_options_json,
 			result_json, error_message, error_details, error_category,
 			llm_configs_json, tier, is_byok, llm_provider, llm_model, discovery_method, urls_queued, page_count,
-			token_usage_input, token_usage_output, cost_usd, llm_cost_usd, webhook_url, webhook_status,
+			token_usage_input, token_usage_output, cost_usd, llm_cost_usd, capture_debug, webhook_url, webhook_status,
 			webhook_attempts, started_at, completed_at, created_at, updated_at
 		FROM jobs WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
 	`
@@ -157,7 +162,7 @@ func (r *SQLiteJobRepository) GetPending(ctx context.Context, limit int) ([]*mod
 		SELECT id, user_id, type, status, url, schema_json, crawl_options_json,
 			result_json, error_message, error_details, error_category,
 			llm_configs_json, tier, is_byok, llm_provider, llm_model, discovery_method, urls_queued, page_count,
-			token_usage_input, token_usage_output, cost_usd, llm_cost_usd, webhook_url, webhook_status,
+			token_usage_input, token_usage_output, cost_usd, llm_cost_usd, capture_debug, webhook_url, webhook_status,
 			webhook_attempts, started_at, completed_at, created_at, updated_at
 		FROM jobs WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?
 	`
@@ -207,7 +212,7 @@ func (r *SQLiteJobRepository) ClaimJob(ctx context.Context, id string) (*models.
 		SELECT id, user_id, type, status, url, schema_json, crawl_options_json,
 			result_json, error_message, error_details, error_category,
 			llm_configs_json, tier, is_byok, llm_provider, llm_model, discovery_method, urls_queued, page_count,
-			token_usage_input, token_usage_output, cost_usd, llm_cost_usd, webhook_url, webhook_status,
+			token_usage_input, token_usage_output, cost_usd, llm_cost_usd, capture_debug, webhook_url, webhook_status,
 			webhook_attempts, started_at, completed_at, created_at, updated_at
 		FROM jobs WHERE id = ?
 	`
@@ -253,7 +258,7 @@ func (r *SQLiteJobRepository) ClaimPending(ctx context.Context) (*models.Job, er
 		RETURNING id, user_id, type, status, url, schema_json, crawl_options_json,
 			result_json, error_message, error_details, error_category,
 			llm_configs_json, tier, is_byok, llm_provider, llm_model, discovery_method, urls_queued, page_count,
-			token_usage_input, token_usage_output, cost_usd, llm_cost_usd, webhook_url, webhook_status,
+			token_usage_input, token_usage_output, cost_usd, llm_cost_usd, capture_debug, webhook_url, webhook_status,
 			webhook_attempts, started_at, completed_at, created_at, updated_at
 	`
 
@@ -277,7 +282,7 @@ func (r *SQLiteJobRepository) ClaimPending(ctx context.Context) (*models.Job, er
 func (r *SQLiteJobRepository) scanJob(row *sql.Row) (*models.Job, error) {
 	var job models.Job
 	var createdAt, updatedAt string
-	var isBYOK int
+	var isBYOK, captureDebug int
 	var crawlOptionsJSON, resultJSON, errorMessage, errorDetails, errorCategory sql.NullString
 	var llmConfigsJSON, tier, llmProvider, llmModel, discoveryMethod sql.NullString
 	var webhookURL, webhookStatus sql.NullString
@@ -290,7 +295,7 @@ func (r *SQLiteJobRepository) scanJob(row *sql.Row) (*models.Job, error) {
 		&llmConfigsJSON, &tier, &isBYOK, &llmProvider, &llmModel, &discoveryMethod,
 		&job.URLsQueued, &job.PageCount,
 		&job.TokenUsageInput, &job.TokenUsageOutput, &job.CostUSD, &job.LLMCostUSD,
-		&webhookURL, &webhookStatus, &job.WebhookAttempts,
+		&captureDebug, &webhookURL, &webhookStatus, &job.WebhookAttempts,
 		&startedAt, &completedAt, &createdAt, &updatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -308,6 +313,7 @@ func (r *SQLiteJobRepository) scanJob(row *sql.Row) (*models.Job, error) {
 	job.LLMConfigsJSON = llmConfigsJSON.String
 	job.Tier = tier.String
 	job.IsBYOK = isBYOK == 1
+	job.CaptureDebug = captureDebug == 1
 	job.LLMProvider = llmProvider.String
 	job.LLMModel = llmModel.String
 	job.DiscoveryMethod = discoveryMethod.String
@@ -330,7 +336,7 @@ func (r *SQLiteJobRepository) scanJob(row *sql.Row) (*models.Job, error) {
 func (r *SQLiteJobRepository) scanJobFromRows(rows *sql.Rows) (*models.Job, error) {
 	var job models.Job
 	var createdAt, updatedAt string
-	var isBYOK int
+	var isBYOK, captureDebug int
 	var crawlOptionsJSON, resultJSON, errorMessage, errorDetails, errorCategory sql.NullString
 	var llmConfigsJSON, tier, llmProvider, llmModel, discoveryMethod sql.NullString
 	var webhookURL, webhookStatus sql.NullString
@@ -343,7 +349,7 @@ func (r *SQLiteJobRepository) scanJobFromRows(rows *sql.Rows) (*models.Job, erro
 		&llmConfigsJSON, &tier, &isBYOK, &llmProvider, &llmModel, &discoveryMethod,
 		&job.URLsQueued, &job.PageCount,
 		&job.TokenUsageInput, &job.TokenUsageOutput, &job.CostUSD, &job.LLMCostUSD,
-		&webhookURL, &webhookStatus, &job.WebhookAttempts,
+		&captureDebug, &webhookURL, &webhookStatus, &job.WebhookAttempts,
 		&startedAt, &completedAt, &createdAt, &updatedAt,
 	)
 	if err != nil {
@@ -358,6 +364,7 @@ func (r *SQLiteJobRepository) scanJobFromRows(rows *sql.Rows) (*models.Job, erro
 	job.LLMConfigsJSON = llmConfigsJSON.String
 	job.Tier = tier.String
 	job.IsBYOK = isBYOK == 1
+	job.CaptureDebug = captureDebug == 1
 	job.LLMProvider = llmProvider.String
 	job.LLMModel = llmModel.String
 	job.DiscoveryMethod = discoveryMethod.String

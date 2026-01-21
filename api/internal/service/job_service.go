@@ -49,13 +49,14 @@ type CrawlOptions struct {
 
 // CreateCrawlJobInput represents input for creating a crawl job.
 type CreateCrawlJobInput struct {
-	URL        string            `json:"url"`
-	Schema     json.RawMessage   `json:"schema"`
-	Options    CrawlOptions      `json:"options,omitempty"`
-	WebhookURL string            `json:"webhook_url,omitempty"`
-	LLMConfigs []*LLMConfigInput `json:"llm_configs"` // Pre-resolved LLM config chain
-	Tier       string            `json:"tier"`        // User's subscription tier at job creation time
-	IsBYOK     bool              `json:"is_byok"`     // Whether using user's own API keys
+	URL          string            `json:"url"`
+	Schema       json.RawMessage   `json:"schema"`
+	Options      CrawlOptions      `json:"options,omitempty"`
+	WebhookURL   string            `json:"webhook_url,omitempty"`
+	LLMConfigs   []*LLMConfigInput `json:"llm_configs"`        // Pre-resolved LLM config chain
+	Tier         string            `json:"tier"`               // User's subscription tier at job creation time
+	IsBYOK       bool              `json:"is_byok"`            // Whether using user's own API keys
+	CaptureDebug *bool             `json:"capture_debug,omitempty"` // Whether to capture LLM requests for debugging
 }
 
 // CreateCrawlJobOutput represents output from creating a crawl job.
@@ -115,6 +116,12 @@ func (s *JobService) CreateCrawlJob(ctx context.Context, userID string, input Cr
 		return nil, fmt.Errorf("failed to serialize llm configs: %w", err)
 	}
 
+	// Determine capture_debug setting (default: false for crawl jobs)
+	captureDebug := false
+	if input.CaptureDebug != nil {
+		captureDebug = *input.CaptureDebug
+	}
+
 	now := time.Now()
 	job := &models.Job{
 		ID:               ulid.Make().String(),
@@ -127,6 +134,7 @@ func (s *JobService) CreateCrawlJob(ctx context.Context, userID string, input Cr
 		LLMConfigsJSON:   string(llmConfigsJSON),
 		Tier:             input.Tier,
 		IsBYOK:           input.IsBYOK,
+		CaptureDebug:     captureDebug,
 		WebhookURL:       input.WebhookURL,
 		CreatedAt:        now,
 		UpdatedAt:        now,

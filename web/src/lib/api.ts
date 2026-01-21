@@ -262,7 +262,7 @@ export interface ExtractResult {
 
 export interface Job {
   id: string;
-  type: 'extract' | 'crawl';
+  type: 'extract' | 'crawl' | 'analyze';
   status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
   url: string;
   urls_queued: number;
@@ -270,6 +270,7 @@ export interface Job {
   token_usage_input: number;
   token_usage_output: number;
   cost_usd: number;
+  capture_debug: boolean;
   error_message?: string;
   error_category?: string;
   started_at?: string;
@@ -976,5 +977,45 @@ export interface AdminJobResultsResponse {
 
 export async function getAdminJobResults(jobId: string) {
   return request<AdminJobResultsResponse>('GET', `/api/v1/admin/analytics/jobs/${jobId}/results`);
+}
+
+// Debug Capture Types
+export interface DebugCaptureLLMRequest {
+  provider: string;
+  model: string;
+  fetch_mode?: string;
+  content_size: number;
+  prompt_size: number;
+}
+
+export interface DebugCaptureLLMResponse {
+  input_tokens: number;
+  output_tokens: number;
+  duration_ms: number;
+  success: boolean;
+  error?: string;
+}
+
+export interface DebugCaptureEntry {
+  id: string;
+  url: string;
+  timestamp: string;
+  job_type: string;
+  request: DebugCaptureLLMRequest;
+  response: DebugCaptureLLMResponse;
+  prompt?: string;
+  raw_content?: string;
+  schema?: string;
+  hints_applied?: Record<string, string>;
+}
+
+export interface JobDebugCaptureResponse {
+  job_id: string;
+  enabled: boolean;
+  captures: DebugCaptureEntry[];
+}
+
+export async function getJobDebugCapture(jobId: string) {
+  return request<JobDebugCaptureResponse>('GET', `/api/v1/jobs/${jobId}/debug-capture`);
 }
 
