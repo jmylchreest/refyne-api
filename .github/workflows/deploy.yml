@@ -212,10 +212,6 @@ jobs:
         run: npm ci
         working-directory: web
 
-      - name: Generate API reference docs from OpenAPI
-        run: npm run generate:openapi
-        working-directory: web
-
       - name: Build with OpenNext
         run: npm run build:cloudflare
         working-directory: web

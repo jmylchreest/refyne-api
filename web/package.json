@@ -8,8 +8,7 @@
     "build:cloudflare": "opennextjs-cloudflare build",
     "start": "next start",
     "preview": "wrangler dev",
-    "lint": "eslint",
-    "generate:openapi": "tsx .source/generate-openapi.ts"
+    "lint": "eslint"
   },
   "dependencies": {
     "@clerk/nextjs": "^6.36.9",
