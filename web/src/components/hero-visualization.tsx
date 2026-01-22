@@ -48,48 +48,43 @@ const SCHEMA_DATA = {
 };
 
 // Hand-crafted YAML with comments (js-yaml doesn't support comment generation)
-const SCHEMA_YAML_WITH_COMMENTS = `# Schema for extracting product data
-name: Product
+const SCHEMA_YAML_WITH_COMMENTS = `name: Product
 description: Extract product listing details including pricing and shipping.
 
 fields:
-  # Primary product identifier
-  - name: title
+  - name: title  # The product name or headline
     type: string
     required: true
 
-  # Current selling price
-  - name: price
+  - name: price  # Current listed price
     type: object
     required: true
     properties:
-      amount:
+      amount:  # Numeric price value
         type: number
-      currency:
+      currency:  # ISO currency code
         type: string
 
-  # Bulk discount tiers
-  - name: volume_pricing
+  - name: volume_pricing  # Bulk discount tiers if available
     type: array
     items:
       type: object
       properties:
-        min_qty:
+        min_qty:  # Minimum quantity for this tier
           type: integer
-        amount:
+        amount:  # Discounted price
           type: number
         currency:
           type: string
 
-  # Delivery information
-  - name: shipping
+  - name: shipping  # Delivery details
     type: object
     properties:
-      cost:
+      cost:  # Shipping fee
         type: number
       currency:
         type: string
-      estimated_days:
+      estimated_days:  # e.g. "3-5 business days"
         type: string`;
 
 // Single source of truth for output example
@@ -176,16 +171,26 @@ function SyntaxHighlight({
           parts.push(<span key={`col-${i}`} className={colors.punctuation}>{colon}</span>);
           parts.push(<span key={`sp-${i}`}>{space}</span>);
 
-          // Color the value
+          // Color the value (check for inline comment)
           if (value) {
-            if (value === 'true' || value === 'false') {
-              parts.push(<span key={`val-${i}`} className={colors.boolean}>{value}</span>);
-            } else if (/^-?\d+(\.\d+)?$/.test(value)) {
-              parts.push(<span key={`val-${i}`} className={colors.number}>{value}</span>);
-            } else if (value === '|' || value === '>') {
-              parts.push(<span key={`val-${i}`} className={colors.punctuation}>{value}</span>);
-            } else {
-              parts.push(<span key={`val-${i}`} className={colors.string}>{value}</span>);
+            const inlineCommentMatch = value.match(/^(.*?)\s*(#.*)$/);
+            const actualValue = inlineCommentMatch ? inlineCommentMatch[1].trim() : value;
+            const inlineComment = inlineCommentMatch ? inlineCommentMatch[2] : null;
+
+            if (actualValue) {
+              if (actualValue === 'true' || actualValue === 'false') {
+                parts.push(<span key={`val-${i}`} className={colors.boolean}>{actualValue}</span>);
+              } else if (/^-?\d+(\.\d+)?$/.test(actualValue)) {
+                parts.push(<span key={`val-${i}`} className={colors.number}>{actualValue}</span>);
+              } else if (actualValue === '|' || actualValue === '>') {
+                parts.push(<span key={`val-${i}`} className={colors.punctuation}>{actualValue}</span>);
+              } else {
+                parts.push(<span key={`val-${i}`} className={colors.string}>{actualValue}</span>);
+              }
+            }
+            if (inlineComment) {
+              parts.push(<span key={`icom-${i}`}> </span>);
+              parts.push(<span key={`com-${i}`} className={colors.comment}>{inlineComment}</span>);
             }
           }
         } else if (parts.length === 0) {
@@ -200,10 +205,20 @@ function SyntaxHighlight({
             parts.push(<span key={`rcol-${i}`} className={colors.punctuation}>{colon}</span>);
             parts.push(<span key={`rsp-${i}`}>{space}</span>);
             if (value) {
-              if (/^-?\d+(\.\d+)?$/.test(value)) {
-                parts.push(<span key={`rval-${i}`} className={colors.number}>{value}</span>);
-              } else {
-                parts.push(<span key={`rval-${i}`} className={colors.string}>{value}</span>);
+              const inlineCommentMatch = value.match(/^(.*?)\s*(#.*)$/);
+              const actualValue = inlineCommentMatch ? inlineCommentMatch[1].trim() : value;
+              const inlineComment = inlineCommentMatch ? inlineCommentMatch[2] : null;
+
+              if (actualValue) {
+                if (/^-?\d+(\.\d+)?$/.test(actualValue)) {
+                  parts.push(<span key={`rval-${i}`} className={colors.number}>{actualValue}</span>);
+                } else {
+                  parts.push(<span key={`rval-${i}`} className={colors.string}>{actualValue}</span>);
+                }
+              }
+              if (inlineComment) {
+                parts.push(<span key={`ricom-${i}`}> </span>);
+                parts.push(<span key={`rcom-${i}`} className={colors.comment}>{inlineComment}</span>);
               }
             }
           } else {
