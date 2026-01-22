@@ -454,12 +454,14 @@ jobs:
           workingDirectory: docs
 
   # Deploy Demo to Cloudflare Pages (static Astro site)
+  # Only deploys to production - no staging demo site
   deploy-demo:
-    name: Deploy Demo (${{ needs.prepare.outputs.environment }})
+    name: Deploy Demo
     runs-on: ubuntu-latest
     needs: [prepare, test-demo]
     if: |
       always() &&
+      needs.prepare.outputs.environment == 'production' &&
       needs.prepare.outputs.demo_changed == 'true' &&
       (needs.test-demo.result == 'success' || needs.test-demo.result == 'skipped')
     outputs:
