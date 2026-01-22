@@ -538,7 +538,7 @@ function SchemaArrow({ direction = 'right' }: { direction?: 'right' | 'down' }) 
 }
 
 function StructuredOutput() {
-  const [format, setFormat] = useState<OutputFormat>('json');
+  const [format, setFormat] = useState<OutputFormat>('yaml');
 
   const fileExtensions: Record<OutputFormat, string> = {
     json: 'response.json',
