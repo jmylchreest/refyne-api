@@ -76,6 +76,11 @@ export const metadata: Metadata = {
     canonical: siteConfig.url,
   },
   category: 'technology',
+  icons: {
+    icon: '/favicon.svg',
+    shortcut: '/favicon.svg',
+    apple: '/favicon.svg',
+  },
 };
 
 export default function RootLayout({
