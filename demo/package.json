@@ -10,14 +10,14 @@
     "astro": "astro"
   },
   "dependencies": {
-    "astro": "^5.16.11",
+    "astro": "^5.16.13",
     "@faker-js/faker": "^10.2.0",
     "rss-parser": "^3.13.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.18",
     "tailwindcss": "^4.1.18",
-    "wrangler": "^4.59.3",
+    "wrangler": "^4.60.0",
     "typescript": "^5.9.3"
   }
 }
