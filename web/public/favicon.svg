@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <defs>
-    <filter id="blueShadow" x="-50%" y="-50%" width="200%" height="200%">
-      <feDropShadow dx="0" dy="0" stdDeviation="12" flood-color="#4f46e5" flood-opacity="0.9"/>
-    </filter>
+    <linearGradient id="gradD" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#818cf8"/>
+      <stop offset="100%" style="stop-color:#c084fc"/>
+    </linearGradient>
   </defs>
-
-  <!-- Black R with blue shadow - shifted left to compensate for italic angle -->
-  <text x="235" y="270" font-family="Victor Mono, monospace" font-size="420" font-weight="700" font-style="italic" text-anchor="middle" dominant-baseline="central" fill="#000000" filter="url(#blueShadow)">R</text>
+  <!-- Lighter gradient R with dark stroke for contrast -->
+  <text x="235" y="270" font-family="Victor Mono, monospace" font-size="420" font-weight="700" font-style="italic" text-anchor="middle" dominant-baseline="central" fill="url(#gradD)" stroke="#312e81" stroke-width="10">R</text>
 </svg>
