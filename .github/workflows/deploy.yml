@@ -9,7 +9,11 @@ on:
       - "api/**"
       - "web/**"
       - "docs/**"
+      - "demo/**"
       - ".github/workflows/deploy.yml"
+  schedule:
+    # Daily rebuild of demo site at 6 AM UTC for fresh data
+    - cron: '0 6 * * *'
   workflow_dispatch:
     inputs:
       environment:
@@ -52,6 +56,7 @@ jobs:
       api_changed: ${{ steps.changes.outputs.api }}
       web_changed: ${{ steps.changes.outputs.web }}
       docs_changed: ${{ steps.changes.outputs.docs }}
+      demo_changed: ${{ steps.changes.outputs.demo }}
       deploy_all: ${{ steps.changes.outputs.deploy_all }}
     steps:
       - uses: actions/checkout@v4
@@ -61,11 +66,23 @@ jobs:
       - name: Detect changes
         id: changes
         run: |
+          # For scheduled runs, only deploy demo (daily rebuild for fresh data)
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            echo "api=false" >> $GITHUB_OUTPUT
+            echo "web=false" >> $GITHUB_OUTPUT
+            echo "docs=false" >> $GITHUB_OUTPUT
+            echo "demo=true" >> $GITHUB_OUTPUT
+            echo "deploy_all=false" >> $GITHUB_OUTPUT
+            echo "Scheduled run: deploying demo only"
+            exit 0
+          fi
+
           # For tags or workflow_dispatch with deploy_all, deploy everything
           if [[ "${{ github.ref }}" == refs/tags/v* ]] || [[ "${{ inputs.deploy_all }}" == "true" ]]; then
             echo "api=true" >> $GITHUB_OUTPUT
             echo "web=true" >> $GITHUB_OUTPUT
             echo "docs=true" >> $GITHUB_OUTPUT
+            echo "demo=true" >> $GITHUB_OUTPUT
             echo "deploy_all=true" >> $GITHUB_OUTPUT
             echo "Deploying all components (tag or deploy_all flag)"
             exit 0
@@ -104,6 +121,13 @@ jobs:
             echo "Docs changed"
           else
             echo "docs=false" >> $GITHUB_OUTPUT
+          fi
+
+          if echo "$CHANGED" | grep -q "^demo/"; then
+            echo "demo=true" >> $GITHUB_OUTPUT
+            echo "Demo changed"
+          else
+            echo "demo=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Determine environment
@@ -423,11 +447,47 @@ jobs:
           command: pages deploy out --project-name=${{ needs.prepare.outputs.docs_project }} --branch=main
           workingDirectory: docs
 
+  # Deploy Demo to Cloudflare Pages (static Astro site)
+  deploy-demo:
+    name: Deploy Demo
+    runs-on: ubuntu-latest
+    needs: [prepare]
+    if: needs.prepare.outputs.demo_changed == 'true'
+    outputs:
+      url: ${{ steps.deploy.outputs.deployment-url }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: demo/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: demo
+
+      - name: Build site
+        run: npm run build
+        working-directory: demo
+
+      - name: Deploy to Cloudflare Pages
+        id: deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=refyne-demo --branch=main
+          workingDirectory: demo
+
   # Post-deployment notification
   notify:
     name: Notify
     runs-on: ubuntu-latest
-    needs: [prepare, deploy-api, deploy-web, deploy-docs]
+    needs: [prepare, deploy-api, deploy-web, deploy-docs, deploy-demo]
     if: always()
     steps:
       - name: Deployment summary
@@ -443,9 +503,11 @@ jobs:
           echo "| API | ${{ needs.prepare.outputs.api_changed }} | ${{ needs.deploy-api.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Web | ${{ needs.prepare.outputs.web_changed }} | ${{ needs.deploy-web.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Docs | ${{ needs.prepare.outputs.docs_changed }} | ${{ needs.deploy-docs.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Demo | ${{ needs.prepare.outputs.demo_changed }} | ${{ needs.deploy-demo.result }} |" >> $GITHUB_STEP_SUMMARY
 
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### URLs" >> $GITHUB_STEP_SUMMARY
           echo "- **API:** ${{ needs.prepare.outputs.api_url }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Web:** ${{ needs.deploy-web.outputs.url || needs.prepare.outputs.web_url }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Docs:** ${{ needs.deploy-docs.outputs.url || needs.prepare.outputs.docs_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Demo:** ${{ needs.deploy-demo.outputs.url || 'https://demo.refyne.uk' }}" >> $GITHUB_STEP_SUMMARY
