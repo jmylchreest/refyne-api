@@ -46,12 +46,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       environment: ${{ steps.env.outputs.environment }}
-      api_app: ${{ steps.env.outputs.api_app }}
-      web_project: ${{ steps.env.outputs.web_project }}
-      docs_project: ${{ steps.env.outputs.docs_project }}
-      api_url: ${{ steps.env.outputs.api_url }}
-      web_url: ${{ steps.env.outputs.web_url }}
-      docs_url: ${{ steps.env.outputs.docs_url }}
       # Change detection outputs
       api_changed: ${{ steps.changes.outputs.api }}
       web_changed: ${{ steps.changes.outputs.web }}
@@ -142,38 +136,6 @@ jobs:
           fi
 
           echo "environment=${ENV}" >> $GITHUB_OUTPUT
-
-          # Use environment variables if set, otherwise use defaults
-          if [[ "$ENV" == "production" ]]; then
-            API_APP="${{ vars.API_APP }}"
-            WEB_PROJECT="${{ vars.WEB_PROJECT }}"
-            DOCS_PROJECT="${{ vars.DOCS_PROJECT }}"
-            API_URL="${{ vars.API_URL }}"
-            WEB_URL="${{ vars.WEB_URL }}"
-            DOCS_URL="${{ vars.DOCS_URL }}"
-
-            echo "api_app=${API_APP:-refyne-api}" >> $GITHUB_OUTPUT
-            echo "web_project=${WEB_PROJECT:-refyne-web-production}" >> $GITHUB_OUTPUT
-            echo "docs_project=${DOCS_PROJECT:-refyne-docs-production}" >> $GITHUB_OUTPUT
-            echo "api_url=${API_URL:-https://api.refyne.uk}" >> $GITHUB_OUTPUT
-            echo "web_url=${WEB_URL:-https://refyne.uk}" >> $GITHUB_OUTPUT
-            echo "docs_url=${DOCS_URL:-https://docs.refyne.uk}" >> $GITHUB_OUTPUT
-          else
-            API_APP="${{ vars.API_APP_STAGING }}"
-            WEB_PROJECT="${{ vars.WEB_PROJECT_STAGING }}"
-            DOCS_PROJECT="${{ vars.DOCS_PROJECT_STAGING }}"
-            API_URL="${{ vars.API_URL_STAGING }}"
-            WEB_URL="${{ vars.WEB_URL_STAGING }}"
-            DOCS_URL="${{ vars.DOCS_URL_STAGING }}"
-
-            echo "api_app=${API_APP:-refyne-api-staging}" >> $GITHUB_OUTPUT
-            echo "web_project=${WEB_PROJECT:-refyne-web-staging}" >> $GITHUB_OUTPUT
-            echo "docs_project=${DOCS_PROJECT:-refyne-docs-staging}" >> $GITHUB_OUTPUT
-            echo "api_url=${API_URL:-https://api-staging.refyne.uk}" >> $GITHUB_OUTPUT
-            echo "web_url=${WEB_URL:-https://staging.refyne.uk}" >> $GITHUB_OUTPUT
-            echo "docs_url=${DOCS_URL:-https://docs-staging.refyne.uk}" >> $GITHUB_OUTPUT
-          fi
-
           echo "Deploying to: ${ENV}"
 
   # Run API tests (only if API changed)
@@ -322,9 +284,11 @@ jobs:
       always() &&
       needs.prepare.outputs.api_changed == 'true' &&
       needs.test-api.result == 'success'
+    outputs:
+      url: ${{ steps.url.outputs.url }}
     environment:
       name: ${{ needs.prepare.outputs.environment }}
-      url: ${{ needs.prepare.outputs.api_url }}
+      url: ${{ vars.API_URL }}
     defaults:
       run:
         working-directory: api
@@ -344,7 +308,7 @@ jobs:
       - name: Deploy to Fly.io
         run: |
           flyctl deploy --remote-only \
-            --app ${{ needs.prepare.outputs.api_app }} \
+            --app ${{ vars.FLY_APP }} \
             --config fly.${{ needs.prepare.outputs.environment }}.toml \
             --build-secret GH_TOKEN=${{ secrets.GH_PAT }} \
             --build-arg VERSION=${{ steps.version.outputs.version }} \
@@ -358,9 +322,13 @@ jobs:
         run: |
           echo "Waiting for deployment to stabilize..."
           sleep 10
-          flyctl status --app ${{ needs.prepare.outputs.api_app }}
+          flyctl status --app ${{ vars.FLY_APP }}
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Output URL
+        id: url
+        run: echo "url=${{ vars.API_URL }}" >> $GITHUB_OUTPUT
 
   # Deploy Web to Cloudflare Pages (SSR via OpenNext)
   deploy-web:
@@ -377,7 +345,7 @@ jobs:
       url: ${{ steps.deploy.outputs.deployment-url }}
     environment:
       name: ${{ needs.prepare.outputs.environment }}
-      url: ${{ steps.deploy.outputs.deployment-url }}
+      url: ${{ vars.WEB_URL }}
 
     steps:
       - uses: actions/checkout@v4
@@ -403,7 +371,7 @@ jobs:
         run: npm run build:cloudflare
         working-directory: web
         env:
-          NEXT_PUBLIC_API_URL: ${{ needs.prepare.outputs.api_url }}
+          NEXT_PUBLIC_API_URL: ${{ vars.API_URL }}
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
 
       - name: Set project name in wrangler config
@@ -411,7 +379,7 @@ jobs:
           cat > wrangler.jsonc << 'EOF'
           {
             "$schema": "node_modules/wrangler/config-schema.json",
-            "name": "${{ needs.prepare.outputs.web_project }}",
+            "name": "${{ vars.CLOUDFLARE_WEB_PROJECT }}",
             "main": ".open-next/worker.js",
             "compatibility_date": "2025-01-01",
             "compatibility_flags": ["nodejs_compat"],
@@ -447,7 +415,6 @@ jobs:
       url: ${{ steps.deploy.outputs.deployment-url }}
     environment:
       name: ${{ needs.prepare.outputs.environment }}
-      url: ${{ steps.deploy.outputs.deployment-url }}
 
     steps:
       - uses: actions/checkout@v4
@@ -473,8 +440,8 @@ jobs:
         run: npm run build
         working-directory: docs
         env:
-          NEXT_PUBLIC_API_URL: ${{ needs.prepare.outputs.api_url }}
-          NEXT_PUBLIC_MAIN_SITE_URL: ${{ needs.prepare.outputs.web_url }}
+          NEXT_PUBLIC_API_URL: ${{ vars.API_URL }}
+          NEXT_PUBLIC_MAIN_SITE_URL: ${{ vars.WEB_URL }}
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
 
       - name: Deploy to Cloudflare Pages
@@ -483,7 +450,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy out --project-name=${{ needs.prepare.outputs.docs_project }} --branch=main
+          command: pages deploy out --project-name=${{ vars.CLOUDFLARE_DOCS_PROJECT }} --branch=main
           workingDirectory: docs
 
   # Deploy Demo to Cloudflare Pages (static Astro site)
@@ -549,7 +516,15 @@ jobs:
 
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### URLs" >> $GITHUB_STEP_SUMMARY
-          echo "- **API:** ${{ needs.prepare.outputs.api_url }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Web:** ${{ needs.deploy-web.outputs.url || needs.prepare.outputs.web_url }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Docs:** ${{ needs.deploy-docs.outputs.url || needs.prepare.outputs.docs_url }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Demo:** ${{ needs.deploy-demo.outputs.url || 'https://demo.refyne.uk' }}" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ needs.deploy-api.outputs.url }}" ]]; then
+            echo "- **API:** ${{ needs.deploy-api.outputs.url }}" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [[ -n "${{ needs.deploy-web.outputs.url }}" ]]; then
+            echo "- **Web:** ${{ needs.deploy-web.outputs.url }}" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [[ -n "${{ needs.deploy-docs.outputs.url }}" ]]; then
+            echo "- **Docs:** ${{ needs.deploy-docs.outputs.url }}" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [[ -n "${{ needs.deploy-demo.outputs.url }}" ]]; then
+            echo "- **Demo:** ${{ needs.deploy-demo.outputs.url }}" >> $GITHUB_STEP_SUMMARY
+          fi
