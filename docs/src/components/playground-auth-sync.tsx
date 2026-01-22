@@ -6,6 +6,9 @@ import { useEffect, useRef } from 'react';
 // Storage key matches the security scheme name in OpenAPI
 const AUTH_STORAGE_KEY = 'fumadocs-openapi-auth-Authorization';
 
+// Check if Clerk is configured (env var is baked in at build time)
+const CLERK_ENABLED = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+
 /**
  * Inner component that uses Clerk hooks - only rendered when Clerk is ready.
  */
@@ -104,8 +107,14 @@ function PlaygroundAuthSyncInner() {
  * Syncs Clerk JWT to the playground authorization field.
  * Uses MutationObserver to catch dynamically rendered inputs.
  * Wrapped in ClerkLoaded to ensure Clerk is initialized before calling hooks.
+ * Returns null if Clerk is not configured.
  */
 export function PlaygroundAuthSync() {
+  // Don't render anything if Clerk is not configured
+  if (!CLERK_ENABLED) {
+    return null;
+  }
+
   return (
     <ClerkLoaded>
       <PlaygroundAuthSyncInner />

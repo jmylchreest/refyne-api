@@ -9,6 +9,9 @@ import { cn } from '@/lib/utils';
 // Main site URL for cross-site links
 const MAIN_SITE_URL = process.env.NEXT_PUBLIC_MAIN_SITE_URL || 'https://refyne.uk';
 
+// Check if Clerk is configured (env var is baked in at build time)
+const CLERK_ENABLED = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+
 interface SiteHeaderProps {
   fixed?: boolean;
 }
@@ -59,23 +62,35 @@ export function SiteHeader({ fixed = false }: SiteHeaderProps) {
         </nav>
         <div className="flex items-center gap-2">
           <HeaderThemeToggle />
-          {/* ClerkLoaded ensures Clerk is initialized before rendering auth UI */}
-          <ClerkLoaded>
-            <SignedOut>
+          {/* Only render Clerk components if Clerk is configured */}
+          {CLERK_ENABLED ? (
+            <ClerkLoaded>
+              <SignedOut>
+                <a href={`${MAIN_SITE_URL}/sign-up`}>
+                  <PillButton>Sign Up</PillButton>
+                </a>
+                <a href={`${MAIN_SITE_URL}/sign-in`}>
+                  <PillButton variant="muted">Log In</PillButton>
+                </a>
+              </SignedOut>
+              <SignedIn>
+                <a href={`${MAIN_SITE_URL}/dashboard`}>
+                  <PillButton>Dashboard</PillButton>
+                </a>
+                <UserButton afterSignOutUrl={MAIN_SITE_URL} />
+              </SignedIn>
+            </ClerkLoaded>
+          ) : (
+            /* Fallback when Clerk is not configured */
+            <>
               <a href={`${MAIN_SITE_URL}/sign-up`}>
                 <PillButton>Sign Up</PillButton>
               </a>
               <a href={`${MAIN_SITE_URL}/sign-in`}>
                 <PillButton variant="muted">Log In</PillButton>
               </a>
-            </SignedOut>
-            <SignedIn>
-              <a href={`${MAIN_SITE_URL}/dashboard`}>
-                <PillButton>Dashboard</PillButton>
-              </a>
-              <UserButton afterSignOutUrl={MAIN_SITE_URL} />
-            </SignedIn>
-          </ClerkLoaded>
+            </>
+          )}
         </div>
       </div>
     </header>
