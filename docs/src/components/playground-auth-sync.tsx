@@ -1,16 +1,15 @@
 'use client';
 
-import { useAuth } from '@clerk/clerk-react';
+import { ClerkLoaded, useAuth } from '@clerk/clerk-react';
 import { useEffect, useRef } from 'react';
 
 // Storage key matches the security scheme name in OpenAPI
 const AUTH_STORAGE_KEY = 'fumadocs-openapi-auth-Authorization';
 
 /**
- * Syncs Clerk JWT to the playground authorization field.
- * Uses MutationObserver to catch dynamically rendered inputs.
+ * Inner component that uses Clerk hooks - only rendered when Clerk is ready.
  */
-export function PlaygroundAuthSync() {
+function PlaygroundAuthSyncInner() {
   const { getToken, isSignedIn } = useAuth();
   const observerRef = useRef<MutationObserver | null>(null);
   const tokenRef = useRef<string | null>(null);
@@ -99,4 +98,17 @@ export function PlaygroundAuthSync() {
   }, [getToken, isSignedIn]);
 
   return null;
+}
+
+/**
+ * Syncs Clerk JWT to the playground authorization field.
+ * Uses MutationObserver to catch dynamically rendered inputs.
+ * Wrapped in ClerkLoaded to ensure Clerk is initialized before calling hooks.
+ */
+export function PlaygroundAuthSync() {
+  return (
+    <ClerkLoaded>
+      <PlaygroundAuthSyncInner />
+    </ClerkLoaded>
+  );
 }
