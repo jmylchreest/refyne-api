@@ -337,7 +337,7 @@ jobs:
     outputs:
       url: ${{ steps.deploy.outputs.deployment-url }}
     environment:
-      name: ${{ needs.prepare.outputs.environment }}-web
+      name: ${{ needs.prepare.outputs.environment }}
       url: ${{ steps.deploy.outputs.deployment-url }}
 
     steps:
@@ -407,7 +407,7 @@ jobs:
     outputs:
       url: ${{ steps.deploy.outputs.deployment-url }}
     environment:
-      name: ${{ needs.prepare.outputs.environment }}-web
+      name: ${{ needs.prepare.outputs.environment }}
       url: ${{ steps.deploy.outputs.deployment-url }}
 
     steps:
