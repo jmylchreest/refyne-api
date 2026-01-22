@@ -47,6 +47,51 @@ const SCHEMA_DATA = {
   ],
 };
 
+// Hand-crafted YAML with comments (js-yaml doesn't support comment generation)
+const SCHEMA_YAML_WITH_COMMENTS = `# Schema for extracting product data
+name: Product
+description: Extract product listing details including pricing and shipping.
+
+fields:
+  # Primary product identifier
+  - name: title
+    type: string
+    required: true
+
+  # Current selling price
+  - name: price
+    type: object
+    required: true
+    properties:
+      amount:
+        type: number
+      currency:
+        type: string
+
+  # Bulk discount tiers
+  - name: volume_pricing
+    type: array
+    items:
+      type: object
+      properties:
+        min_qty:
+          type: integer
+        amount:
+          type: number
+        currency:
+          type: string
+
+  # Delivery information
+  - name: shipping
+    type: object
+    properties:
+      cost:
+        type: number
+      currency:
+        type: string
+      estimated_days:
+        type: string`;
+
 // Single source of truth for output example
 const OUTPUT_DATA = {
   title: 'Premium Widget Pro',
@@ -88,6 +133,7 @@ function SyntaxHighlight({
           boolean: 'text-purple-600 dark:text-purple-400',
           punctuation: 'text-zinc-400',
           bracket: 'text-zinc-500',
+          comment: 'text-zinc-400 dark:text-zinc-500 italic',
         }
       : {
           key: 'text-emerald-400',
@@ -96,6 +142,7 @@ function SyntaxHighlight({
           boolean: 'text-purple-400',
           punctuation: 'text-zinc-500',
           bracket: 'text-zinc-500',
+          comment: 'text-zinc-500 italic',
         };
     if (format === 'yaml') {
       return content.split('\n').map((line, i) => {
@@ -103,6 +150,14 @@ function SyntaxHighlight({
         const parts: React.ReactNode[] = [];
         let remaining = line;
         let keyId = 0;
+
+        // Handle comment lines (full line comments)
+        const commentMatch = remaining.match(/^(\s*)(#.*)$/);
+        if (commentMatch) {
+          parts.push(<span key={`indent-${i}`}>{commentMatch[1]}</span>);
+          parts.push(<span key={`comment-${i}`} className={colors.comment}>{commentMatch[2]}</span>);
+          return <div key={i}>{parts}</div>;
+        }
 
         // Handle list items prefix
         const listMatch = remaining.match(/^(\s*)(- )(.*)/);
@@ -456,7 +511,7 @@ function SchemaDefinition({ compact = false }: { compact?: boolean }) {
 
   const content = useMemo(() => {
     if (format === 'yaml') {
-      return yaml.dump(SCHEMA_DATA, { lineWidth: -1, quotingType: '"', forceQuotes: false });
+      return SCHEMA_YAML_WITH_COMMENTS;
     }
     return JSON.stringify(SCHEMA_DATA, null, 2);
   }, [format]);
