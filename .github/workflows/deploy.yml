@@ -233,6 +233,30 @@ jobs:
         run: npm run lint
         working-directory: docs
 
+  # Run Demo build check (only if Demo changed)
+  test-demo:
+    name: Test Demo
+    runs-on: ubuntu-latest
+    needs: prepare
+    if: needs.prepare.outputs.demo_changed == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: demo/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: demo
+
+      - name: Build (validation)
+        run: npm run build
+        working-directory: demo
+
   # Build OpenAPI spec (needed if API, Web, or Docs changed)
   build-openapi:
     name: Build OpenAPI Spec
@@ -451,8 +475,11 @@ jobs:
   deploy-demo:
     name: Deploy Demo
     runs-on: ubuntu-latest
-    needs: [prepare]
-    if: needs.prepare.outputs.demo_changed == 'true'
+    needs: [prepare, test-demo]
+    if: |
+      always() &&
+      needs.prepare.outputs.demo_changed == 'true' &&
+      (needs.test-demo.result == 'success' || needs.test-demo.result == 'skipped')
     outputs:
       url: ${{ steps.deploy.outputs.deployment-url }}
 
