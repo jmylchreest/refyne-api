@@ -1,6 +1,6 @@
 'use client';
 
-import { useAuth } from '@clerk/nextjs';
+import { useAuth } from '@clerk/clerk-react';
 import { useEffect, useRef } from 'react';
 
 // Storage key matches the security scheme name in OpenAPI

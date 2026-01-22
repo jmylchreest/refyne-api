@@ -96,16 +96,21 @@ export default function Home() {
                 </p>
               </div>
               <div className="bg-zinc-900 dark:bg-zinc-950 rounded-lg border border-zinc-700/50 p-4 sm:p-6 font-mono text-xs sm:text-sm overflow-x-auto">
-                <div className="text-zinc-500 mb-2">{"// Your schema"}</div>
-                <div className="text-emerald-400">{'{'}</div>
-                <div className="pl-2 sm:pl-4 text-zinc-300">
-                  <span className="text-purple-400">&quot;products&quot;</span>: [{'{'}<br />
-                  <span className="pl-2 sm:pl-4 text-purple-400">&quot;name&quot;</span>: <span className="text-amber-400">&quot;string&quot;</span>,<br />
-                  <span className="pl-2 sm:pl-4 text-purple-400">&quot;price&quot;</span>: <span className="text-amber-400">&quot;number&quot;</span>,<br />
-                  <span className="pl-2 sm:pl-4 text-purple-400">&quot;inStock&quot;</span>: <span className="text-amber-400">&quot;boolean&quot;</span><br />
-                  {'}'}]
+                <div className="text-zinc-500 mb-2"># Your schema (JSON or YAML)</div>
+                <div className="text-purple-400">products:</div>
+                <div className="text-zinc-300 pl-2 sm:pl-4">
+                  <span>- </span>
+                  <span className="text-purple-400">name</span>: <span className="text-amber-400">string</span>
+                  <span className="text-zinc-500 pl-4"># Product display name</span>
                 </div>
-                <div className="text-emerald-400">{'}'}</div>
+                <div className="text-zinc-300 pl-4 sm:pl-8">
+                  <span className="text-purple-400">price</span>: <span className="text-amber-400">number</span>
+                  <span className="text-zinc-500 pl-3"># Price in local currency</span>
+                </div>
+                <div className="text-zinc-300 pl-4 sm:pl-8">
+                  <span className="text-purple-400">inStock</span>: <span className="text-amber-400">boolean</span>
+                  <span className="text-zinc-500 pl-1"># Availability status</span>
+                </div>
               </div>
             </div>
 

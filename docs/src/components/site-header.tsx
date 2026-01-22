@@ -1,14 +1,14 @@
 'use client';
 
 import Link from 'next/link';
-import { SignedIn, SignedOut, UserButton } from '@clerk/nextjs';
+import { SignedIn, SignedOut, UserButton } from '@clerk/clerk-react';
 import { RefyneLogo } from '@/components/refyne-logo';
 import { HeaderThemeToggle } from '@/components/header-theme-toggle';
 import { cn } from '@/lib/utils';
 import { useEffect, useState } from 'react';
 
-// Docs site URL for cross-site links
-const DOCS_SITE_URL = process.env.NEXT_PUBLIC_DOCS_SITE_URL || 'https://docs.refyne.uk';
+// Main site URL for cross-site links
+const MAIN_SITE_URL = process.env.NEXT_PUBLIC_MAIN_SITE_URL || 'https://refyne.uk';
 
 interface SiteHeaderProps {
   fixed?: boolean;
@@ -48,40 +48,40 @@ export function SiteHeader({ fixed = false }: SiteHeaderProps) {
       fixed ? "fixed top-0 left-0 right-0" : "sticky top-0"
     )}>
       <div className="relative flex h-16 items-center justify-between px-4">
-        <Link href="/" className="flex items-baseline">
+        <a href={MAIN_SITE_URL} className="flex items-baseline">
           <RefyneLogo size="md" />
           <span className="font-[family-name:var(--font-code)] text-[10px] font-semibold text-indigo-500 -translate-y-2 ml-0.5">
             BETA
           </span>
-        </Link>
+        </a>
         <nav className="hidden md:flex items-center gap-8 absolute left-1/2 -translate-x-1/2">
-          <Link href="/#capabilities" className="text-sm text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors">
+          <a href={`${MAIN_SITE_URL}/#capabilities`} className="text-sm text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors">
             Capabilities
-          </Link>
-          <Link href="/#pricing" className="text-sm text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors">
-            Pricing
-          </Link>
-          <a href={DOCS_SITE_URL} className="text-sm text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors">
-            Docs
           </a>
+          <a href={`${MAIN_SITE_URL}/#pricing`} className="text-sm text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors">
+            Pricing
+          </a>
+          <Link href="/" className="text-sm text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors">
+            Docs
+          </Link>
         </nav>
         <div className="flex items-center gap-2">
           <HeaderThemeToggle />
           {mounted && (
             <>
               <SignedOut>
-                <Link href="/sign-up">
+                <a href={`${MAIN_SITE_URL}/sign-up`}>
                   <PillButton>Sign Up</PillButton>
-                </Link>
-                <Link href="/sign-in">
+                </a>
+                <a href={`${MAIN_SITE_URL}/sign-in`}>
                   <PillButton variant="muted">Log In</PillButton>
-                </Link>
+                </a>
               </SignedOut>
               <SignedIn>
-                <Link href="/dashboard">
+                <a href={`${MAIN_SITE_URL}/dashboard`}>
                   <PillButton>Dashboard</PillButton>
-                </Link>
-                <UserButton afterSignOutUrl="/" />
+                </a>
+                <UserButton afterSignOutUrl={MAIN_SITE_URL} />
               </SignedIn>
             </>
           )}

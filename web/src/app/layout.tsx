@@ -114,7 +114,7 @@ export const metadata: Metadata = {
     description: siteConfig.description,
     images: [
       {
-        url: '/opengraph-image',
+        url: '/og-image.png',
         width: 1200,
         height: 630,
         alt: 'Refyne - AI-Powered Web Scraping API',
@@ -125,7 +125,7 @@ export const metadata: Metadata = {
     card: 'summary_large_image',
     title: siteConfig.title,
     description: siteConfig.description,
-    images: ['/twitter-image'],
+    images: ['/twitter-image.png'],
     creator: '@refaborin',
   },
   alternates: {
@@ -145,7 +145,7 @@ const jsonLd = {
       url: siteConfig.url,
       logo: {
         '@type': 'ImageObject',
-        url: `${siteConfig.url}/opengraph-image`,
+        url: `${siteConfig.url}/og-image.png`,
       },
       sameAs: [
         'https://github.com/jmylchreest/refyne-api',

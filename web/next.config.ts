@@ -1,10 +1,19 @@
-import { createMDX } from 'fumadocs-mdx/next';
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  images: {
+    unoptimized: true, // Disable image optimization to exclude sharp from bundle
+  },
+  experimental: {
+    // Optimize imports for packages that don't tree-shake well
+    optimizePackageImports: [
+      'lucide-react',
+      'recharts',
+      'date-fns',
+      '@radix-ui/react-icons',
+    ],
+  },
 };
 
-const withMDX = createMDX();
-
-export default withMDX(nextConfig);
+export default nextConfig;

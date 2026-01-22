@@ -5,6 +5,11 @@ on:
     branches: [main]
     tags:
       - "v*"
+    paths:
+      - "api/**"
+      - "web/**"
+      - "docs/**"
+      - ".github/workflows/deploy.yml"
   workflow_dispatch:
     inputs:
       environment:
@@ -15,6 +20,11 @@ on:
         options:
           - staging
           - production
+      deploy_all:
+        description: "Deploy all components (ignore path detection)"
+        required: false
+        default: false
+        type: boolean
 
 # Cancel in-progress runs for the same ref
 concurrency:
@@ -26,7 +36,7 @@ env:
   NODE_VERSION: "20"
 
 jobs:
-  # Determine deployment environment
+  # Detect what changed and determine deployment targets
   prepare:
     name: Prepare
     runs-on: ubuntu-latest
@@ -34,9 +44,68 @@ jobs:
       environment: ${{ steps.env.outputs.environment }}
       api_app: ${{ steps.env.outputs.api_app }}
       web_project: ${{ steps.env.outputs.web_project }}
+      docs_project: ${{ steps.env.outputs.docs_project }}
       api_url: ${{ steps.env.outputs.api_url }}
       web_url: ${{ steps.env.outputs.web_url }}
+      docs_url: ${{ steps.env.outputs.docs_url }}
+      # Change detection outputs
+      api_changed: ${{ steps.changes.outputs.api }}
+      web_changed: ${{ steps.changes.outputs.web }}
+      docs_changed: ${{ steps.changes.outputs.docs }}
+      deploy_all: ${{ steps.changes.outputs.deploy_all }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changes
+        id: changes
+        run: |
+          # For tags or workflow_dispatch with deploy_all, deploy everything
+          if [[ "${{ github.ref }}" == refs/tags/v* ]] || [[ "${{ inputs.deploy_all }}" == "true" ]]; then
+            echo "api=true" >> $GITHUB_OUTPUT
+            echo "web=true" >> $GITHUB_OUTPUT
+            echo "docs=true" >> $GITHUB_OUTPUT
+            echo "deploy_all=true" >> $GITHUB_OUTPUT
+            echo "Deploying all components (tag or deploy_all flag)"
+            exit 0
+          fi
+
+          echo "deploy_all=false" >> $GITHUB_OUTPUT
+
+          # Get changed files between HEAD and previous commit
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            CHANGED=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} 2>/dev/null || git diff --name-only HEAD~1 HEAD)
+          else
+            # For workflow_dispatch without deploy_all, check recent changes
+            CHANGED=$(git diff --name-only HEAD~1 HEAD)
+          fi
+
+          echo "Changed files:"
+          echo "$CHANGED"
+
+          # Check each component
+          if echo "$CHANGED" | grep -q "^api/"; then
+            echo "api=true" >> $GITHUB_OUTPUT
+            echo "API changed"
+          else
+            echo "api=false" >> $GITHUB_OUTPUT
+          fi
+
+          if echo "$CHANGED" | grep -q "^web/"; then
+            echo "web=true" >> $GITHUB_OUTPUT
+            echo "Web changed"
+          else
+            echo "web=false" >> $GITHUB_OUTPUT
+          fi
+
+          if echo "$CHANGED" | grep -q "^docs/"; then
+            echo "docs=true" >> $GITHUB_OUTPUT
+            echo "Docs changed"
+          else
+            echo "docs=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Determine environment
         id: env
         run: |
@@ -53,25 +122,30 @@ jobs:
           if [[ "$ENV" == "production" ]]; then
             echo "api_app=refyne-api" >> $GITHUB_OUTPUT
             echo "web_project=refyne-web-production" >> $GITHUB_OUTPUT
+            echo "docs_project=refyne-docs-production" >> $GITHUB_OUTPUT
             echo "api_url=https://api.refyne.uk" >> $GITHUB_OUTPUT
             echo "web_url=https://refyne.uk" >> $GITHUB_OUTPUT
+            echo "docs_url=https://docs.refyne.uk" >> $GITHUB_OUTPUT
           else
             echo "api_app=refyne-api-staging" >> $GITHUB_OUTPUT
             echo "web_project=refyne-web-staging" >> $GITHUB_OUTPUT
+            echo "docs_project=refyne-docs-staging" >> $GITHUB_OUTPUT
             echo "api_url=https://api-staging.refyne.uk" >> $GITHUB_OUTPUT
             echo "web_url=https://staging.refyne.uk" >> $GITHUB_OUTPUT
+            echo "docs_url=https://docs-staging.refyne.uk" >> $GITHUB_OUTPUT
           fi
 
           echo "Deploying to: ${ENV}"
 
-  # Run tests before deployment
-  test:
-    name: Test
+  # Run API tests (only if API changed)
+  test-api:
+    name: Test API
     runs-on: ubuntu-latest
+    needs: prepare
+    if: needs.prepare.outputs.api_changed == 'true'
     steps:
       - uses: actions/checkout@v4
 
-      # Configure Git for private Go modules
       - name: Configure Git for private modules
         run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
 
@@ -87,6 +161,15 @@ jobs:
         env:
           GOPRIVATE: github.com/jmylchreest/*
 
+  # Run Web tests (only if Web changed)
+  test-web:
+    name: Test Web
+    runs-on: ubuntu-latest
+    needs: prepare
+    if: needs.prepare.outputs.web_changed == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -94,19 +177,50 @@ jobs:
           cache: "npm"
           cache-dependency-path: web/package-lock.json
 
-      - name: Install web dependencies
+      - name: Install dependencies
         run: npm ci
         working-directory: web
 
-      - name: Lint web
+      - name: Lint
         run: npm run lint
         working-directory: web
 
-  # Build OpenAPI spec using refyne-openapi binary
+  # Run Docs tests (only if Docs changed)
+  test-docs:
+    name: Test Docs
+    runs-on: ubuntu-latest
+    needs: prepare
+    if: needs.prepare.outputs.docs_changed == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: docs/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: docs
+
+      - name: Lint
+        run: npm run lint
+        working-directory: docs
+
+  # Build OpenAPI spec (needed if API, Web, or Docs changed)
   build-openapi:
     name: Build OpenAPI Spec
     runs-on: ubuntu-latest
-    needs: test
+    needs: [prepare, test-api]
+    # Run if API changed (and tests passed), or if web/docs need fresh spec
+    if: |
+      always() &&
+      (needs.prepare.outputs.api_changed == 'true' ||
+       needs.prepare.outputs.web_changed == 'true' ||
+       needs.prepare.outputs.docs_changed == 'true') &&
+      (needs.test-api.result == 'success' || needs.test-api.result == 'skipped')
     steps:
       - uses: actions/checkout@v4
 
@@ -140,7 +254,11 @@ jobs:
   deploy-api:
     name: Deploy API (${{ needs.prepare.outputs.environment }})
     runs-on: ubuntu-latest
-    needs: [prepare, test]
+    needs: [prepare, test-api]
+    if: |
+      always() &&
+      needs.prepare.outputs.api_changed == 'true' &&
+      needs.test-api.result == 'success'
     environment:
       name: ${{ needs.prepare.outputs.environment }}
       url: ${{ needs.prepare.outputs.api_url }}
@@ -185,7 +303,13 @@ jobs:
   deploy-web:
     name: Deploy Web (${{ needs.prepare.outputs.environment }})
     runs-on: ubuntu-latest
-    needs: [prepare, build-openapi, deploy-api]
+    needs: [prepare, test-web, build-openapi, deploy-api]
+    if: |
+      always() &&
+      needs.prepare.outputs.web_changed == 'true' &&
+      (needs.test-web.result == 'success' || needs.test-web.result == 'skipped') &&
+      needs.build-openapi.result == 'success' &&
+      (needs.deploy-api.result == 'success' || needs.deploy-api.result == 'skipped')
     outputs:
       url: ${{ steps.deploy.outputs.deployment-url }}
     environment:
@@ -225,8 +349,14 @@ jobs:
           {
             "$schema": "node_modules/wrangler/config-schema.json",
             "name": "${{ needs.prepare.outputs.web_project }}",
+            "main": ".open-next/worker.js",
             "compatibility_date": "2025-01-01",
-            "compatibility_flags": ["nodejs_compat"]
+            "compatibility_flags": ["nodejs_compat"],
+            "minify": true,
+            "assets": {
+              "directory": ".open-next/assets",
+              "binding": "ASSETS"
+            }
           }
           EOF
         working-directory: web
@@ -239,22 +369,83 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
+  # Deploy Docs to Cloudflare Pages (static export)
+  deploy-docs:
+    name: Deploy Docs (${{ needs.prepare.outputs.environment }})
+    runs-on: ubuntu-latest
+    needs: [prepare, test-docs, build-openapi, deploy-api]
+    if: |
+      always() &&
+      needs.prepare.outputs.docs_changed == 'true' &&
+      (needs.test-docs.result == 'success' || needs.test-docs.result == 'skipped') &&
+      needs.build-openapi.result == 'success' &&
+      (needs.deploy-api.result == 'success' || needs.deploy-api.result == 'skipped')
+    outputs:
+      url: ${{ steps.deploy.outputs.deployment-url }}
+    environment:
+      name: ${{ needs.prepare.outputs.environment }}-docs
+      url: ${{ steps.deploy.outputs.deployment-url }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: docs/package-lock.json
+
+      - name: Download OpenAPI spec
+        uses: actions/download-artifact@v4
+        with:
+          name: openapi-spec
+          path: docs
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: docs
+
+      - name: Build static site
+        run: npm run build
+        working-directory: docs
+        env:
+          NEXT_PUBLIC_API_URL: ${{ needs.prepare.outputs.api_url }}
+          NEXT_PUBLIC_MAIN_SITE_URL: ${{ needs.prepare.outputs.web_url }}
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
+
+      - name: Deploy to Cloudflare Pages
+        id: deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy out --project-name=${{ needs.prepare.outputs.docs_project }}
+          workingDirectory: docs
+
   # Post-deployment notification
   notify:
     name: Notify
     runs-on: ubuntu-latest
-    needs: [prepare, deploy-api, deploy-web]
-    if: always() && (needs.deploy-api.result == 'success' || needs.deploy-web.result == 'success')
+    needs: [prepare, deploy-api, deploy-web, deploy-docs]
+    if: always()
     steps:
       - name: Deployment summary
         run: |
           echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Environment:** ${{ needs.prepare.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
-          echo "**API:** ${{ needs.prepare.outputs.api_url }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Web:** ${{ needs.deploy-web.outputs.url || needs.prepare.outputs.web_url }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Component | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| API | ${{ needs.deploy-api.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Web | ${{ needs.deploy-web.result }} |" >> $GITHUB_STEP_SUMMARY
+
+          echo "### Changes Detected" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Changed | Result |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|---------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| API | ${{ needs.prepare.outputs.api_changed }} | ${{ needs.deploy-api.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Web | ${{ needs.prepare.outputs.web_changed }} | ${{ needs.deploy-web.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docs | ${{ needs.prepare.outputs.docs_changed }} | ${{ needs.deploy-docs.result }} |" >> $GITHUB_STEP_SUMMARY
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### URLs" >> $GITHUB_STEP_SUMMARY
+          echo "- **API:** ${{ needs.prepare.outputs.api_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Web:** ${{ needs.deploy-web.outputs.url || needs.prepare.outputs.web_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Docs:** ${{ needs.deploy-docs.outputs.url || needs.prepare.outputs.docs_url }}" >> $GITHUB_STEP_SUMMARY

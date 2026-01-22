@@ -2,15 +2,12 @@ import { DocsLayout } from 'fumadocs-ui/layouts/docs';
 import { RootProvider } from 'fumadocs-ui/provider/next';
 import type { ReactNode } from 'react';
 import { source } from '@/lib/source';
-import { SiteHeader } from '@/components/site-header';
-import { PlaygroundAuthSync } from '@/components/playground-auth-sync';
+import { ClientProviders } from '@/components/client-providers';
 
 export default function Layout({ children }: { children: ReactNode }) {
   return (
     <RootProvider>
-      <PlaygroundAuthSync />
-      <div className="flex flex-col min-h-screen">
-        <SiteHeader />
+      <ClientProviders>
         <DocsLayout
           tree={source.pageTree}
           nav={{
@@ -25,7 +22,7 @@ export default function Layout({ children }: { children: ReactNode }) {
         >
           {children}
         </DocsLayout>
-      </div>
+      </ClientProviders>
     </RootProvider>
   );
 }

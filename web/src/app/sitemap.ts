@@ -1,11 +1,11 @@
 import { MetadataRoute } from 'next';
-import { source } from '@/lib/source';
 
 const BASE_URL = 'https://refyne.uk';
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  // Static pages
-  const staticPages: MetadataRoute.Sitemap = [
+  // Static pages for main site
+  // Documentation is now at docs.refyne.uk (separate sitemap)
+  return [
     {
       url: BASE_URL,
       lastModified: new Date(),
@@ -25,14 +25,4 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       priority: 0.3,
     },
   ];
-
-  // Documentation pages from Fumadocs
-  const docPages: MetadataRoute.Sitemap = source.getPages().map((page) => ({
-    url: `${BASE_URL}${page.url}`,
-    lastModified: new Date(),
-    changeFrequency: 'weekly' as const,
-    priority: 0.8,
-  }));
-
-  return [...staticPages, ...docPages];
 }

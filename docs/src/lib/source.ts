@@ -102,7 +102,7 @@ const folderNamePlugin: LoaderPlugin = {
 };
 
 export const source = loader({
-  baseUrl: '/docs',
+  baseUrl: '/', // Docs served from root on docs.refyne.uk
   source: multiple({
     docs: docs.toFumadocsSource(),
     openapi: openapiPages,

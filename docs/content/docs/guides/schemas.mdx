@@ -1,0 +1,161 @@
+---
+title: Schemas
+description: Define schemas for consistent data extraction
+---
+
+Schemas define the structure of the data you want to extract. Well-designed schemas produce better, more consistent results.
+
+## Schema Basics
+
+Schemas can be defined in **YAML** (recommended) or JSON. YAML is preferred because it supports comments, making schemas self-documenting:
+
+```yaml
+# Product extraction schema
+title: string       # The main product title
+price: number       # Price in the page's currency
+available: boolean  # Whether the item is in stock
+```
+
+The equivalent JSON:
+
+```json
+{
+  "title": "string",
+  "price": "number",
+  "available": "boolean"
+}
+```
+
+## Type Reference
+
+### Primitives
+
+```yaml
+name: string    # Text values
+count: number   # Numeric values (integers or decimals)
+active: boolean # true/false values
+```
+
+### Arrays
+
+```yaml
+# Simple arrays
+tags: [string]      # Array of strings
+prices: [number]    # Array of numbers
+
+# Array of objects
+items:
+  - name: string    # Item name
+    qty: number     # Quantity in stock
+```
+
+### Nested Objects
+
+```yaml
+product:
+  name: string      # Product display name
+  brand:
+    name: string    # Brand name
+    country: string # Country of origin
+```
+
+## Best Practices
+
+### Be Specific with Field Names
+
+Use descriptive field names - they guide the LLM's extraction:
+
+```yaml
+# Good - descriptive names guide extraction
+product_name: string      # The main product title
+price_usd: number         # Price in US dollars
+stock_quantity: number    # Number of units available
+
+# Less effective - generic names
+name: string
+price: number
+qty: number
+```
+
+### Use Comments to Clarify Intent
+
+Comments help the LLM understand exactly what you want:
+
+```yaml
+# E-commerce product schema
+title: string           # The main product heading, not brand name
+price: number           # Current sale price, not original/RRP
+rating: number          # Average rating as a decimal (e.g., 4.5)
+rating_text: string     # Full rating text (e.g., "4.5 out of 5 stars")
+review_count: number    # Total number of reviews as integer
+```
+
+### Match Types to Expected Data
+
+Choose types that match the actual data format:
+
+```yaml
+rating: number        # 4.5 - when you need the numeric value
+rating_text: string   # "4.5 out of 5" - when you need the full text
+review_count: number  # 1234 - numeric count
+price: number         # 29.99 - for calculations
+price_text: string    # "$29.99" - preserves currency symbol
+```
+
+### Handle Missing Data
+
+The LLM will return `null` for fields it cannot find. Design schemas to handle this gracefully.
+
+## Schema Catalog
+
+Save and reuse schemas via the API:
+
+```bash
+# Create a reusable schema
+curl -X POST https://api.refyne.uk/api/v1/schemas \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "E-commerce Product",
+    "schema_yaml": "# Product details\nname: string      # Product title\nprice: number     # Current price\ndescription: string"
+  }'
+```
+
+## Complete Example
+
+A comprehensive e-commerce schema with comments:
+
+```yaml
+# E-commerce product extraction schema
+# Use this for extracting product data from online stores
+
+product:
+  name: string              # Main product title
+  brand: string             # Manufacturer or brand name
+  sku: string               # Product SKU or model number
+
+  pricing:
+    current: number         # Current/sale price
+    original: number        # Original price before discount
+    currency: string        # Currency code (USD, GBP, EUR)
+
+  availability:
+    in_stock: boolean       # Whether item can be purchased
+    quantity: number        # Stock count if displayed
+    shipping: string        # Shipping information
+
+  details:
+    description: string     # Full product description
+    specifications:
+      - key: string         # Spec name (e.g., "Weight")
+        value: string       # Spec value (e.g., "2.5 kg")
+
+  reviews:
+    average_rating: number  # Rating out of 5
+    review_count: number    # Total number of reviews
+    recent:
+      - author: string      # Reviewer name
+        rating: number      # Individual rating
+        text: string        # Review content
+        date: string        # Review date
+```

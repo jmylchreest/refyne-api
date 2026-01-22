@@ -1,5 +1,10 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "fumadocs-ui/css/shadcn.css";
+@import "fumadocs-ui/css/preset.css";
+@import "fumadocs-openapi/css/preset.css";
+
+@source "../node_modules/fumadocs-ui/dist/**/*.js";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -132,64 +137,6 @@
   font-style: italic;
 }
 
-/* Minimal block-style scrollbar for schema box */
-.schema-scrollbar {
-  scrollbar-width: thin;
-  scrollbar-color: rgb(129 140 248 / 0.3) transparent;
-}
-
-.schema-scrollbar::-webkit-scrollbar {
-  width: 6px;
-}
-
-.schema-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.schema-scrollbar::-webkit-scrollbar-thumb {
-  background: rgb(129 140 248 / 0.3);
-  border-radius: 0;
-}
-
-.schema-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgb(129 140 248 / 0.5);
-}
-
-.dark .schema-scrollbar {
-  scrollbar-color: rgb(129 140 248 / 0.25) transparent;
-}
-
-.dark .schema-scrollbar::-webkit-scrollbar-thumb {
-  background: rgb(129 140 248 / 0.25);
-}
-
-.dark .schema-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgb(129 140 248 / 0.4);
-}
-
-/* Minimal block-style scrollbar for output box */
-.output-scrollbar {
-  scrollbar-width: thin;
-  scrollbar-color: rgb(52 211 153 / 0.3) transparent;
-}
-
-.output-scrollbar::-webkit-scrollbar {
-  width: 6px;
-}
-
-.output-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.output-scrollbar::-webkit-scrollbar-thumb {
-  background: rgb(52 211 153 / 0.3);
-  border-radius: 0;
-}
-
-.output-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgb(52 211 153 / 0.5);
-}
-
 /* Clerk dark mode overrides */
 .dark .cl-userButtonPopoverCard,
 .dark .cl-userButtonPopoverMain,
@@ -223,4 +170,20 @@
 
 .dark .cl-userPreviewSecondaryIdentifier {
   color: rgb(161 161 170); /* zinc-400 */
+}
+
+/* Simplify playground authorization section */
+/* Hide the security scheme selector dropdown - we only have one auth method */
+[data-radix-collapsible-content] > button[role="combobox"],
+[data-radix-collapsible-content] > [data-radix-select-trigger] {
+  display: none !important;
+}
+
+/* Fix fumadocs sidebar scrolling when using custom header */
+/* The sidebar calculates its position using --fd-docs-row-1 which defaults to 0 */
+/* We need to set it to our header height (h-16 = 4rem) */
+.grid.overflow-x-clip {
+  --fd-docs-row-1: 4rem !important;
+  /* Fix sidebar columns to not grow beyond their content width */
+  grid-template-columns: minmax(0, var(--fd-sidebar-width)) 1fr minmax(0, var(--fd-toc-width)) !important;
 }
