@@ -1,11 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { SignedIn, SignedOut, UserButton } from '@clerk/clerk-react';
+import { ClerkLoaded, SignedIn, SignedOut, UserButton } from '@clerk/clerk-react';
 import { RefyneLogo } from '@/components/refyne-logo';
 import { HeaderThemeToggle } from '@/components/header-theme-toggle';
 import { cn } from '@/lib/utils';
-import { useEffect, useState } from 'react';
 
 // Main site URL for cross-site links
 const MAIN_SITE_URL = process.env.NEXT_PUBLIC_MAIN_SITE_URL || 'https://refyne.uk';
@@ -35,13 +34,6 @@ function PillButton({
 }
 
 export function SiteHeader({ fixed = false }: SiteHeaderProps) {
-  // Prevent hydration mismatch by deferring auth UI until mounted
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
   return (
     <header className={cn(
       "border-b border-zinc-200/50 dark:border-zinc-800/50 backdrop-blur-sm bg-zinc-50/80 dark:bg-zinc-950/80 z-50",
@@ -67,24 +59,23 @@ export function SiteHeader({ fixed = false }: SiteHeaderProps) {
         </nav>
         <div className="flex items-center gap-2">
           <HeaderThemeToggle />
-          {mounted && (
-            <>
-              <SignedOut>
-                <a href={`${MAIN_SITE_URL}/sign-up`}>
-                  <PillButton>Sign Up</PillButton>
-                </a>
-                <a href={`${MAIN_SITE_URL}/sign-in`}>
-                  <PillButton variant="muted">Log In</PillButton>
-                </a>
-              </SignedOut>
-              <SignedIn>
-                <a href={`${MAIN_SITE_URL}/dashboard`}>
-                  <PillButton>Dashboard</PillButton>
-                </a>
-                <UserButton afterSignOutUrl={MAIN_SITE_URL} />
-              </SignedIn>
-            </>
-          )}
+          {/* ClerkLoaded ensures Clerk is initialized before rendering auth UI */}
+          <ClerkLoaded>
+            <SignedOut>
+              <a href={`${MAIN_SITE_URL}/sign-up`}>
+                <PillButton>Sign Up</PillButton>
+              </a>
+              <a href={`${MAIN_SITE_URL}/sign-in`}>
+                <PillButton variant="muted">Log In</PillButton>
+              </a>
+            </SignedOut>
+            <SignedIn>
+              <a href={`${MAIN_SITE_URL}/dashboard`}>
+                <PillButton>Dashboard</PillButton>
+              </a>
+              <UserButton afterSignOutUrl={MAIN_SITE_URL} />
+            </SignedIn>
+          </ClerkLoaded>
         </div>
       </div>
     </header>
