@@ -143,20 +143,35 @@ jobs:
 
           echo "environment=${ENV}" >> $GITHUB_OUTPUT
 
+          # Use environment variables if set, otherwise use defaults
           if [[ "$ENV" == "production" ]]; then
-            echo "api_app=refyne-api" >> $GITHUB_OUTPUT
-            echo "web_project=refyne-web-production" >> $GITHUB_OUTPUT
-            echo "docs_project=refyne-docs-production" >> $GITHUB_OUTPUT
-            echo "api_url=https://api.refyne.uk" >> $GITHUB_OUTPUT
-            echo "web_url=https://refyne.uk" >> $GITHUB_OUTPUT
-            echo "docs_url=https://docs.refyne.uk" >> $GITHUB_OUTPUT
+            API_APP="${{ vars.API_APP }}"
+            WEB_PROJECT="${{ vars.WEB_PROJECT }}"
+            DOCS_PROJECT="${{ vars.DOCS_PROJECT }}"
+            API_URL="${{ vars.API_URL }}"
+            WEB_URL="${{ vars.WEB_URL }}"
+            DOCS_URL="${{ vars.DOCS_URL }}"
+
+            echo "api_app=${API_APP:-refyne-api}" >> $GITHUB_OUTPUT
+            echo "web_project=${WEB_PROJECT:-refyne-web-production}" >> $GITHUB_OUTPUT
+            echo "docs_project=${DOCS_PROJECT:-refyne-docs-production}" >> $GITHUB_OUTPUT
+            echo "api_url=${API_URL:-https://api.refyne.uk}" >> $GITHUB_OUTPUT
+            echo "web_url=${WEB_URL:-https://refyne.uk}" >> $GITHUB_OUTPUT
+            echo "docs_url=${DOCS_URL:-https://docs.refyne.uk}" >> $GITHUB_OUTPUT
           else
-            echo "api_app=refyne-api-staging" >> $GITHUB_OUTPUT
-            echo "web_project=refyne-web-staging" >> $GITHUB_OUTPUT
-            echo "docs_project=refyne-docs-staging" >> $GITHUB_OUTPUT
-            echo "api_url=https://api-staging.refyne.uk" >> $GITHUB_OUTPUT
-            echo "web_url=https://staging.refyne.uk" >> $GITHUB_OUTPUT
-            echo "docs_url=https://docs-staging.refyne.uk" >> $GITHUB_OUTPUT
+            API_APP="${{ vars.API_APP_STAGING }}"
+            WEB_PROJECT="${{ vars.WEB_PROJECT_STAGING }}"
+            DOCS_PROJECT="${{ vars.DOCS_PROJECT_STAGING }}"
+            API_URL="${{ vars.API_URL_STAGING }}"
+            WEB_URL="${{ vars.WEB_URL_STAGING }}"
+            DOCS_URL="${{ vars.DOCS_URL_STAGING }}"
+
+            echo "api_app=${API_APP:-refyne-api-staging}" >> $GITHUB_OUTPUT
+            echo "web_project=${WEB_PROJECT:-refyne-web-staging}" >> $GITHUB_OUTPUT
+            echo "docs_project=${DOCS_PROJECT:-refyne-docs-staging}" >> $GITHUB_OUTPUT
+            echo "api_url=${API_URL:-https://api-staging.refyne.uk}" >> $GITHUB_OUTPUT
+            echo "web_url=${WEB_URL:-https://staging.refyne.uk}" >> $GITHUB_OUTPUT
+            echo "docs_url=${DOCS_URL:-https://docs-staging.refyne.uk}" >> $GITHUB_OUTPUT
           fi
 
           echo "Deploying to: ${ENV}"
