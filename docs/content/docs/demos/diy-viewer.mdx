@@ -1,0 +1,243 @@
+---
+title: DIY Viewer
+description: A DIY tutorial viewer that extracts project guides from sites like Instructables
+---
+
+# DIY Viewer Demo
+
+The DIY Viewer demonstrates how to extract complex, multi-step tutorial content using Refyne's extraction API. It pulls tutorials from DIY sites like Instructables, including materials lists, step-by-step instructions, and helpful resource links.
+
+<Callout type="info">
+  Try it live at [diyviewer-demo.refyne.uk](https://diyviewer-demo.refyne.uk)
+</Callout>
+
+## Features
+
+- **Tutorial Extraction**: Paste any DIY tutorial URL and extract structured data
+- **Smart Filtering**: Automatically skips useless steps (intros, conclusions, promotional content)
+- **Purchase Links**: Materials include links to buy them from Amazon and other retailers
+- **Helpful Resources**: Steps include related YouTube tutorials and guides
+- **Materials Checklist**: Track what materials you have for your project
+- **Step Navigation**: Easy previous/next navigation between steps
+
+## How It Works
+
+The app uses a YAML schema with intelligent instructions to extract clean, actionable tutorial data:
+
+```yaml
+name: DIYTutorial
+description: |
+  Extracts tutorial information from DIY sites like Instructables.
+  IMPORTANT: Only include steps that contain actual actionable instructions.
+  Skip and exclude any steps that are:
+  - Introduction or overview steps (this goes in the overview field instead)
+  - Conclusion, summary, or "final thoughts" steps
+  - Steps asking users to subscribe, follow, or vote
+  - Steps promoting other content or products
+  - Steps with only images and no real instructions
+  - "Supplies" or "Materials" steps (these go in materials_and_tools instead)
+  Renumber the remaining steps sequentially starting from 1.
+
+fields:
+  - name: title
+    type: string
+    required: true
+    description: The title of the tutorial/project
+
+  - name: overview
+    type: string
+    required: true
+    description: A descriptive summary of what this tutorial covers
+
+  - name: image_url
+    type: string
+    description: URL of the main project image
+
+  - name: difficulty
+    type: string
+    description: Difficulty level (Beginner, Intermediate, Advanced)
+
+  - name: estimated_time
+    type: string
+    description: Estimated time to complete (e.g., "2-3 hours")
+
+  - name: materials_and_tools
+    type: array
+    description: List of materials and tools needed
+    items:
+      type: object
+      properties:
+        item:
+          type: string
+          required: true
+          description: Name of the material or tool
+        quantity:
+          type: string
+          description: Amount needed
+        notes:
+          type: string
+          description: Additional notes (sizes, alternatives)
+        purchase_url:
+          type: string
+          description: URL to buy this item (Amazon search URL if specific link unavailable)
+
+  - name: steps
+    type: array
+    description: Step-by-step instructions (actionable steps only)
+    items:
+      type: object
+      properties:
+        step_number:
+          type: integer
+          required: true
+          description: Step number in sequence
+        title:
+          type: string
+          required: true
+          description: Title of this step
+        instructions:
+          type: string
+          required: true
+          description: Detailed instructions
+        tips:
+          type: string
+          description: Tips or warnings for this step
+        image_urls:
+          type: array
+          description: URLs of images for this step
+          items:
+            type: string
+        helpful_links:
+          type: array
+          description: External resources (tutorials, videos, product links)
+          items:
+            type: object
+            properties:
+              title:
+                type: string
+                required: true
+              url:
+                type: string
+                required: true
+              type:
+                type: string
+                description: One of "tutorial", "video", "product", "reference"
+```
+
+## API Integration
+
+The TypeScript code that calls the Refyne API:
+
+```typescript
+export async function extractTutorial(
+  url: string,
+  apiUrl: string,
+  apiKey: string
+): Promise<RefyneResponse> {
+  const response = await fetch(`${apiUrl}/api/v1/extract`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      url,
+      schema: TUTORIAL_SCHEMA,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    return {
+      success: false,
+      error: errorData.error || `API error: ${response.status}`,
+    };
+  }
+
+  const data = await response.json();
+  return {
+    success: true,
+    data: data.data || data,
+  };
+}
+```
+
+## Response Example
+
+When you extract a tutorial, Refyne returns structured data like this:
+
+```json
+{
+  "title": "Build a Simple Bookshelf",
+  "overview": "Learn how to build a sturdy wooden bookshelf using basic tools and materials. Perfect for beginners looking to get into woodworking.",
+  "image_url": "https://example.com/bookshelf.jpg",
+  "difficulty": "Beginner",
+  "estimated_time": "4-6 hours",
+  "materials_and_tools": [
+    {
+      "item": "Pine boards (1x10x6ft)",
+      "quantity": "4",
+      "purchase_url": "https://www.amazon.com/s?k=pine+board+1x10"
+    },
+    {
+      "item": "Wood screws (2 inch)",
+      "quantity": "1 box",
+      "purchase_url": "https://www.amazon.com/s?k=wood+screws+2+inch"
+    },
+    {
+      "item": "Drill/Driver",
+      "notes": "Cordless recommended",
+      "purchase_url": "https://www.amazon.com/s?k=cordless+drill"
+    }
+  ],
+  "steps": [
+    {
+      "step_number": 1,
+      "title": "Cut the Side Panels",
+      "instructions": "Measure and mark your pine boards at 36 inches. Use a circular saw or hand saw to make straight cuts.",
+      "tips": "Clamp a straight edge as a guide for cleaner cuts",
+      "helpful_links": [
+        {
+          "title": "How to Make Straight Cuts with a Circular Saw",
+          "url": "https://www.youtube.com/results?search_query=straight+cuts+circular+saw",
+          "type": "video"
+        }
+      ]
+    },
+    {
+      "step_number": 2,
+      "title": "Mark Shelf Positions",
+      "instructions": "Measure and mark where each shelf will go. Space them evenly at 10 inches apart.",
+      "image_urls": ["https://example.com/marking.jpg"]
+    }
+  ]
+}
+```
+
+## Tech Stack
+
+The demo is built with:
+
+- **[Astro](https://astro.build/)** - Static site generator with SSR support
+- **[Cloudflare Pages](https://pages.cloudflare.com/)** - Hosting with edge functions
+- **[Cloudflare D1](https://developers.cloudflare.com/d1/)** - SQLite database at the edge
+- **[Tailwind CSS](https://tailwindcss.com/)** - Styling
+
+## Source Code
+
+The complete source code is available in the [refyne-demos](https://github.com/jmylchreest/refyne-demos) repository.
+
+Key files:
+- `diyviewer/src/lib/refyne.ts` - Refyne API client and schema
+- `diyviewer/src/lib/db.ts` - Database operations
+- `diyviewer/src/pages/add.astro` - Tutorial extraction page
+- `diyviewer/src/pages/tutorial/[id].astro` - Tutorial detail page
+- `diyviewer/src/pages/checklist.astro` - Materials checklist
+
+## Try It Yourself
+
+1. Visit [diyviewer-demo.refyne.uk](https://diyviewer-demo.refyne.uk)
+2. Click "Add Project"
+3. Paste a tutorial URL from [Instructables](https://www.instructables.com/)
+4. See the extracted data with purchase links and helpful resources
+5. Save it to your project list and track materials with the checklist
