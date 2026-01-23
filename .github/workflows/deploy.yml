@@ -558,6 +558,25 @@ jobs:
           cache: "npm"
           cache-dependency-path: recipeapp/package-lock.json
 
+      - name: Generate wrangler.toml
+        run: |
+          cat > wrangler.toml << 'EOF'
+          name = "refyne-recipeapp"
+          compatibility_date = "2025-01-01"
+          compatibility_flags = ["nodejs_compat"]
+          pages_build_output_dir = "dist"
+
+          [[d1_databases]]
+          binding = "DB"
+          database_name = "refyne-recipeapp-db"
+          database_id = "${{ secrets.RECIPEAPP_D1_DATABASE_ID }}"
+
+          [vars]
+          REFYNE_API_URL = "https://api.refyne.uk"
+          DEMO_API_KEY = "${{ secrets.RECIPEAPP_DEMO_API_KEY }}"
+          EOF
+        working-directory: recipeapp
+
       - name: Install dependencies
         run: npm ci
         working-directory: recipeapp
