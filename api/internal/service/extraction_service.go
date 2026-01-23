@@ -531,8 +531,16 @@ func (s *ExtractionService) Crawl(ctx context.Context, userID string, input Craw
 		return nil, fmt.Errorf("invalid schema: %w", err)
 	}
 
+	// Enrich cleaner chain with crawl selectors as keep selectors
+	// This ensures elements matching FollowSelector/NextSelector are preserved during cleaning
+	enrichedCleanerChain := EnrichCleanerChainWithCrawlSelectors(
+		input.CleanerChain,
+		input.Options.FollowSelector,
+		input.Options.NextSelector,
+	)
+
 	// Create refyne instance with configured cleaner
-	r, cleanerName, err := s.createRefyneInstance(llmCfg, input.CleanerChain)
+	r, cleanerName, err := s.createRefyneInstance(llmCfg, enrichedCleanerChain)
 	if err != nil {
 		return nil, s.handleLLMError(err, llmCfg, isBYOK)
 	}
@@ -771,8 +779,16 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 		return nil, fmt.Errorf("invalid schema: %w", err)
 	}
 
+	// Enrich cleaner chain with crawl selectors as keep selectors
+	// This ensures elements matching FollowSelector/NextSelector are preserved during cleaning
+	enrichedCleanerChain := EnrichCleanerChainWithCrawlSelectors(
+		input.CleanerChain,
+		input.Options.FollowSelector,
+		input.Options.NextSelector,
+	)
+
 	// Create refyne instance with configured cleaner
-	r, cleanerName, err := s.createRefyneInstance(llmCfg, input.CleanerChain)
+	r, cleanerName, err := s.createRefyneInstance(llmCfg, enrichedCleanerChain)
 	if err != nil {
 		return nil, s.handleLLMError(err, llmCfg, isBYOK)
 	}

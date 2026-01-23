@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/jmylchreest/refyne/pkg/cleaner"
+	refynecleaner "github.com/jmylchreest/refyne/pkg/cleaner/refyne"
 )
 
 // CleanerType represents a named content cleaner type.
@@ -23,6 +24,9 @@ const (
 
 	// CleanerReadability extracts main content using Mozilla Readability algorithm.
 	CleanerReadability CleanerType = "readability"
+
+	// CleanerRefyne is our custom configurable cleaner with heuristic-based cleaning.
+	CleanerRefyne CleanerType = "refyne"
 )
 
 // DefaultExtractionCleaner is the default cleaner chain for extraction operations.
@@ -61,6 +65,15 @@ type CleanerOptions struct {
 
 	// BaseURL: base URL for resolving relative links (readability)
 	BaseURL string `json:"base_url,omitempty"`
+
+	// Preset: refyne preset name ("default", "minimal", "aggressive")
+	Preset string `json:"preset,omitempty"`
+
+	// RemoveSelectors: CSS selectors to remove (refyne)
+	RemoveSelectors []string `json:"remove_selectors,omitempty"`
+
+	// KeepSelectors: CSS selectors to always keep (refyne, overrides removals)
+	KeepSelectors []string `json:"keep_selectors,omitempty"`
 }
 
 // CleanerConfig defines a single cleaner in a chain.
@@ -79,6 +92,7 @@ func ValidCleanerTypes() []CleanerType {
 		CleanerMarkdown,
 		CleanerTrafilatura,
 		CleanerReadability,
+		CleanerRefyne,
 	}
 }
 
@@ -116,6 +130,9 @@ func (f *CleanerFactory) Create(config CleanerConfig) (cleaner.Cleaner, error) {
 
 	case CleanerReadability:
 		return f.createReadability(config.Options), nil
+
+	case CleanerRefyne:
+		return f.createRefyne(config.Options), nil
 
 	default:
 		return nil, fmt.Errorf("unknown cleaner type: %s", config.Name)
@@ -165,6 +182,35 @@ func (f *CleanerFactory) createReadability(opts *CleanerOptions) cleaner.Cleaner
 	}
 
 	return cleaner.NewReadability(cfg)
+}
+
+// createRefyne creates a Refyne cleaner with optional config.
+// The Refyne cleaner is our custom heuristic-based cleaner that's highly configurable.
+func (f *CleanerFactory) createRefyne(opts *CleanerOptions) cleaner.Cleaner {
+	// Start with default config
+	cfg := refynecleaner.DefaultConfig()
+
+	if opts != nil {
+		// Apply preset if specified
+		switch opts.Preset {
+		case "minimal":
+			cfg = refynecleaner.PresetMinimal()
+		case "aggressive":
+			cfg = refynecleaner.PresetAggressive()
+		}
+
+		// Append custom remove selectors
+		if len(opts.RemoveSelectors) > 0 {
+			cfg.RemoveSelectors = append(cfg.RemoveSelectors, opts.RemoveSelectors...)
+		}
+
+		// Append custom keep selectors
+		if len(opts.KeepSelectors) > 0 {
+			cfg.KeepSelectors = append(cfg.KeepSelectors, opts.KeepSelectors...)
+		}
+	}
+
+	return refynecleaner.New(cfg)
 }
 
 // CreateChain creates a cleaner chain from a list of configs.
@@ -277,6 +323,15 @@ func GetAvailableCleaners() []CleanerInfo {
 				{Name: "base_url", Type: "string", Default: "", Description: "Base URL for resolving relative links"},
 			},
 		},
+		{
+			Name:        "refyne",
+			Description: "Custom configurable cleaner with heuristic-based HTML cleaning. Removes scripts, styles, hidden elements while preserving content structure.",
+			Options: []CleanerOptionInfo{
+				{Name: "preset", Type: "string", Default: "default", Description: "Preset: 'default', 'minimal', or 'aggressive'"},
+				{Name: "remove_selectors", Type: "array", Default: nil, Description: "CSS selectors for elements to remove (e.g., '.sidebar', 'nav')"},
+				{Name: "keep_selectors", Type: "array", Default: nil, Description: "CSS selectors for elements to always keep (overrides removals)"},
+			},
+		},
 	}
 }
 
@@ -288,4 +343,51 @@ func GetDefaultExtractionChain() []CleanerConfig {
 // GetDefaultAnalyzerChain returns the default cleaner chain for analysis.
 func GetDefaultAnalyzerChain() []CleanerConfig {
 	return DefaultAnalyzerCleanerChain
+}
+
+// EnrichCleanerChainWithCrawlSelectors adds crawl-related selectors as keep selectors
+// to any refyne cleaner in the chain. This ensures that elements matched by
+// FollowSelector or NextSelector are not accidentally removed during cleaning,
+// preserving the links needed for crawling.
+func EnrichCleanerChainWithCrawlSelectors(chain []CleanerConfig, followSelector, nextSelector string) []CleanerConfig {
+	// Collect selectors to keep
+	keepSelectors := []string{}
+	if followSelector != "" {
+		keepSelectors = append(keepSelectors, followSelector)
+	}
+	if nextSelector != "" {
+		keepSelectors = append(keepSelectors, nextSelector)
+	}
+
+	// Nothing to add
+	if len(keepSelectors) == 0 {
+		return chain
+	}
+
+	// Create a new chain with enriched refyne cleaners
+	enriched := make([]CleanerConfig, len(chain))
+	for i, cfg := range chain {
+		if strings.ToLower(cfg.Name) == "refyne" {
+			// Clone the config and add keep selectors
+			newCfg := CleanerConfig{
+				Name: cfg.Name,
+			}
+			if cfg.Options != nil {
+				// Copy existing options
+				opts := *cfg.Options
+				opts.KeepSelectors = append(opts.KeepSelectors, keepSelectors...)
+				newCfg.Options = &opts
+			} else {
+				// Create new options with just the keep selectors
+				newCfg.Options = &CleanerOptions{
+					KeepSelectors: keepSelectors,
+				}
+			}
+			enriched[i] = newCfg
+		} else {
+			enriched[i] = cfg
+		}
+	}
+
+	return enriched
 }

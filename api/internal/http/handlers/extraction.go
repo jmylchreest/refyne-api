@@ -31,11 +31,17 @@ type CleanerConfigInput struct {
 
 // CleanerOptionsInput represents cleaner configuration options.
 type CleanerOptionsInput struct {
+	// Common options
 	Output  string `json:"output,omitempty" enum:"html,text" default:"html" doc:"Output format for trafilatura/readability"`
 	Tables  bool   `json:"tables,omitempty" default:"true" doc:"Include tables in output (trafilatura)"`
 	Links   bool   `json:"links,omitempty" default:"true" doc:"Include links in output (trafilatura)"`
 	Images  bool   `json:"images,omitempty" default:"true" doc:"Include images in output (trafilatura)"`
 	BaseURL string `json:"base_url,omitempty" doc:"Base URL for resolving relative links (readability)"`
+
+	// Refyne-specific options
+	Preset          string   `json:"preset,omitempty" enum:"default,minimal,aggressive" doc:"Refyne preset: default, minimal, or aggressive"`
+	RemoveSelectors []string `json:"remove_selectors,omitempty" doc:"CSS selectors for elements to remove (refyne)"`
+	KeepSelectors   []string `json:"keep_selectors,omitempty" doc:"CSS selectors for elements to always keep (refyne)"`
 }
 
 // ExtractInput represents extraction request.
@@ -173,11 +179,14 @@ func (h *ExtractionHandler) Extract(ctx context.Context, input *ExtractInput) (*
 			}
 			if c.Options != nil {
 				cleanerChain[i].Options = &service.CleanerOptions{
-					Output:  c.Options.Output,
-					Tables:  c.Options.Tables,
-					Links:   c.Options.Links,
-					Images:  c.Options.Images,
-					BaseURL: c.Options.BaseURL,
+					Output:          c.Options.Output,
+					Tables:          c.Options.Tables,
+					Links:           c.Options.Links,
+					Images:          c.Options.Images,
+					BaseURL:         c.Options.BaseURL,
+					Preset:          c.Options.Preset,
+					RemoveSelectors: c.Options.RemoveSelectors,
+					KeepSelectors:   c.Options.KeepSelectors,
 				}
 			}
 		}

@@ -117,3 +117,4 @@ coverage.out
 *.pem
 *.log
 .env*.local
+api-keys.json
