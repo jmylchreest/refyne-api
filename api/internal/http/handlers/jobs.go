@@ -97,7 +97,7 @@ type CreateCrawlJobInput struct {
 	Timeout int  `query:"timeout" default:"120" minimum:"10" maximum:"120" doc:"Maximum seconds to wait when wait=true (default 120s, max 120s/2min). For longer jobs, use async mode."`
 	Body    struct {
 		URL          string                  `json:"url" minLength:"1" example:"https://example.com/products" doc:"Seed URL to start crawling from"`
-		Schema       json.RawMessage         `json:"schema" doc:"JSON Schema defining the data structure to extract. Example: {\"name\":\"string\",\"price\":\"number\",\"description\":\"string\"}"`
+		Schema       json.RawMessage         `json:"schema" minLength:"1" doc:"Extraction instructions - either a structured schema (YAML/JSON with 'name' and 'fields') or freeform natural language prompt. The API auto-detects the format."`
 		Options      CrawlOptions            `json:"options,omitempty" doc:"Crawl configuration options"`
 		CleanerChain []JobCleanerConfigInput `json:"cleaner_chain,omitempty" doc:"Content cleaner chain (default: [markdown])"`
 		WebhookID    string                  `json:"webhook_id,omitempty" doc:"ID of a saved webhook to call on job events"`
