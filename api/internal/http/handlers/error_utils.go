@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/jmylchreest/refyne-api/internal/llm"
+	"github.com/jmylchreest/refyne-api/internal/service"
 )
 
 // ErrorInfo contains extracted error details for consistent error handling across handlers.
@@ -22,6 +23,16 @@ type ErrorInfo struct {
 func ExtractErrorInfo(err error, isBYOK bool) ErrorInfo {
 	info := ErrorInfo{
 		IsBYOK: isBYOK,
+	}
+
+	// Check for schema errors first - these are user-facing 400 errors
+	var schemaErr *service.SchemaError
+	if errors.As(err, &schemaErr) {
+		info.UserMessage = schemaErr.Message
+		info.Details = schemaErr.Message
+		info.Category = "invalid_schema"
+		info.StatusCode = http.StatusBadRequest
+		return info
 	}
 
 	var llmErr *llm.LLMError

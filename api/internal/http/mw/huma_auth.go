@@ -10,6 +10,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/jmylchreest/refyne-api/internal/auth"
+	"github.com/jmylchreest/refyne-api/internal/config"
 	"github.com/jmylchreest/refyne-api/internal/service"
 )
 
@@ -77,8 +78,21 @@ func HumaAuth(api huma.API, cfg HumaAuthConfig) func(ctx huma.Context, next func
 
 		stdCtx := ctx.Context()
 
-		// Check if it's an API key (starts with rf_)
-		if strings.HasPrefix(token, "rf_") {
+		// Check S3-configured API keys first (demo/partner/internal keys)
+		// These keys use the rfs_ prefix (refyne static)
+		if strings.HasPrefix(token, "rfs_") {
+			if s3Claims := validateS3APIKeyHuma(ctx, token); s3Claims != nil {
+				// Add claims and tier limits to context
+				newCtx := context.WithValue(stdCtx, UserClaimsKey, s3Claims)
+				limits := GetTierLimits(newCtx, s3Claims.Tier)
+				newCtx = context.WithValue(newCtx, TierLimitsKey, limits)
+				next(huma.WithContext(ctx, newCtx))
+				return
+			}
+		}
+
+		// Check if it's a user API key (starts with rf_ but not rfs_)
+		if strings.HasPrefix(token, "rf_") && !strings.HasPrefix(token, "rfs_") {
 			claims, err = validateAPIKey(stdCtx, cfg.AuthService, cfg.SubscriptionCache, token)
 		} else {
 			claims, err = validateClerkToken(cfg.ClerkVerifier, token)
@@ -310,4 +324,65 @@ func HumaRateLimit(_ RateLimitConfig) func(ctx huma.Context, next func(huma.Cont
 	return func(ctx huma.Context, next func(huma.Context)) {
 		next(ctx)
 	}
+}
+
+// validateS3APIKeyHuma validates an S3-configured API key and its restrictions for Huma contexts.
+// Returns nil if the key is not found in S3 config or restrictions fail.
+func validateS3APIKeyHuma(ctx huma.Context, apiKey string) *UserClaims {
+	keyConfig := config.GetAPIKeyConfigWithS3(ctx.Context(), apiKey)
+	if keyConfig == nil {
+		slog.Debug("S3 API key not found", "key_prefix", apiKey[:min(len(apiKey), 10)])
+		return nil // Not an S3-configured key
+	}
+
+	method := ctx.Method()
+	path := ctx.URL().Path
+
+	// Validate endpoint restriction
+	if !keyConfig.ValidateEndpoint(method, path) {
+		slog.Warn("S3 API key endpoint restriction failed",
+			"key_name", keyConfig.Name,
+			"method", method,
+			"path", path,
+		)
+		return nil
+	}
+
+	// Validate referrer restriction
+	referrer := ctx.Header("Referer")
+	if referrer == "" {
+		referrer = ctx.Header("Origin")
+	}
+	if !keyConfig.ValidateReferrer(referrer) {
+		slog.Warn("S3 API key referrer restriction failed",
+			"key_name", keyConfig.Name,
+			"referrer", referrer,
+		)
+		return nil
+	}
+
+	claims := &UserClaims{
+		UserID:           keyConfig.Identity.ClientID,
+		Tier:             keyConfig.Identity.Tier,
+		Features:         keyConfig.Identity.Features,
+		Scopes:           keyConfig.Identity.Features, // Use features as scopes
+		IsAPIKey:         true,
+		GlobalSuperadmin: false,
+	}
+
+	// Inject LLM config if specified (bypasses fallback chain)
+	if keyConfig.LLMConfig != nil {
+		claims.LLMProvider = keyConfig.LLMConfig.Provider
+		claims.LLMModel = keyConfig.LLMConfig.Model
+	}
+
+	slog.Info("S3 API key validated",
+		"key_name", keyConfig.Name,
+		"client_id", keyConfig.Identity.ClientID,
+		"tier", keyConfig.Identity.Tier,
+		"llm_provider", claims.LLMProvider,
+		"llm_model", claims.LLMModel,
+	)
+
+	return claims
 }

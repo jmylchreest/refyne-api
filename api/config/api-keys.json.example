@@ -1,0 +1,72 @@
+{
+  "api_keys": [
+    {
+      "key": "rfs_demo_recipe_app_2026",
+      "enabled": true,
+      "name": "Demo Recipe App",
+      "description": "Powers the recipe extraction demo at recipeapp.demo.refyne.uk",
+
+      "identity": {
+        "client_id": "demo-recipe-app",
+        "tier": "demo",
+        "features": ["extract"]
+      },
+
+      "restrictions": {
+        "endpoints": [
+          "POST /api/v1/extract"
+        ],
+        "referrers": [
+          "recipeapp.demo.refyne.uk",
+          "demo.refyne.uk",
+          "docs.refyne.uk",
+          "localhost:*"
+        ],
+        "url_patterns": [
+          "https://demo.refyne.uk/*",
+          "https://docs.refyne.uk/*"
+        ]
+      },
+
+      "rate_limits": {
+        "requests_per_minute": 5,
+        "requests_per_hour": 30,
+        "requests_per_day": 100
+      },
+
+      "llm_config": {
+        "provider": "openrouter",
+        "model": "xiaomi/mimo-v2-flash:free"
+      },
+
+      "tier_overrides": {
+        "max_pages_per_crawl": 1,
+        "monthly_extractions": 100
+      }
+    },
+    {
+      "key": "rfs_partner_acme_revoked_2025",
+      "enabled": false,
+      "name": "ACME Corp Integration (REVOKED)",
+      "description": "Example of a revoked/blocked API key - set enabled: false to block",
+
+      "identity": {
+        "client_id": "partner-acme-corp",
+        "tier": "standard",
+        "features": ["extract", "analyze"]
+      },
+
+      "restrictions": {
+        "endpoints": [],
+        "referrers": [],
+        "url_patterns": []
+      },
+
+      "rate_limits": {
+        "requests_per_minute": 60,
+        "requests_per_hour": 500,
+        "requests_per_day": 5000
+      }
+    }
+  ]
+}

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/jmylchreest/refyne-api/internal/auth"
+	"github.com/jmylchreest/refyne-api/internal/config"
 	"github.com/jmylchreest/refyne-api/internal/service"
 )
 
@@ -29,6 +30,8 @@ type UserClaims struct {
 	Features         []string // From Clerk Commerce "fea" claim
 	Scopes           []string // For API keys
 	IsAPIKey         bool     // True if authenticated via API key
+	LLMProvider      string   // For S3 API keys: forced LLM provider
+	LLMModel         string   // For S3 API keys: forced LLM model
 }
 
 // HasFeature checks if the user has a specific feature.
@@ -106,8 +109,18 @@ func Auth(clerkVerifier *auth.ClerkVerifier, authSvc *service.AuthService, subCa
 			var claims *UserClaims
 			var err error
 
-			// Check if it's an API key (starts with rf_)
-			if strings.HasPrefix(token, "rf_") {
+			// Check S3-configured API keys first (demo/partner/internal keys)
+			// These keys use the rfs_ prefix (refyne static)
+			if strings.HasPrefix(token, "rfs_") {
+				if s3Claims := validateS3APIKey(r, token); s3Claims != nil {
+					ctx := context.WithValue(r.Context(), UserClaimsKey, s3Claims)
+					next.ServeHTTP(w, r.WithContext(ctx))
+					return
+				}
+			}
+
+			// Check if it's a user API key (starts with rf_ but not rfs_)
+			if strings.HasPrefix(token, "rf_") && !strings.HasPrefix(token, "rfs_") {
 				claims, err = validateAPIKey(r.Context(), authSvc, subCache, token)
 			} else {
 				claims, err = validateClerkToken(clerkVerifier, token)
@@ -224,6 +237,61 @@ func validateAPIKey(ctx context.Context, authSvc *service.AuthService, subCache 
 	return claims, nil
 }
 
+// validateS3APIKey validates an S3-configured API key and its restrictions.
+// Returns nil if the key is not found in S3 config or restrictions fail.
+func validateS3APIKey(r *http.Request, apiKey string) *UserClaims {
+	keyConfig := config.GetAPIKeyConfigWithS3(r.Context(), apiKey)
+	if keyConfig == nil {
+		return nil // Not an S3-configured key
+	}
+
+	// Validate endpoint restriction
+	if !keyConfig.ValidateEndpoint(r.Method, r.URL.Path) {
+		slog.Warn("S3 API key endpoint restriction failed",
+			"key_name", keyConfig.Name,
+			"method", r.Method,
+			"path", r.URL.Path,
+		)
+		return nil
+	}
+
+	// Validate referrer restriction
+	referrer := r.Header.Get("Referer")
+	if referrer == "" {
+		referrer = r.Header.Get("Origin")
+	}
+	if !keyConfig.ValidateReferrer(referrer) {
+		slog.Warn("S3 API key referrer restriction failed",
+			"key_name", keyConfig.Name,
+			"referrer", referrer,
+		)
+		return nil
+	}
+
+	slog.Info("S3 API key validated",
+		"key_name", keyConfig.Name,
+		"client_id", keyConfig.Identity.ClientID,
+		"tier", keyConfig.Identity.Tier,
+	)
+
+	claims := &UserClaims{
+		UserID:           keyConfig.Identity.ClientID,
+		Tier:             keyConfig.Identity.Tier,
+		Features:         keyConfig.Identity.Features,
+		Scopes:           keyConfig.Identity.Features, // Use features as scopes
+		IsAPIKey:         true,
+		GlobalSuperadmin: false,
+	}
+
+	// Inject LLM config if specified (bypasses fallback chain)
+	if keyConfig.LLMConfig != nil {
+		claims.LLMProvider = keyConfig.LLMConfig.Provider
+		claims.LLMModel = keyConfig.LLMConfig.Model
+	}
+
+	return claims
+}
+
 // GetUserClaims retrieves user claims from context.
 func GetUserClaims(ctx context.Context) *UserClaims {
 	claims, ok := ctx.Value(UserClaimsKey).(*UserClaims)
@@ -298,8 +366,18 @@ func OptionalAuth(clerkVerifier *auth.ClerkVerifier, authSvc *service.AuthServic
 
 			var claims *UserClaims
 
-			// Check if it's an API key (starts with rf_)
-			if strings.HasPrefix(token, "rf_") {
+			// Check S3-configured API keys first (demo/partner/internal keys)
+			// These keys use the rfs_ prefix (refyne static)
+			if strings.HasPrefix(token, "rfs_") {
+				if s3Claims := validateS3APIKey(r, token); s3Claims != nil {
+					ctx := context.WithValue(r.Context(), UserClaimsKey, s3Claims)
+					next.ServeHTTP(w, r.WithContext(ctx))
+					return
+				}
+			}
+
+			// Check if it's a user API key (starts with rf_ but not rfs_)
+			if strings.HasPrefix(token, "rf_") && !strings.HasPrefix(token, "rfs_") {
 				claims, _ = validateAPIKey(r.Context(), authSvc, subCache, token)
 			} else {
 				claims, _ = validateClerkToken(clerkVerifier, token)

@@ -182,7 +182,7 @@ func (l *S3Loader) Fetch(ctx context.Context) (*S3LoadResult, error) {
 		l.lastError = time.Now()
 		l.initialized = true
 		l.mu.Unlock()
-		l.logger.Error("failed to parse S3 config JSON", "error", err)
+		l.logger.Error("failed to parse S3 config JSON", "bucket", l.bucket, "key", l.key, "error", err)
 		return nil, err
 	}
 	data = raw

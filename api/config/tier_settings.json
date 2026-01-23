@@ -1,40 +1,36 @@
 {
   "tiers": {
+    "demo": {
+      "display_name": "Demo",
+      "visible": false,
+      "monthly_extractions": 100,
+      "max_pages_per_crawl": 1,
+      "max_concurrent_jobs": 1,
+      "requests_per_minute": 5
+    },
     "free": {
       "monthly_extractions": 100,
       "max_pages_per_crawl": 10,
       "max_concurrent_jobs": 1,
-      "requests_per_minute": 10,
-      "webhooks_enabled": false,
-      "byok_enabled": false,
-      "anti_bot_enabled": false
+      "requests_per_minute": 10
     },
     "standard": {
       "monthly_extractions": 1000,
       "max_pages_per_crawl": 50,
       "max_concurrent_jobs": 3,
-      "requests_per_minute": 60,
-      "webhooks_enabled": true,
-      "byok_enabled": true,
-      "anti_bot_enabled": false
+      "requests_per_minute": 60
     },
     "pro": {
       "monthly_extractions": 0,
       "max_pages_per_crawl": 500,
       "max_concurrent_jobs": 10,
-      "requests_per_minute": 60,
-      "webhooks_enabled": true,
-      "byok_enabled": true,
-      "anti_bot_enabled": true
+      "requests_per_minute": 60
     },
     "selfhosted": {
       "monthly_extractions": 0,
       "max_pages_per_crawl": 0,
       "max_concurrent_jobs": 0,
-      "requests_per_minute": 0,
-      "webhooks_enabled": true,
-      "byok_enabled": true,
-      "anti_bot_enabled": true
+      "requests_per_minute": 0
     }
   },
   "_comment": "Set values to 0 for unlimited. Tier names match internal names: free, standard, pro, selfhosted. Also accepts Clerk Commerce format: tier_v1_free, tier_v1_standard, etc."

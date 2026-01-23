@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/jmylchreest/refyne-api/internal/http/mw"
 )
@@ -13,6 +14,8 @@ type UserContext struct {
 	Tier                string
 	BYOKAllowed         bool
 	ModelsCustomAllowed bool
+	LLMProvider         string // For S3 API keys: forced LLM provider
+	LLMModel            string // For S3 API keys: forced LLM model
 }
 
 // ExtractUserContext extracts user context from JWT claims.
@@ -29,6 +32,16 @@ func ExtractUserContext(ctx context.Context) UserContext {
 		}
 		uc.BYOKAllowed = claims.HasFeature("provider_byok")
 		uc.ModelsCustomAllowed = claims.HasFeature("models_custom")
+		uc.LLMProvider = claims.LLMProvider
+		uc.LLMModel = claims.LLMModel
+
+		if uc.LLMProvider != "" || uc.LLMModel != "" {
+			slog.Debug("extracted injected LLM config from claims",
+				"user_id", uc.UserID,
+				"llm_provider", uc.LLMProvider,
+				"llm_model", uc.LLMModel,
+			)
+		}
 	}
 
 	return uc
