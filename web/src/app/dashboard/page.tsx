@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import yaml from 'js-yaml';
 import { useAuth } from '@clerk/nextjs';
 import { useSearchParams } from 'next/navigation';
@@ -844,14 +844,52 @@ export default function DashboardPage() {
     }
   };
 
-  // Convert YAML schema to JSON using js-yaml library
-  const yamlToJson = (yamlStr: string): object => {
-    const parsed = yaml.load(yamlStr);
-    if (typeof parsed !== 'object' || parsed === null) {
-      throw new Error('Invalid YAML: must be an object');
+  // Convert YAML schema to JSON, or pass through freeform prompts as-is
+  // The server auto-detects whether input is a structured schema or freeform prompt
+  const yamlToJson = (yamlStr: string): object | string => {
+    const trimmed = yamlStr.trim();
+
+    // Try to parse as YAML/JSON
+    const parsed = yaml.load(trimmed);
+
+    // If it's an object with schema-like structure, return it as parsed object
+    if (typeof parsed === 'object' && parsed !== null) {
+      return parsed as object;
     }
-    return parsed as object;
+
+    // Otherwise, it's a freeform prompt - return the original string
+    // The server will detect this and use prompt-based extraction
+    return trimmed;
   };
+
+  // Detect input format for visual indicator
+  const detectedInputFormat = useMemo((): 'JSON' | 'YAML' | 'PROMPT' => {
+    const trimmed = schema.trim();
+    if (!trimmed) return 'YAML'; // Default when empty
+
+    // Try JSON first
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (typeof parsed === 'object' && parsed !== null) {
+        return 'JSON';
+      }
+    } catch {
+      // Not JSON
+    }
+
+    // Try YAML
+    try {
+      const parsed = yaml.load(trimmed);
+      if (typeof parsed === 'object' && parsed !== null) {
+        return 'YAML';
+      }
+    } catch {
+      // Not valid YAML object either
+    }
+
+    // If neither parsed as an object, it's a freeform prompt
+    return 'PROMPT';
+  }, [schema]);
 
   const getTotalTime = () => {
     if (!result) return null;
@@ -1022,6 +1060,16 @@ export default function DashboardPage() {
         <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 px-4 py-2">
           <div className="flex items-center gap-3">
             <span className="text-sm font-medium">Schema</span>
+            <Badge
+              variant={detectedInputFormat === 'PROMPT' ? 'default' : 'secondary'}
+              className={`text-[10px] px-1.5 py-0 ${
+                detectedInputFormat === 'PROMPT'
+                  ? 'bg-violet-500 hover:bg-violet-600 text-white'
+                  : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'
+              }`}
+            >
+              {detectedInputFormat}
+            </Badge>
             <Select value={selectedSchemaId} onValueChange={handleSchemaSelect}>
               <SelectTrigger className="h-8 w-[160px] text-xs">
                 <BookOpen className="h-3 w-3 mr-1.5 shrink-0" />
@@ -1104,7 +1152,7 @@ export default function DashboardPage() {
         {/* Schema Editor */}
         <form onSubmit={handleExtract} className="flex-1 min-h-0 flex flex-col">
           <Textarea
-            placeholder="Enter your extraction schema in YAML format..."
+            placeholder="Enter a schema (YAML/JSON) or natural language prompt..."
             value={schema}
             onChange={(e) => setSchema(e.target.value)}
             className="flex-1 font-mono text-sm border-0 rounded-none resize-none focus-visible:ring-0 focus-visible:ring-offset-0"
@@ -1121,7 +1169,19 @@ export default function DashboardPage() {
             <div className="flex items-center gap-3">
               <span className="text-sm font-medium">Results</span>
               {!isCrawling && !crawlFinalResult && result && (
-                <span className="text-xs text-zinc-500">{result.url}</span>
+                <>
+                  <Badge
+                    variant="secondary"
+                    className={`text-[10px] px-1.5 py-0 ${
+                      result.input_format === 'prompt'
+                        ? 'bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300'
+                        : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'
+                    }`}
+                  >
+                    {result.input_format === 'prompt' ? 'PROMPT' : 'SCHEMA'}
+                  </Badge>
+                  <span className="text-xs text-zinc-500">{result.url}</span>
+                </>
               )}
             </div>
             <div className="flex items-center gap-3 text-xs text-zinc-500">

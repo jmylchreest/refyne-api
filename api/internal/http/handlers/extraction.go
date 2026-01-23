@@ -48,7 +48,7 @@ type CleanerOptionsInput struct {
 type ExtractInput struct {
 	Body struct {
 		URL          string               `json:"url" minLength:"1" doc:"URL to extract data from"`
-		Schema       json.RawMessage      `json:"schema" doc:"Schema defining the data structure to extract (JSON or YAML format)"`
+		Schema       json.RawMessage      `json:"schema" minLength:"1" doc:"Extraction instructions - either a structured schema (YAML/JSON with 'name' and 'fields') or freeform natural language prompt. The API auto-detects the format and returns 'input_format' in the response."`
 		FetchMode    string               `json:"fetch_mode,omitempty" enum:"auto,static,dynamic" default:"auto" doc:"Fetch mode: auto, static, or dynamic"`
 		LLMConfig    *LLMConfigInput      `json:"llm_config,omitempty" doc:"Optional LLM configuration override"`
 		CleanerChain []CleanerConfigInput `json:"cleaner_chain,omitempty" doc:"Content cleaner chain (default: [markdown])"`
@@ -94,12 +94,13 @@ type WebhookOptions struct {
 // ExtractOutput represents extraction response.
 type ExtractOutput struct {
 	Body struct {
-		JobID     string           `json:"job_id" doc:"Job ID for this extraction (for history/tracking)"`
-		Data      any              `json:"data" doc:"Extracted data matching the schema"`
-		URL       string           `json:"url" doc:"URL that was extracted"`
-		FetchedAt string           `json:"fetched_at" doc:"Timestamp when the page was fetched"`
-		Usage     UsageResponse    `json:"usage" doc:"Token usage information"`
-		Metadata  MetadataResponse `json:"metadata" doc:"Extraction metadata"`
+		JobID       string           `json:"job_id" doc:"Job ID for this extraction (for history/tracking)"`
+		Data        any              `json:"data" doc:"Extracted data matching the schema"`
+		URL         string           `json:"url" doc:"URL that was extracted"`
+		FetchedAt   string           `json:"fetched_at" doc:"Timestamp when the page was fetched"`
+		InputFormat string           `json:"input_format" doc:"How the input was interpreted: 'schema' (structured YAML/JSON) or 'prompt' (freeform text)"`
+		Usage       UsageResponse    `json:"usage" doc:"Token usage information"`
+		Metadata    MetadataResponse `json:"metadata" doc:"Extraction metadata"`
 	}
 }
 
@@ -126,6 +127,11 @@ func (h *ExtractionHandler) Extract(ctx context.Context, input *ExtractInput) (*
 	uc := ExtractUserContext(ctx)
 	if !uc.IsAuthenticated() {
 		return nil, huma.Error401Unauthorized("unauthorized")
+	}
+
+	// Validate that schema/prompt input is provided
+	if len(input.Body.Schema) == 0 {
+		return nil, huma.Error400BadRequest("'schema' is required - provide either a structured schema (YAML/JSON) or freeform extraction instructions")
 	}
 
 	// Convert input LLM config if provided
@@ -229,17 +235,19 @@ func (h *ExtractionHandler) Extract(ctx context.Context, input *ExtractInput) (*
 
 	return &ExtractOutput{
 		Body: struct {
-			JobID     string           `json:"job_id" doc:"Job ID for this extraction (for history/tracking)"`
-			Data      any              `json:"data" doc:"Extracted data matching the schema"`
-			URL       string           `json:"url" doc:"URL that was extracted"`
-			FetchedAt string           `json:"fetched_at" doc:"Timestamp when the page was fetched"`
-			Usage     UsageResponse    `json:"usage" doc:"Token usage information"`
-			Metadata  MetadataResponse `json:"metadata" doc:"Extraction metadata"`
+			JobID       string           `json:"job_id" doc:"Job ID for this extraction (for history/tracking)"`
+			Data        any              `json:"data" doc:"Extracted data matching the schema"`
+			URL         string           `json:"url" doc:"URL that was extracted"`
+			FetchedAt   string           `json:"fetched_at" doc:"Timestamp when the page was fetched"`
+			InputFormat string           `json:"input_format" doc:"How the input was interpreted: 'schema' (structured YAML/JSON) or 'prompt' (freeform text)"`
+			Usage       UsageResponse    `json:"usage" doc:"Token usage information"`
+			Metadata    MetadataResponse `json:"metadata" doc:"Extraction metadata"`
 		}{
-			JobID:     jobID,
-			Data:      result.Data,
-			URL:       result.URL,
-			FetchedAt: result.FetchedAt.Format("2006-01-02T15:04:05Z07:00"),
+			JobID:       jobID,
+			Data:        result.Data,
+			URL:         result.URL,
+			FetchedAt:   result.FetchedAt.Format("2006-01-02T15:04:05Z07:00"),
+			InputFormat: string(result.InputFormat),
 			Usage: UsageResponse{
 				InputTokens:  result.Usage.InputTokens,
 				OutputTokens: result.Usage.OutputTokens,

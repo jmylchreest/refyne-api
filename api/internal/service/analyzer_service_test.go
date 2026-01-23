@@ -560,12 +560,11 @@ func TestAnalyzerService_ParsePageType(t *testing.T) {
 }
 
 // ----------------------------------------
-// extractLLMResponse Tests
+// LLMClient ParseResponse Tests (moved from analyzer-specific tests)
 // ----------------------------------------
 
-func TestAnalyzerService_ExtractLLMResponse_OpenAI(t *testing.T) {
-	cfg := &config.Config{EncryptionKey: []byte("12345678901234567890123456789012")}
-	svc := NewAnalyzerService(cfg, &repository.Repositories{}, slog.Default())
+func TestLLMClient_ParseResponse_OpenAI(t *testing.T) {
+	client := NewLLMClient(slog.Default())
 
 	body := []byte(`{
 		"choices": [
@@ -581,7 +580,7 @@ func TestAnalyzerService_ExtractLLMResponse_OpenAI(t *testing.T) {
 		}
 	}`)
 
-	result, err := svc.extractLLMResponse("openai", body)
+	result, err := client.ParseResponse("openai", body)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -597,9 +596,8 @@ func TestAnalyzerService_ExtractLLMResponse_OpenAI(t *testing.T) {
 	}
 }
 
-func TestAnalyzerService_ExtractLLMResponse_OpenRouter(t *testing.T) {
-	cfg := &config.Config{EncryptionKey: []byte("12345678901234567890123456789012")}
-	svc := NewAnalyzerService(cfg, &repository.Repositories{}, slog.Default())
+func TestLLMClient_ParseResponse_OpenRouter(t *testing.T) {
+	client := NewLLMClient(slog.Default())
 
 	body := []byte(`{
 		"choices": [
@@ -615,7 +613,7 @@ func TestAnalyzerService_ExtractLLMResponse_OpenRouter(t *testing.T) {
 		}
 	}`)
 
-	result, err := svc.extractLLMResponse("openrouter", body)
+	result, err := client.ParseResponse("openrouter", body)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -628,9 +626,8 @@ func TestAnalyzerService_ExtractLLMResponse_OpenRouter(t *testing.T) {
 	}
 }
 
-func TestAnalyzerService_ExtractLLMResponse_Anthropic(t *testing.T) {
-	cfg := &config.Config{EncryptionKey: []byte("12345678901234567890123456789012")}
-	svc := NewAnalyzerService(cfg, &repository.Repositories{}, slog.Default())
+func TestLLMClient_ParseResponse_Anthropic(t *testing.T) {
+	client := NewLLMClient(slog.Default())
 
 	body := []byte(`{
 		"content": [
@@ -644,7 +641,7 @@ func TestAnalyzerService_ExtractLLMResponse_Anthropic(t *testing.T) {
 		}
 	}`)
 
-	result, err := svc.extractLLMResponse("anthropic", body)
+	result, err := client.ParseResponse("anthropic", body)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -660,35 +657,32 @@ func TestAnalyzerService_ExtractLLMResponse_Anthropic(t *testing.T) {
 	}
 }
 
-func TestAnalyzerService_ExtractLLMResponse_EmptyChoices(t *testing.T) {
-	cfg := &config.Config{EncryptionKey: []byte("12345678901234567890123456789012")}
-	svc := NewAnalyzerService(cfg, &repository.Repositories{}, slog.Default())
+func TestLLMClient_ParseResponse_EmptyChoices(t *testing.T) {
+	client := NewLLMClient(slog.Default())
 
 	body := []byte(`{"choices": [], "usage": {}}`)
 
-	_, err := svc.extractLLMResponse("openai", body)
+	_, err := client.ParseResponse("openai", body)
 	if err == nil {
 		t.Fatal("expected error for empty choices")
 	}
 }
 
-func TestAnalyzerService_ExtractLLMResponse_EmptyContent(t *testing.T) {
-	cfg := &config.Config{EncryptionKey: []byte("12345678901234567890123456789012")}
-	svc := NewAnalyzerService(cfg, &repository.Repositories{}, slog.Default())
+func TestLLMClient_ParseResponse_EmptyContent(t *testing.T) {
+	client := NewLLMClient(slog.Default())
 
 	body := []byte(`{"content": [], "usage": {}}`)
 
-	_, err := svc.extractLLMResponse("anthropic", body)
+	_, err := client.ParseResponse("anthropic", body)
 	if err == nil {
 		t.Fatal("expected error for empty content")
 	}
 }
 
-func TestAnalyzerService_ExtractLLMResponse_InvalidJSON(t *testing.T) {
-	cfg := &config.Config{EncryptionKey: []byte("12345678901234567890123456789012")}
-	svc := NewAnalyzerService(cfg, &repository.Repositories{}, slog.Default())
+func TestLLMClient_ParseResponse_InvalidJSON(t *testing.T) {
+	client := NewLLMClient(slog.Default())
 
-	_, err := svc.extractLLMResponse("openai", []byte("not json"))
+	_, err := client.ParseResponse("openai", []byte("not json"))
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
 	}

@@ -65,7 +65,8 @@ async function request<T>(
 }
 
 // Extraction with client-side timeout
-export async function extract(url: string, schema: object, llmConfig?: LLMConfigInput) {
+// Schema can be an object (structured schema) or string (freeform prompt)
+export async function extract(url: string, schema: object | string, llmConfig?: LLMConfigInput) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute client timeout
 
@@ -244,6 +245,7 @@ export interface ExtractResult {
   data: unknown;
   url: string;
   fetched_at: string;
+  input_format: 'schema' | 'prompt';  // How the input was interpreted by the server
   usage: {
     input_tokens: number;
     output_tokens: number;
@@ -302,7 +304,7 @@ export async function getJobWebhookDeliveries(jobId: string) {
 
 export interface CreateCrawlJobInput {
   url: string;
-  schema: object;
+  schema: object | string;  // Can be structured schema or freeform prompt
   options?: {
     follow_selector?: string;
     follow_pattern?: string;

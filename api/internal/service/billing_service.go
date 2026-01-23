@@ -193,6 +193,48 @@ func (s *BillingService) GetActualCostFromProvider(ctx context.Context, provider
 }
 
 // ========================================
+// Cost Calculation Helpers
+// ========================================
+
+// CostResult holds calculated costs for an operation.
+type CostResult struct {
+	LLMCostUSD  float64 // Actual cost from LLM provider
+	UserCostUSD float64 // Total cost charged to user (with markup)
+	MarkupRate  float64 // Markup percentage applied
+	MarkupUSD   float64 // Markup amount in USD
+}
+
+// CostInput holds input parameters for cost calculation.
+type CostInput struct {
+	TokensInput  int
+	TokensOutput int
+	Model        string
+	Provider     string
+	Tier         string
+	IsBYOK       bool
+	GenerationID string // Optional: for fetching actual cost from provider
+	APIKey       string // Optional: for BYOK actual cost lookup
+}
+
+// CalculateCosts is a helper that calculates both LLM and user costs in one call.
+// This reduces duplication across extraction services.
+func (s *BillingService) CalculateCosts(ctx context.Context, input CostInput) CostResult {
+	var result CostResult
+
+	// Get LLM cost - try actual first if we have generation ID
+	if input.GenerationID != "" {
+		result.LLMCostUSD = s.GetActualCostFromProvider(ctx, input.Provider, input.GenerationID, input.APIKey, input.TokensInput, input.TokensOutput, input.Model)
+	} else {
+		result.LLMCostUSD = s.GetActualCost(ctx, input.TokensInput, input.TokensOutput, input.Model, input.Provider)
+	}
+
+	// Calculate user cost with markup
+	result.UserCostUSD, result.MarkupRate, result.MarkupUSD = s.CalculateTotalCost(result.LLMCostUSD, input.Tier, input.IsBYOK)
+
+	return result
+}
+
+// ========================================
 // Schema Snapshot Management
 // ========================================
 
@@ -403,12 +445,24 @@ type ChargeForUsageResult struct {
 func (s *BillingService) ChargeForUsage(ctx context.Context, input *ChargeForUsageInput) (*ChargeForUsageResult, error) {
 	result := &ChargeForUsageResult{}
 
-	// Get actual cost - use provider API when generation ID is available
-	result.LLMCostUSD = s.GetActualCostFromProvider(ctx, input.Provider, input.GenerationID, input.APIKey, input.TokensInput, input.TokensOutput, input.Model)
+	// Calculate costs using the shared helper
+	costs := s.CalculateCosts(ctx, CostInput{
+		TokensInput:  input.TokensInput,
+		TokensOutput: input.TokensOutput,
+		Model:        input.Model,
+		Provider:     input.Provider,
+		Tier:         input.Tier,
+		IsBYOK:       input.IsBYOK,
+		GenerationID: input.GenerationID,
+		APIKey:       input.APIKey,
+	})
+	result.LLMCostUSD = costs.LLMCostUSD
+	result.TotalCostUSD = costs.UserCostUSD
+	result.MarkupRate = costs.MarkupRate
+	result.MarkupUSD = costs.MarkupUSD
 
-	// Apply markup for non-BYOK
-	if !input.IsBYOK && result.LLMCostUSD > 0 {
-		result.TotalCostUSD, result.MarkupRate, result.MarkupUSD = s.CalculateTotalCost(result.LLMCostUSD, input.Tier, false)
+	// Deduct credits for non-BYOK
+	if !input.IsBYOK && result.TotalCostUSD > 0 {
 
 		// Deduct credits
 		jobID := &input.JobID

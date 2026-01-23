@@ -1,13 +1,10 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
@@ -141,12 +138,6 @@ type AnalyzeDebugCapture struct {
 	DurationMs  int64  `json:"duration_ms"`  // Total duration
 }
 
-// llmCallResult holds the result of an LLM API call including token usage.
-type llmCallResult struct {
-	Content      string
-	InputTokens  int
-	OutputTokens int
-}
 
 // Analyze fetches and analyzes a URL to generate schema suggestions.
 // The byokAllowed parameter comes from JWT claims and indicates if user has the "provider_byok" feature.
@@ -363,18 +354,24 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 	}
 
 	// Calculate costs
-	var llmCostUSD, userCostUSD float64
+	var costs CostResult
 	if s.billing != nil {
-		llmCostUSD = s.billing.GetActualCost(ctx, result.InputTokens, result.OutputTokens, llmConfig.Model, llmConfig.Provider)
-		userCostUSD, _, _ = s.billing.CalculateTotalCost(llmCostUSD, tier, isBYOK)
+		costs = s.billing.CalculateCosts(ctx, CostInput{
+			TokensInput:  result.InputTokens,
+			TokensOutput: result.OutputTokens,
+			Model:        llmConfig.Model,
+			Provider:     llmConfig.Provider,
+			Tier:         tier,
+			IsBYOK:       isBYOK,
+		})
 	}
 
 	// Add token usage and cost info to output
 	result.Output.TokenUsage = AnalyzeTokenUsage{
 		InputTokens:  result.InputTokens,
 		OutputTokens: result.OutputTokens,
-		CostUSD:      userCostUSD,
-		LLMCostUSD:   llmCostUSD,
+		CostUSD:      costs.UserCostUSD,
+		LLMCostUSD:   costs.LLMCostUSD,
 		IsBYOK:       isBYOK,
 		LLMProvider:  llmConfig.Provider,
 		LLMModel:     llmConfig.Model,
@@ -398,8 +395,8 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 		"page_type", result.Output.PageType,
 		"input_tokens", result.InputTokens,
 		"output_tokens", result.OutputTokens,
-		"llm_cost_usd", llmCostUSD,
-		"user_cost_usd", userCostUSD,
+		"llm_cost_usd", costs.LLMCostUSD,
+		"user_cost_usd", costs.UserCostUSD,
 		"is_byok", isBYOK,
 		"duration_ms", time.Since(startTime).Milliseconds(),
 	)
@@ -727,8 +724,9 @@ func (s *AnalyzerService) analyzeWithLLM(ctx context.Context, mainURL string, ma
 	// Build the prompt with preprocessing hints
 	prompt := s.buildAnalysisPrompt(mainContent, detailContents, detailURLs, links, hints)
 
-	// Call LLM API
-	llmResult, err := s.callLLM(ctx, llmConfig, prompt)
+	// Call LLM API using shared client
+	llmClient := NewLLMClient(s.logger)
+	llmResult, err := llmClient.Call(ctx, llmConfig, prompt, DefaultLLMCallOptions())
 	if err != nil {
 		return nil, err
 	}
@@ -856,7 +854,7 @@ fields:
 `)
 
 	// Add contextual examples based on detected content types
-	sb.WriteString(s.buildSchemaExamples(hints))
+	sb.WriteString(buildSchemaExamples(hints))
 
 	sb.WriteString(`
 Valid types: string, integer, number, boolean, array, object. Use "items" for arrays, "properties" for objects.
@@ -873,502 +871,7 @@ Identify ALL distinct URL patterns. Large sites need 3-6 patterns for different 
 	return sb.String()
 }
 
-// schemaExample holds a schema example for a content type.
-type schemaExample struct {
-	name        string
-	description string
-	yaml        string
-}
 
-// getSchemaExampleForType returns a schema example for the given content type.
-func getSchemaExampleForType(contentType string) *schemaExample {
-	examples := map[string]*schemaExample{
-		"reviews": {
-			name:        "reviews",
-			description: "Customer/user reviews with sentiment analysis",
-			yaml: `  - name: reviews
-    type: array
-    items:
-      type: object
-      properties:
-        - name: title
-          type: string
-          required: true
-        - name: url
-          type: string
-          required: true
-        - name: reviewer_name
-          type: string
-        - name: rating
-          type: integer
-          description: Rating value (e.g., 1-5)
-        - name: review_text
-          type: string
-        - name: review_date
-          type: string
-        - name: sentiment
-          type: string
-          description: "positive, neutral, or negative"
-        - name: persona_summary
-          type: string
-          description: Brief description of reviewer type (e.g., "experienced user", "first-time buyer")
-        - name: verified_purchase
-          type: boolean`,
-		},
-		"ratings": {
-			name:        "ratings",
-			description: "User ratings",
-			yaml: `  - name: ratings
-    type: array
-    items:
-      type: object
-      properties:
-        - name: title
-          type: string
-          required: true
-        - name: url
-          type: string
-          required: true
-        - name: rating
-          type: integer
-        - name: max_rating
-          type: integer
-        - name: reviewer_name
-          type: string
-        - name: sentiment
-          type: string
-          description: "positive, neutral, or negative"`,
-		},
-		"comments": {
-			name:        "comments",
-			description: "User comments or discussion",
-			yaml: `  - name: comments
-    type: array
-    items:
-      type: object
-      properties:
-        - name: title
-          type: string
-          required: true
-        - name: url
-          type: string
-          required: true
-        - name: author
-          type: string
-        - name: comment_text
-          type: string
-        - name: posted_date
-          type: string
-        - name: sentiment
-          type: string
-          description: "positive, neutral, or negative"
-        - name: reply_count
-          type: integer`,
-		},
-		"testimonials": {
-			name:        "testimonials",
-			description: "Customer testimonials",
-			yaml: `  - name: testimonials
-    type: array
-    items:
-      type: object
-      properties:
-        - name: title
-          type: string
-          required: true
-        - name: url
-          type: string
-          required: true
-        - name: quote
-          type: string
-        - name: author_name
-          type: string
-        - name: author_title
-          type: string
-        - name: company
-          type: string
-        - name: sentiment
-          type: string
-          description: "positive, neutral, or negative"`,
-		},
-		"feedback": {
-			name:        "feedback",
-			description: "User feedback",
-			yaml: `  - name: feedback
-    type: array
-    items:
-      type: object
-      properties:
-        - name: title
-          type: string
-          required: true
-        - name: url
-          type: string
-          required: true
-        - name: feedback_text
-          type: string
-        - name: author
-          type: string
-        - name: date
-          type: string
-        - name: sentiment
-          type: string
-          description: "positive, neutral, or negative"
-        - name: category
-          type: string`,
-		},
-		"products": {
-			name:        "products",
-			description: "Products for sale",
-			yaml: `  - name: products
-    type: array
-    items:
-      type: object
-      properties:
-        - name: title
-          type: string
-          required: true
-        - name: url
-          type: string
-          required: true
-        - name: description
-          type: string
-        - name: price
-          type: integer
-          description: Price in smallest currency unit
-        - name: currency
-          type: string
-        - name: image_url
-          type: string
-        - name: category
-          type: string
-        - name: sku
-          type: string
-        - name: in_stock
-          type: boolean`,
-		},
-		"articles": {
-			name:        "articles",
-			description: "Blog posts or news articles",
-			yaml: `  - name: articles
-    type: array
-    items:
-      type: object
-      properties:
-        - name: title
-          type: string
-          required: true
-        - name: url
-          type: string
-          required: true
-        - name: description
-          type: string
-        - name: author
-          type: string
-        - name: published_date
-          type: string
-        - name: category
-          type: string
-        - name: image_url
-          type: string
-        - name: read_time
-          type: string`,
-		},
-		"jobs": {
-			name:        "jobs",
-			description: "Job listings",
-			yaml: `  - name: jobs
-    type: array
-    items:
-      type: object
-      properties:
-        - name: title
-          type: string
-          required: true
-        - name: url
-          type: string
-          required: true
-        - name: company
-          type: string
-        - name: location
-          type: string
-        - name: salary
-          type: string
-        - name: job_type
-          type: string
-        - name: posted_date
-          type: string
-        - name: description
-          type: string`,
-		},
-		"recipes": {
-			name:        "recipes",
-			description: "Recipes or meals",
-			yaml: `  - name: recipes
-    type: array
-    items:
-      type: object
-      properties:
-        - name: title
-          type: string
-          required: true
-        - name: url
-          type: string
-          required: true
-        - name: description
-          type: string
-        - name: cooking_time
-          type: string
-        - name: prep_time
-          type: string
-        - name: servings
-          type: integer
-        - name: difficulty
-          type: string
-        - name: image_url
-          type: string`,
-		},
-		"events": {
-			name:        "events",
-			description: "Events or happenings",
-			yaml: `  - name: events
-    type: array
-    items:
-      type: object
-      properties:
-        - name: title
-          type: string
-          required: true
-        - name: url
-          type: string
-          required: true
-        - name: description
-          type: string
-        - name: date
-          type: string
-        - name: time
-          type: string
-        - name: location
-          type: string
-        - name: price
-          type: integer
-        - name: currency
-          type: string`,
-		},
-	}
-
-	if example, ok := examples[contentType]; ok {
-		return example
-	}
-	return nil
-}
-
-// buildSchemaExamples generates schema examples based on detected content types.
-func (s *AnalyzerService) buildSchemaExamples(hints *preprocessor.Hints) string {
-	var sb strings.Builder
-
-	// Get detected types
-	detectedTypes := []string{}
-	if hints != nil {
-		detectedTypes = hints.GetDetectedTypeNames()
-	}
-
-	// If we have detected specific types, show relevant examples
-	if len(detectedTypes) > 0 {
-		sb.WriteString("\n### Schema Examples for Detected Content\n\n")
-		sb.WriteString("Based on the detected content, here are relevant schema examples:\n\n")
-		sb.WriteString("```yaml\nfields:\n")
-
-		for _, contentType := range detectedTypes {
-			if example := getSchemaExampleForType(contentType); example != nil {
-				sb.WriteString(example.yaml)
-				sb.WriteString("\n")
-			}
-		}
-		sb.WriteString("```\n")
-
-		// Add special guidance for feedback content
-		if hints.HasFeedback() {
-			sb.WriteString("\n**Important for feedback content**: Include `sentiment` (positive/neutral/negative) ")
-			sb.WriteString("and `persona_summary` (brief reviewer description) fields to capture the qualitative aspects.\n")
-		}
-	} else {
-		// No specific detection - show generic examples
-		sb.WriteString("\n### Schema Example\n\n")
-		sb.WriteString("Example for a site with blog posts:\n")
-		sb.WriteString("```yaml\nfields:\n")
-		sb.WriteString(`  - name: articles
-    type: array
-    items:
-      type: object
-      properties:
-        - name: title
-          type: string
-          required: true
-        - name: url
-          type: string
-          required: true
-        - name: published_date
-          type: string
-        - name: author
-          type: string
-`)
-		sb.WriteString("```\n")
-	}
-
-	return sb.String()
-}
-
-// callLLM makes a direct call to the LLM API and returns the response with token usage.
-func (s *AnalyzerService) callLLM(ctx context.Context, config *LLMConfigInput, prompt string) (*llmCallResult, error) {
-	// Validate config
-	if config.APIKey == "" && config.Provider != "ollama" {
-		return nil, fmt.Errorf("no API key available for provider %s", config.Provider)
-	}
-
-	// Build request body
-	reqBody := map[string]any{
-		"model": config.Model,
-		"messages": []map[string]string{
-			{"role": "user", "content": prompt},
-		},
-		"temperature": 0.2,
-		"max_tokens":  4096,
-	}
-
-	jsonBody, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	// Determine API endpoint
-	var apiURL string
-	switch config.Provider {
-	case "openrouter":
-		apiURL = "https://openrouter.ai/api/v1/chat/completions"
-	case "anthropic":
-		apiURL = "https://api.anthropic.com/v1/messages"
-	case "openai":
-		apiURL = "https://api.openai.com/v1/chat/completions"
-	case "ollama":
-		baseURL := config.BaseURL
-		if baseURL == "" {
-			baseURL = "http://localhost:11434"
-		}
-		apiURL = baseURL + "/api/chat"
-	default:
-		apiURL = "https://openrouter.ai/api/v1/chat/completions"
-	}
-
-	s.logger.Debug("making LLM API request",
-		"provider", config.Provider,
-		"model", config.Model,
-		"api_url", apiURL,
-		"prompt_length", len(prompt),
-	)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(jsonBody))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	// Set auth header based on provider
-	switch config.Provider {
-	case "openrouter":
-		req.Header.Set("Authorization", "Bearer "+config.APIKey)
-		req.Header.Set("HTTP-Referer", "https://refyne.io")
-		req.Header.Set("X-Title", "Refyne Analyzer")
-	case "anthropic":
-		req.Header.Set("x-api-key", config.APIKey)
-		req.Header.Set("anthropic-version", "2023-06-01")
-	default:
-		req.Header.Set("Authorization", "Bearer "+config.APIKey)
-	}
-
-	client := &http.Client{Timeout: 120 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		s.logger.Error("LLM API request failed", "provider", config.Provider, "error", err)
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	s.logger.Debug("LLM API response received",
-		"provider", config.Provider,
-		"status_code", resp.StatusCode,
-		"response_length", len(body),
-	)
-
-	if resp.StatusCode != http.StatusOK {
-		s.logger.Error("LLM API error",
-			"provider", config.Provider,
-			"status_code", resp.StatusCode,
-			"response", string(body),
-		)
-		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	// Parse response based on provider
-	return s.extractLLMResponse(config.Provider, body)
-}
-
-// extractLLMResponse extracts the text response and token usage from different LLM provider formats.
-func (s *AnalyzerService) extractLLMResponse(provider string, body []byte) (*llmCallResult, error) {
-	result := &llmCallResult{}
-
-	switch provider {
-	case "anthropic":
-		var resp struct {
-			Content []struct {
-				Text string `json:"text"`
-			} `json:"content"`
-			Usage struct {
-				InputTokens  int `json:"input_tokens"`
-				OutputTokens int `json:"output_tokens"`
-			} `json:"usage"`
-		}
-		if err := json.Unmarshal(body, &resp); err != nil {
-			return nil, fmt.Errorf("failed to parse response: %w", err)
-		}
-		if len(resp.Content) == 0 {
-			return nil, fmt.Errorf("empty response from LLM")
-		}
-		result.Content = resp.Content[0].Text
-		result.InputTokens = resp.Usage.InputTokens
-		result.OutputTokens = resp.Usage.OutputTokens
-
-	default: // OpenAI/OpenRouter format
-		var resp struct {
-			Choices []struct {
-				Message struct {
-					Content string `json:"content"`
-				} `json:"message"`
-			} `json:"choices"`
-			Usage struct {
-				PromptTokens     int `json:"prompt_tokens"`
-				CompletionTokens int `json:"completion_tokens"`
-			} `json:"usage"`
-		}
-		if err := json.Unmarshal(body, &resp); err != nil {
-			return nil, fmt.Errorf("failed to parse response: %w", err)
-		}
-		if len(resp.Choices) == 0 {
-			return nil, fmt.Errorf("empty response from LLM")
-		}
-		result.Content = resp.Choices[0].Message.Content
-		result.InputTokens = resp.Usage.PromptTokens
-		result.OutputTokens = resp.Usage.CompletionTokens
-	}
-
-	return result, nil
-}
 
 // parseAnalysisResponse parses the LLM response into an AnalyzeOutput.
 func (s *AnalyzerService) parseAnalysisResponse(response string) (*AnalyzeOutput, error) {
