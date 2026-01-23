@@ -10,3 +10,6 @@
 [submodule "sdks/go"]
 	path = sdks/go
 	url = git@github.com:jmylchreest/refyne-sdk-go.git
+[submodule "recipeapp"]
+	path = recipeapp
+	url = git@github.com:jmylchreest/refyne-demos.git

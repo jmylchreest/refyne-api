@@ -1,5 +1,4 @@
 import Parser from 'rss-parser';
-import { shuffleWithDailySeed } from './shuffle';
 
 export interface NewsItem {
   id: string;
@@ -74,7 +73,7 @@ async function fetchRSSFeed(feedUrl: string, source: string, category: string): 
 }
 
 export async function getNews(): Promise<NewsItem[]> {
-  if (cachedNews) return shuffleWithDailySeed(cachedNews);
+  if (cachedNews) return cachedNews;
 
   const [hnNews, techCrunch, bbc] = await Promise.all([
     fetchHackerNews(),
@@ -85,7 +84,7 @@ export async function getNews(): Promise<NewsItem[]> {
   cachedNews = [...hnNews, ...techCrunch, ...bbc]
     .sort((a, b) => b.published_at.getTime() - a.published_at.getTime());
 
-  return shuffleWithDailySeed(cachedNews);
+  return cachedNews;
 }
 
 export async function getNewsById(id: string): Promise<NewsItem | undefined> {
