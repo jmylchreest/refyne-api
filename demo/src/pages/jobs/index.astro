@@ -21,7 +21,7 @@ const category = url.searchParams.get('category') || undefined;
 const type = url.searchParams.get('type') || undefined;
 const workMode = url.searchParams.get('work_mode') as WorkMode | undefined;
 const page = parseInt(url.searchParams.get('page') || '1', 10);
-const perPage = 12;
+const perPage = 25;
 
 let allJobs = getJobs();
 

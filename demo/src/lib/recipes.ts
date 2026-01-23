@@ -1,3 +1,5 @@
+import { shuffleWithDailySeed } from './shuffle';
+
 export interface Recipe {
   id: number;
   name: string;
@@ -44,7 +46,7 @@ interface DummyJSONResponse {
 let cachedRecipes: Recipe[] | null = null;
 
 export async function getRecipes(): Promise<Recipe[]> {
-  if (cachedRecipes) return cachedRecipes;
+  if (cachedRecipes) return shuffleWithDailySeed(cachedRecipes);
 
   try {
     const response = await fetch('https://dummyjson.com/recipes?limit=50');
@@ -74,10 +76,10 @@ export async function getRecipes(): Promise<Recipe[]> {
       meal_type: recipe.mealType,
     }));
 
-    return cachedRecipes;
+    return shuffleWithDailySeed(cachedRecipes);
   } catch (error) {
     console.error('Failed to fetch recipes:', error);
-    return getFallbackRecipes();
+    return shuffleWithDailySeed(getFallbackRecipes());
   }
 }
 

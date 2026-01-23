@@ -16,7 +16,7 @@ const url = Astro.url;
 const cuisine = url.searchParams.get('cuisine') || undefined;
 const difficulty = url.searchParams.get('difficulty') || undefined;
 const page = parseInt(url.searchParams.get('page') || '1', 10);
-const perPage = 12;
+const perPage = 25;
 
 let allRecipes = await getRecipes();
 const cuisines = await getRecipeCuisines();

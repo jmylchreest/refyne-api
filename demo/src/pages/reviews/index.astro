@@ -14,7 +14,7 @@ import {
 const url = Astro.url;
 const typeParam = url.searchParams.get('type') as ReviewType | null;
 const page = parseInt(url.searchParams.get('page') || '1', 10);
-const perPage = 12;
+const perPage = 25;
 
 let allReviews = await getReviews();
 const types = await getReviewTypes();

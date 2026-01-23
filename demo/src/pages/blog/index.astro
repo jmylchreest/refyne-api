@@ -9,7 +9,7 @@ const url = Astro.url;
 const category = url.searchParams.get('category') || undefined;
 const tag = url.searchParams.get('tag') || undefined;
 const page = parseInt(url.searchParams.get('page') || '1', 10);
-const perPage = 9;
+const perPage = 25;
 
 let allPosts = await getBlogPosts();
 const categories = await getBlogCategories();

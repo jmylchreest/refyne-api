@@ -1,3 +1,5 @@
+import { shuffleWithDailySeed } from './shuffle';
+
 export interface BlogPost {
   id: number;
   slug: string;
@@ -66,7 +68,7 @@ function categorizePost(tags: string[]): string {
 let cachedPosts: BlogPost[] | null = null;
 
 export async function getBlogPosts(): Promise<BlogPost[]> {
-  if (cachedPosts) return cachedPosts;
+  if (cachedPosts) return shuffleWithDailySeed(cachedPosts);
 
   try {
     const response = await fetch('https://dev.to/api/articles?per_page=50&top=7', {
@@ -97,10 +99,10 @@ export async function getBlogPosts(): Promise<BlogPost[]> {
       url: article.url,
     }));
 
-    return cachedPosts;
+    return shuffleWithDailySeed(cachedPosts);
   } catch (error) {
     console.error('Failed to fetch blog posts:', error);
-    return getFallbackPosts();
+    return shuffleWithDailySeed(getFallbackPosts());
   }
 }
 

@@ -7,7 +7,7 @@ import { getNews, getNewsSources, formatRelativeTime, getSourceColor } from '../
 const url = Astro.url;
 const source = url.searchParams.get('source') || undefined;
 const page = parseInt(url.searchParams.get('page') || '1', 10);
-const perPage = 15;
+const perPage = 25;
 
 let allNews = await getNews();
 const sources = await getNewsSources();

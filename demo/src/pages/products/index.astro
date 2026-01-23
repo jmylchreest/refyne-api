@@ -14,7 +14,7 @@ import {
 const url = Astro.url;
 const category = url.searchParams.get('category') || undefined;
 const page = parseInt(url.searchParams.get('page') || '1', 10);
-const perPage = 12;
+const perPage = 25;
 
 let allProducts = await getProducts();
 const categories = await getProductCategories();

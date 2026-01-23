@@ -1,3 +1,5 @@
+import { shuffleWithDailySeed } from './shuffle';
+
 export type ReviewType = 'product' | 'service' | 'comment' | 'feedback';
 export type Sentiment = 'positive' | 'neutral' | 'negative';
 
@@ -44,7 +46,7 @@ interface DummyJSONCommentsResponse {
 let cachedReviews: Review[] | null = null;
 
 export async function getReviews(): Promise<Review[]> {
-  if (cachedReviews) return cachedReviews;
+  if (cachedReviews) return shuffleWithDailySeed(cachedReviews);
 
   try {
     const response = await fetch('https://dummyjson.com/comments?limit=100');
@@ -83,7 +85,7 @@ export async function getReviews(): Promise<Review[]> {
 
     // Add some more detailed product reviews
     cachedReviews = [...apiReviews, ...getDetailedReviews()];
-    return cachedReviews;
+    return shuffleWithDailySeed(cachedReviews);
   } catch (error) {
     console.error('Failed to fetch reviews:', error);
     return getFallbackReviews();

@@ -1,3 +1,5 @@
+import { shuffleWithDailySeed } from './shuffle';
+
 export interface Product {
   id: number;
   name: string;
@@ -101,7 +103,7 @@ function generateSpecs(category: string): Record<string, string> {
 }
 
 export async function getProducts(): Promise<Product[]> {
-  if (cachedProducts) return cachedProducts;
+  if (cachedProducts) return shuffleWithDailySeed(cachedProducts);
 
   try {
     const response = await fetch('https://dummyjson.com/products?limit=100');
@@ -135,10 +137,10 @@ export async function getProducts(): Promise<Product[]> {
       };
     });
 
-    return cachedProducts;
+    return shuffleWithDailySeed(cachedProducts);
   } catch (error) {
     console.error('Failed to fetch products:', error);
-    return getFallbackProducts();
+    return shuffleWithDailySeed(getFallbackProducts());
   }
 }
 

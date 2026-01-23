@@ -1,4 +1,5 @@
 import { faker } from '@faker-js/faker';
+import { shuffleWithDailySeed } from './shuffle';
 
 export type WorkMode = 'remote' | 'hybrid' | 'on-site';
 export type Currency = 'USD' | 'EUR' | 'GBP';
@@ -274,7 +275,7 @@ function generateJob(index: number): Job {
 const allJobs: Job[] = Array.from({ length: 100 }, (_, i) => generateJob(i));
 
 export function getJobs(): Job[] {
-  return allJobs;
+  return shuffleWithDailySeed(allJobs);
 }
 
 export function getJobById(id: string): Job | undefined {
