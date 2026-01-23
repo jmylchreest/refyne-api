@@ -23,16 +23,32 @@ func NewExtractionHandler(extractionSvc *service.ExtractionService, jobSvc *serv
 	}
 }
 
+// CleanerConfigInput represents a cleaner in the chain.
+type CleanerConfigInput struct {
+	Name    string                 `json:"name" minLength:"1" doc:"Cleaner name (noop, markdown, trafilatura, readability)"`
+	Options *CleanerOptionsInput   `json:"options,omitempty" doc:"Cleaner-specific options"`
+}
+
+// CleanerOptionsInput represents cleaner configuration options.
+type CleanerOptionsInput struct {
+	Output  string `json:"output,omitempty" enum:"html,text" default:"html" doc:"Output format for trafilatura/readability"`
+	Tables  bool   `json:"tables,omitempty" default:"true" doc:"Include tables in output (trafilatura)"`
+	Links   bool   `json:"links,omitempty" default:"true" doc:"Include links in output (trafilatura)"`
+	Images  bool   `json:"images,omitempty" default:"true" doc:"Include images in output (trafilatura)"`
+	BaseURL string `json:"base_url,omitempty" doc:"Base URL for resolving relative links (readability)"`
+}
+
 // ExtractInput represents extraction request.
 type ExtractInput struct {
 	Body struct {
-		URL        string          `json:"url" minLength:"1" doc:"URL to extract data from"`
-		Schema     json.RawMessage `json:"schema" doc:"Schema defining the data structure to extract (JSON or YAML format)"`
-		FetchMode  string          `json:"fetch_mode,omitempty" enum:"auto,static,dynamic" default:"auto" doc:"Fetch mode: auto, static, or dynamic"`
-		LLMConfig  *LLMConfigInput `json:"llm_config,omitempty" doc:"Optional LLM configuration override"`
-		WebhookID  string          `json:"webhook_id,omitempty" doc:"ID of a saved webhook to call on completion"`
-		Webhook    *InlineWebhookInput `json:"webhook,omitempty" doc:"Inline ephemeral webhook configuration"`
-		WebhookURL string          `json:"webhook_url,omitempty" format:"uri" doc:"Simple webhook URL (backward compatible)"`
+		URL          string               `json:"url" minLength:"1" doc:"URL to extract data from"`
+		Schema       json.RawMessage      `json:"schema" doc:"Schema defining the data structure to extract (JSON or YAML format)"`
+		FetchMode    string               `json:"fetch_mode,omitempty" enum:"auto,static,dynamic" default:"auto" doc:"Fetch mode: auto, static, or dynamic"`
+		LLMConfig    *LLMConfigInput      `json:"llm_config,omitempty" doc:"Optional LLM configuration override"`
+		CleanerChain []CleanerConfigInput `json:"cleaner_chain,omitempty" doc:"Content cleaner chain (default: [markdown])"`
+		WebhookID    string               `json:"webhook_id,omitempty" doc:"ID of a saved webhook to call on completion"`
+		Webhook      *InlineWebhookInput  `json:"webhook,omitempty" doc:"Inline ephemeral webhook configuration"`
+		WebhookURL   string               `json:"webhook_url,omitempty" format:"uri" doc:"Simple webhook URL (backward compatible)"`
 	}
 }
 
@@ -143,13 +159,36 @@ func (h *ExtractionHandler) Extract(ctx context.Context, input *ExtractInput) (*
 		Tier:                uc.Tier,
 		BYOKAllowed:         uc.BYOKAllowed,
 		ModelsCustomAllowed: uc.ModelsCustomAllowed,
+		LLMProvider:         uc.LLMProvider, // From S3 API key config (bypasses fallback chain)
+		LLMModel:            uc.LLMModel,    // From S3 API key config (bypasses fallback chain)
+	}
+
+	// Convert cleaner chain from handler input to service input
+	var cleanerChain []service.CleanerConfig
+	if len(input.Body.CleanerChain) > 0 {
+		cleanerChain = make([]service.CleanerConfig, len(input.Body.CleanerChain))
+		for i, c := range input.Body.CleanerChain {
+			cleanerChain[i] = service.CleanerConfig{
+				Name: c.Name,
+			}
+			if c.Options != nil {
+				cleanerChain[i].Options = &service.CleanerOptions{
+					Output:  c.Options.Output,
+					Tables:  c.Options.Tables,
+					Links:   c.Options.Links,
+					Images:  c.Options.Images,
+					BaseURL: c.Options.BaseURL,
+				}
+			}
+		}
 	}
 
 	result, err := h.extractionSvc.ExtractWithContext(ctx, uc.UserID, service.ExtractInput{
-		URL:       input.Body.URL,
-		Schema:    input.Body.Schema,
-		FetchMode: input.Body.FetchMode,
-		LLMConfig: llmCfg,
+		URL:          input.Body.URL,
+		Schema:       input.Body.Schema,
+		FetchMode:    input.Body.FetchMode,
+		LLMConfig:    llmCfg,
+		CleanerChain: cleanerChain,
 	}, ectx)
 
 	// Update job record with result or error

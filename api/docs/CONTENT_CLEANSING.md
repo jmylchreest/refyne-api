@@ -2,6 +2,98 @@
 
 This document outlines HTML content cleansing strategies for the Refyne API, particularly for the analyzer and extraction services.
 
+## API Configuration
+
+Cleaner chains are **configurable per-request** via the API. Clients can specify which cleaners to use and in what order.
+
+### Endpoints
+
+**List Available Cleaners:**
+```
+GET /api/v1/cleaners
+```
+
+Returns available cleaners with their options and default chains:
+```json
+{
+  "cleaners": [
+    {
+      "name": "noop",
+      "description": "Pass-through cleaner that preserves raw HTML"
+    },
+    {
+      "name": "markdown",
+      "description": "Converts HTML to Markdown format"
+    },
+    {
+      "name": "trafilatura",
+      "description": "Extracts main content using Trafilatura algorithm",
+      "options": [
+        {"name": "output", "type": "string", "default": "html", "description": "Output format: html or text"},
+        {"name": "tables", "type": "boolean", "default": true, "description": "Include tables"},
+        {"name": "links", "type": "boolean", "default": true, "description": "Include links"},
+        {"name": "images", "type": "boolean", "default": false, "description": "Include images"}
+      ]
+    },
+    {
+      "name": "readability",
+      "description": "Extracts main content using Mozilla Readability",
+      "options": [
+        {"name": "output", "type": "string", "default": "html", "description": "Output format: html or text"},
+        {"name": "base_url", "type": "string", "default": "", "description": "Base URL for resolving relative links"}
+      ]
+    }
+  ],
+  "defaultExtractionChain": [{"name": "markdown"}],
+  "defaultAnalysisChain": [{"name": "noop"}]
+}
+```
+
+### Using Custom Cleaner Chains
+
+**Extract endpoint:**
+```json
+POST /api/v1/extract
+{
+  "url": "https://example.com/product",
+  "schema": {"name": "string", "price": "number"},
+  "cleanerChain": [
+    {"name": "trafilatura", "options": {"tables": true, "links": true}},
+    {"name": "markdown"}
+  ]
+}
+```
+
+**Crawl endpoint:**
+```json
+POST /api/v1/crawl
+{
+  "url": "https://example.com/products",
+  "schema": {"name": "string", "price": "number"},
+  "cleanerChain": [
+    {"name": "readability", "options": {"output": "html"}},
+    {"name": "markdown"}
+  ]
+}
+```
+
+### TypeScript SDK
+
+```typescript
+// List available cleaners
+const cleaners = await refyne.listCleaners();
+
+// Extract with custom cleaner chain
+const result = await refyne.extract({
+  url: 'https://example.com/product',
+  schema: { name: 'string', price: 'number' },
+  cleanerChain: [
+    { name: 'trafilatura', options: { tables: true, links: true } },
+    { name: 'markdown' },
+  ],
+});
+```
+
 ## Cleaner Chain Pattern
 
 The refinery library uses a **chain builder pattern** where multiple cleaners can be composed:
@@ -25,19 +117,19 @@ Available cleaners:
 - `cleaner.NewMarkdown()` - HTML to Markdown conversion
 - `cleaner.NewChain(cleaners...)` - Compose multiple cleaners
 
-## Current Implementation
+## Default Behavior
 
 ### Extraction Service
-Uses: `Markdown` cleaner only (HTML to Markdown conversion)
+Uses: `Markdown` cleaner by default (HTML to Markdown conversion)
 - Converts raw HTML to Markdown preserving structure
 - Links become `[text](url)`, images become `![alt](src)`
 - Tables preserved as Markdown tables
-- Still quite large for complex e-commerce pages
+- Override with `cleanerChain` parameter for different behavior
 
 ### Analyzer Service
-- **Primary:** `Noop` cleaner (raw HTML) - preserves all detail
-- **Fallback:** `Trafilatura (HTML output, tables+links)` - used on context length errors
-- Auto-retries with fallback cleaner when context window exceeded
+Uses: `Noop` cleaner by default (raw HTML)
+- Preserves maximum detail for comprehensive analysis
+- Best for understanding page structure
 
 ## Problem Statement
 
@@ -164,56 +256,55 @@ cleanerChain := cleaner.NewChain(
 
 ## Implemented Strategy
 
-### For Analyzer Service (IMPLEMENTED)
+### Cleaner Factory Pattern
 
-**Retry-with-fallback is now implemented:**
-
-1. **Primary attempt:** Use Noop cleaner (raw HTML)
-   - Preserves maximum detail
-   - Best for comprehensive analysis
-
-2. **On context length error:** Auto-retry with Trafilatura (HTML output)
-   - Reduces token count significantly
-   - Preserves tables and links via explicit config
-   - Excludes images to save tokens
-   - Logs reduction percentage for monitoring
+The API uses a factory pattern to create cleaners from configuration:
 
 ```go
-// Implemented in analyzer_service.go
-fallbackCleaner := cleaner.NewTrafilatura(&cleaner.TrafilaturaConfig{
-    Output: cleaner.OutputHTML, // HTML not text - preserves structure
-    Tables: cleaner.Include,    // Explicitly preserve tables
-    Links:  cleaner.Include,    // Explicitly preserve links
-    Images: cleaner.Exclude,    // Exclude images to save tokens
-})
+// In cleaner_factory.go
+factory := NewCleanerFactory()
+chain, err := factory.CreateChainWithDefault(inputChain, DefaultExtractionCleanerChain)
 ```
 
-The `isContextLengthError()` function detects errors containing:
-- `context_length`, `max_tokens`, `token limit`
-- `too long`, `maximum context`, `exceeds limit`
-- `input too large`, `content_too_large`, `request too large`
+**Default chains:**
+- `DefaultExtractionCleanerChain = [{name: "markdown"}]`
+- `DefaultAnalyzerCleanerChain = [{name: "noop"}]`
 
-### For Extraction Service (UPDATED)
+### For Analyzer Service
 
-**Now uses HTML output:**
-- Trafilatura HTML (with tables/links) -> Markdown
-- Preserves structure for e-commerce, listings, product pages
-- Markdown conversion creates clean content for LLM
+Uses `noop` cleaner by default to preserve maximum HTML detail for page structure analysis.
+
+### For Extraction Service
+
+Uses `markdown` cleaner by default for clean content extraction. This approach:
+- Converts raw HTML to Markdown preserving structure
+- Links become `[text](url)`, images become `![alt](src)`
+- Tables preserved as Markdown tables
+- Strikes a balance between token usage and content preservation
+
+### Custom Cleaner Chains
+
+Users can override defaults via the `cleanerChain` parameter. Common patterns:
 
 ```go
-trafilaturaCleaner := cleaner.NewTrafilatura(&cleaner.TrafilaturaConfig{
-    Output: cleaner.OutputHTML, // HTML preserves structure
-    Tables: cleaner.Include,    // Product grids, specs tables
-    Links:  cleaner.Include,    // Product URLs
-})
-markdownCleaner := cleaner.NewMarkdown()
-cleanerChain := cleaner.NewChain(trafilaturaCleaner, markdownCleaner)
+// For article content: extract main content then convert to markdown
+cleanerChain: [
+    {name: "trafilatura", options: {tables: true, links: true}},
+    {name: "markdown"}
+]
+
+// For maximum content preservation (high token usage)
+cleanerChain: [
+    {name: "noop"}
+]
+
+// For minimal token usage (may lose content)
+cleanerChain: [
+    {name: "trafilatura", options: {output: "text"}}
+]
 ```
 
-**Why HTML -> Markdown instead of Text -> Markdown:**
-- Text output strips structure (treats product grids as "boilerplate")
-- HTML output preserves tables, links, and layout
-- Markdown converter then creates structured, readable content
+**Note on Trafilatura:** While Trafilatura is effective for article extraction, it may strip product grids, form elements, and other non-article content. For e-commerce sites, the default `markdown` cleaner often works better.
 
 ## Error Detection
 
@@ -235,10 +326,12 @@ func isContextLengthError(err error) bool {
 
 ## Implementation Priority
 
-1. **DONE:** Add retry logic to analyzer with Trafilatura HTML fallback
-2. **DONE:** Auto mini-crawl for better schema generation
-3. **Medium-term:** Evaluate MinerU-HTML for complex sites (out-of-process)
-4. **Long-term:** Page-type-aware cleaner selection
+1. **DONE:** API-configurable cleaner chains via `cleanerChain` parameter
+2. **DONE:** `/api/v1/cleaners` endpoint to list available cleaners
+3. **DONE:** Default cleaner chains (markdown for extraction, noop for analysis)
+4. **DONE:** Auto mini-crawl for better schema generation
+5. **Medium-term:** Evaluate MinerU-HTML for complex sites (out-of-process)
+6. **Long-term:** Page-type-aware cleaner selection
 
 ## Analyzer Auto Mini-Crawl
 

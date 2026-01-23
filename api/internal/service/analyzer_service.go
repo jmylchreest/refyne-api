@@ -61,14 +61,22 @@ func NewAnalyzerServiceWithBilling(cfg *config.Config, repos *repository.Reposit
 		logger.Error("failed to create encryptor for analyzer service", "error", err)
 	}
 
-	// Create fallback cleaner: Trafilatura with HTML output preserving tables and links
-	// Used when raw HTML exceeds context window limits
-	fallbackCleaner := cleaner.NewTrafilatura(&cleaner.TrafilaturaConfig{
-		Output: cleaner.OutputHTML, // HTML output preserves structure
-		Tables: cleaner.Include,    // Explicitly preserve tables
-		Links:  cleaner.Include,    // Explicitly preserve links
-		Images: cleaner.Exclude,    // Exclude images to save tokens
-	})
+	// Create cleaners using factory for consistency
+	factory := NewCleanerFactory()
+
+	// Primary cleaner chain: noop (raw HTML) for maximum analysis detail
+	primaryCleaner, err := factory.CreateChain(DefaultAnalyzerCleanerChain)
+	if err != nil {
+		logger.Error("failed to create primary cleaner", "error", err)
+		primaryCleaner = cleaner.NewNoop() // Fallback to direct creation
+	}
+
+	// Fallback cleaner chain: trafilatura (used when content exceeds context window)
+	fallbackCleaner, err := factory.CreateChain(AnalyzerFallbackCleanerChain)
+	if err != nil {
+		logger.Error("failed to create fallback cleaner", "error", err)
+		fallbackCleaner = cleaner.NewNoop()
+	}
 
 	// Create preprocessor chain for generating LLM hints
 	// HintRepeats detects repeated HTML patterns to suggest array-based schemas
@@ -85,8 +93,8 @@ func NewAnalyzerServiceWithBilling(cfg *config.Config, repos *repository.Reposit
 		resolver:        resolver,
 		logger:          logger,
 		encryptor:       encryptor,
-		cleaner:         cleaner.NewNoop(), // Use noop cleaner - raw HTML for analysis
-		fallbackCleaner: fallbackCleaner,
+		cleaner:         primaryCleaner,  // noop by default - raw HTML for analysis
+		fallbackCleaner: fallbackCleaner, // trafilatura for context length fallback
 		preprocessor:    llmPreprocessor,
 	}
 }

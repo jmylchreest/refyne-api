@@ -213,20 +213,8 @@ func (w *Worker) processExtractJob(ctx context.Context, job *models.Job) {
 }
 
 func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
-	// Parse crawl options
-	var options struct {
-		FollowSelector   string `json:"follow_selector"`
-		FollowPattern    string `json:"follow_pattern"`
-		MaxDepth         int    `json:"max_depth"`
-		NextSelector     string `json:"next_selector"`
-		MaxPages         int    `json:"max_pages"`
-		MaxURLs          int    `json:"max_urls"`
-		Delay            string `json:"delay"`
-		Concurrency      int    `json:"concurrency"`
-		SameDomainOnly   bool   `json:"same_domain_only"`
-		ExtractFromSeeds bool   `json:"extract_from_seeds"`
-		UseSitemap       bool   `json:"use_sitemap"`
-	}
+	// Parse crawl options (including cleaner chain)
+	var options service.CrawlOptions
 	if job.CrawlOptionsJSON != "" {
 		_ = json.Unmarshal([]byte(job.CrawlOptionsJSON), &options)
 	}
@@ -409,13 +397,14 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 	}
 
 	result, err := w.extractionSvc.CrawlWithCallback(ctx, job.UserID, service.CrawlInput{
-		JobID:      job.ID,
-		URL:        job.URL,
-		SeedURLs:   sitemapURLs, // URLs from sitemap discovery (empty if not using sitemap)
-		Schema:     json.RawMessage(job.SchemaJSON),
-		LLMConfigs: llmConfigs,  // Pre-resolved config chain from job creation
-		Tier:       job.Tier,    // User's tier at job creation time
-		IsBYOK:     job.IsBYOK,  // Whether using user's own API keys
+		JobID:        job.ID,
+		URL:          job.URL,
+		SeedURLs:     sitemapURLs, // URLs from sitemap discovery (empty if not using sitemap)
+		Schema:       json.RawMessage(job.SchemaJSON),
+		LLMConfigs:   llmConfigs,  // Pre-resolved config chain from job creation
+		Tier:         job.Tier,    // User's tier at job creation time
+		IsBYOK:       job.IsBYOK,  // Whether using user's own API keys
+		CleanerChain: options.CleanerChain, // Content cleaner chain from job creation
 		Options: service.CrawlOptions{
 			FollowSelector:   options.FollowSelector,
 			FollowPattern:    options.FollowPattern,

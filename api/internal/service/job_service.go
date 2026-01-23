@@ -34,17 +34,18 @@ func NewJobService(cfg *config.Config, repos *repository.Repositories, storageSv
 
 // CrawlOptions represents crawl job options.
 type CrawlOptions struct {
-	FollowSelector   string `json:"follow_selector,omitempty"`
-	FollowPattern    string `json:"follow_pattern,omitempty"`
-	MaxDepth         int    `json:"max_depth,omitempty"`
-	NextSelector     string `json:"next_selector,omitempty"`
-	MaxPages         int    `json:"max_pages,omitempty"`
-	MaxURLs          int    `json:"max_urls,omitempty"`
-	Delay            string `json:"delay,omitempty"`
-	Concurrency      int    `json:"concurrency,omitempty"`
-	SameDomainOnly   bool   `json:"same_domain_only,omitempty"`
-	ExtractFromSeeds bool   `json:"extract_from_seeds,omitempty"`
-	UseSitemap       bool   `json:"use_sitemap,omitempty"`
+	FollowSelector   string          `json:"follow_selector,omitempty"`
+	FollowPattern    string          `json:"follow_pattern,omitempty"`
+	MaxDepth         int             `json:"max_depth,omitempty"`
+	NextSelector     string          `json:"next_selector,omitempty"`
+	MaxPages         int             `json:"max_pages,omitempty"`
+	MaxURLs          int             `json:"max_urls,omitempty"`
+	Delay            string          `json:"delay,omitempty"`
+	Concurrency      int             `json:"concurrency,omitempty"`
+	SameDomainOnly   bool            `json:"same_domain_only,omitempty"`
+	ExtractFromSeeds bool            `json:"extract_from_seeds,omitempty"`
+	UseSitemap       bool            `json:"use_sitemap,omitempty"`
+	CleanerChain     []CleanerConfig `json:"cleaner_chain,omitempty"`
 }
 
 // CreateCrawlJobInput represents input for creating a crawl job.
@@ -52,6 +53,7 @@ type CreateCrawlJobInput struct {
 	URL          string            `json:"url"`
 	Schema       json.RawMessage   `json:"schema"`
 	Options      CrawlOptions      `json:"options,omitempty"`
+	CleanerChain []CleanerConfig   `json:"cleaner_chain,omitempty"` // Content cleaner chain
 	WebhookURL   string            `json:"webhook_url,omitempty"`
 	LLMConfigs   []*LLMConfigInput `json:"llm_configs"`        // Pre-resolved LLM config chain
 	Tier         string            `json:"tier"`               // User's subscription tier at job creation time
@@ -104,8 +106,14 @@ type FailExtractJobInput struct {
 
 // CreateCrawlJob creates a new crawl job.
 func (s *JobService) CreateCrawlJob(ctx context.Context, userID string, input CreateCrawlJobInput) (*CreateCrawlJobOutput, error) {
-	// Serialize options
-	optionsJSON, err := json.Marshal(input.Options)
+	// Include cleaner chain in options for storage
+	options := input.Options
+	if len(input.CleanerChain) > 0 {
+		options.CleanerChain = input.CleanerChain
+	}
+
+	// Serialize options (includes cleaner chain)
+	optionsJSON, err := json.Marshal(options)
 	if err != nil {
 		return nil, fmt.Errorf("failed to serialize options: %w", err)
 	}

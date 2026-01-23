@@ -1,15 +1,16 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
 	"strings"
 	"time"
 
-	"github.com/jmylchreest/refyne/pkg/cleaner"
 	"github.com/jmylchreest/refyne/pkg/refyne"
 	"github.com/jmylchreest/refyne/pkg/schema"
 
@@ -64,10 +65,11 @@ func (s *ExtractionService) getStrictMode(ctx context.Context, provider, model s
 
 // ExtractInput represents extraction input.
 type ExtractInput struct {
-	URL       string          `json:"url"`
-	Schema    json.RawMessage `json:"schema"`
-	FetchMode string          `json:"fetch_mode,omitempty"`
-	LLMConfig *LLMConfigInput `json:"llm_config,omitempty"`
+	URL          string           `json:"url"`
+	Schema       json.RawMessage  `json:"schema"`
+	FetchMode    string           `json:"fetch_mode,omitempty"`
+	LLMConfig    *LLMConfigInput  `json:"llm_config,omitempty"`
+	CleanerChain []CleanerConfig  `json:"cleaner_chain,omitempty"` // Content cleaner chain: [{name: "trafilatura", options: {...}}, {name: "markdown"}]
 }
 
 // LLMConfigInput represents user-provided LLM configuration.
@@ -112,8 +114,10 @@ type ExtractContext struct {
 	Tier                string // From JWT claims
 	SchemaID            string
 	IsBYOK              bool
-	BYOKAllowed         bool // From JWT claims - whether user has the "provider_byok" feature
-	ModelsCustomAllowed bool // From JWT claims - whether user has the "models_custom" feature
+	BYOKAllowed         bool   // From JWT claims - whether user has the "provider_byok" feature
+	ModelsCustomAllowed bool   // From JWT claims - whether user has the "models_custom" feature
+	LLMProvider         string // For S3 API keys: forced LLM provider (bypasses fallback chain)
+	LLMModel            string // For S3 API keys: forced LLM model (bypasses fallback chain)
 }
 
 // Extract performs a single-page extraction.
@@ -134,11 +138,19 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 		}
 	}
 
+	s.logger.Debug("ExtractWithContext starting",
+		"user_id", userID,
+		"tier", ectx.Tier,
+		"llm_provider", ectx.LLMProvider,
+		"llm_model", ectx.LLMModel,
+	)
+
 	// Parse schema first (same for all attempts)
 	// Try JSON first, then YAML if JSON fails
 	sch, err := parseSchema(input.Schema)
 	if err != nil {
-		return nil, fmt.Errorf("invalid schema: %w", err)
+		s.logger.Error("schema parsing failed", "error", err)
+		return nil, err // Return SchemaError directly for proper 400 response
 	}
 
 	// Create or get schema snapshot for tracking (if billing is enabled)
@@ -154,8 +166,14 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 	// Get the list of LLM configs to try (using tier-specific chain)
 	// BYOKAllowed comes from JWT claims - this is the authoritative check for BYOK eligibility
 	// ModelsCustomAllowed controls whether user's custom model chain is used
-	llmConfigs, isBYOK := s.resolveLLMConfigsWithFallback(ctx, userID, input.LLMConfig, ectx.Tier, ectx.BYOKAllowed, ectx.ModelsCustomAllowed)
+	// LLMProvider/LLMModel from S3 API keys bypass the entire fallback chain
+	llmConfigs, isBYOK := s.resolveLLMConfigsWithFallback(ctx, userID, input.LLMConfig, ectx.Tier, ectx.BYOKAllowed, ectx.ModelsCustomAllowed, ectx.LLMProvider, ectx.LLMModel)
 	ectx.IsBYOK = isBYOK
+
+	s.logger.Debug("LLM configs resolved",
+		"config_count", len(llmConfigs),
+		"is_byok", isBYOK,
+	)
 
 	// Estimate cost (triggers pricing cache refresh if needed) and check balance for non-BYOK
 	if s.billing != nil && len(llmConfigs) > 0 {
@@ -193,8 +211,8 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 			"is_byok", isBYOK,
 		)
 
-		// Create refyne instance
-		r, _, err := s.createRefyneInstance(llmCfg)
+		// Create refyne instance with configured cleaner
+		r, _, err := s.createRefyneInstance(llmCfg, input.CleanerChain)
 		if err != nil {
 			s.logger.Warn("failed to create LLM instance",
 				"provider", llmCfg.Provider,
@@ -400,7 +418,43 @@ func (s *ExtractionService) handleSuccessfulExtraction(
 // resolveLLMConfigsWithFallback returns the list of LLM configs to try, in order.
 // Returns (configs, isBYOK) where isBYOK is true if user provided their own API key.
 // Delegates to LLMConfigResolver for the feature matrix implementation.
-func (s *ExtractionService) resolveLLMConfigsWithFallback(ctx context.Context, userID string, override *LLMConfigInput, tier string, byokAllowed bool, modelsCustomAllowed bool) ([]*LLMConfigInput, bool) {
+//
+// If injectedProvider and injectedModel are set (from S3 API key config), they bypass
+// the entire fallback chain and use system keys for that specific provider/model.
+func (s *ExtractionService) resolveLLMConfigsWithFallback(ctx context.Context, userID string, override *LLMConfigInput, tier string, byokAllowed bool, modelsCustomAllowed bool, injectedProvider, injectedModel string) ([]*LLMConfigInput, bool) {
+	// Check for injected LLM config from S3 API keys first - this bypasses the entire fallback chain
+	if injectedProvider != "" && injectedModel != "" {
+		s.logger.Info("using injected LLM config from S3 API key",
+			"user_id", userID,
+			"provider", injectedProvider,
+			"model", injectedModel,
+		)
+
+		// Get system keys to use with the injected provider
+		config := &LLMConfigInput{
+			Provider:   injectedProvider,
+			Model:      injectedModel,
+			StrictMode: s.getStrictMode(ctx, injectedProvider, injectedModel, nil),
+		}
+
+		// Use system keys for the specified provider
+		if s.resolver != nil {
+			serviceKeys := s.resolver.GetServiceKeys(ctx)
+			switch injectedProvider {
+			case "openrouter":
+				config.APIKey = serviceKeys.OpenRouterKey
+			case "anthropic":
+				config.APIKey = serviceKeys.AnthropicKey
+			case "openai":
+				config.APIKey = serviceKeys.OpenAIKey
+			case "ollama":
+				// Ollama doesn't require an API key
+			}
+		}
+
+		return []*LLMConfigInput{config}, false // Not BYOK - using system keys
+	}
+
 	// Delegate to resolver for all standard cases
 	if s.resolver != nil {
 		return s.resolver.ResolveConfigs(ctx, userID, override, tier, byokAllowed, modelsCustomAllowed)
@@ -413,14 +467,15 @@ func (s *ExtractionService) resolveLLMConfigsWithFallback(ctx context.Context, u
 
 // CrawlInput represents crawl input.
 type CrawlInput struct {
-	JobID      string          `json:"job_id,omitempty"`    // Job ID for logging/tracking
-	URL        string          `json:"url"`
-	SeedURLs   []string        `json:"seed_urls,omitempty"` // Additional seed URLs (from sitemap discovery)
-	Schema     json.RawMessage `json:"schema"`
-	Options    CrawlOptions    `json:"options"`
-	LLMConfigs []*LLMConfigInput `json:"llm_configs,omitempty"` // Pre-resolved LLM config chain
-	Tier       string            `json:"tier,omitempty"`        // User's subscription tier at job creation time
-	IsBYOK     bool              `json:"is_byok,omitempty"`     // Whether using user's own API keys
+	JobID        string            `json:"job_id,omitempty"`        // Job ID for logging/tracking
+	URL          string            `json:"url"`
+	SeedURLs     []string          `json:"seed_urls,omitempty"`     // Additional seed URLs (from sitemap discovery)
+	Schema       json.RawMessage   `json:"schema"`
+	Options      CrawlOptions      `json:"options"`
+	LLMConfigs   []*LLMConfigInput `json:"llm_configs,omitempty"`   // Pre-resolved LLM config chain
+	Tier         string            `json:"tier,omitempty"`          // User's subscription tier at job creation time
+	IsBYOK       bool              `json:"is_byok,omitempty"`       // Whether using user's own API keys
+	CleanerChain []CleanerConfig   `json:"cleaner_chain,omitempty"` // Content cleaner chain
 }
 
 // Note: CrawlOptions is defined in job_service.go to avoid duplication
@@ -476,8 +531,8 @@ func (s *ExtractionService) Crawl(ctx context.Context, userID string, input Craw
 		return nil, fmt.Errorf("invalid schema: %w", err)
 	}
 
-	// Create refyne instance
-	r, cleanerName, err := s.createRefyneInstance(llmCfg)
+	// Create refyne instance with configured cleaner
+	r, cleanerName, err := s.createRefyneInstance(llmCfg, input.CleanerChain)
 	if err != nil {
 		return nil, s.handleLLMError(err, llmCfg, isBYOK)
 	}
@@ -716,8 +771,8 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 		return nil, fmt.Errorf("invalid schema: %w", err)
 	}
 
-	// Create refyne instance
-	r, cleanerName, err := s.createRefyneInstance(llmCfg)
+	// Create refyne instance with configured cleaner
+	r, cleanerName, err := s.createRefyneInstance(llmCfg, input.CleanerChain)
 	if err != nil {
 		return nil, s.handleLLMError(err, llmCfg, isBYOK)
 	}
@@ -952,22 +1007,21 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 }
 
 // createRefyneInstance creates a new refyne instance with the given LLM config.
-// Returns the refyne instance and the cleaner name for logging.
-func (s *ExtractionService) createRefyneInstance(llmCfg *LLMConfigInput) (*refyne.Refyne, string, error) {
-	// Use Trafilatura -> Markdown chain
-	// 1. Trafilatura extracts main content (more inclusive than Readability)
-	//    - Keeps tables, links, images (important for data extraction)
-	//    - Works better for non-article pages (product listings, job boards, etc.)
-	// 2. Markdown converts HTML to markdown (strips tags, preserves structure)
-	contentCleaner := cleaner.NewChain(
-		cleaner.NewTrafilatura(&cleaner.TrafilaturaConfig{
-			Output: cleaner.OutputHTML,
-			Tables: cleaner.Include, // Keep tables for structured data
-			Links:  cleaner.Include, // Keep links for URL extraction
-			Images: cleaner.Include, // Keep image URLs
-		}),
-		cleaner.NewMarkdown(),
-	)
+// Returns the refyne instance and the cleaner chain name for logging.
+// The cleanerChain parameter specifies which cleaners to use (empty uses default).
+func (s *ExtractionService) createRefyneInstance(llmCfg *LLMConfigInput, cleanerChain []CleanerConfig) (*refyne.Refyne, string, error) {
+	// Create cleaner chain from factory, using default if not specified
+	factory := NewCleanerFactory()
+	contentCleaner, err := factory.CreateChainWithDefault(cleanerChain, DefaultExtractionCleanerChain)
+	if err != nil {
+		return nil, "", fmt.Errorf("invalid cleaner chain: %w", err)
+	}
+
+	// Get chain name for logging
+	chainName := GetChainName(cleanerChain)
+	if len(cleanerChain) == 0 {
+		chainName = GetChainName(DefaultExtractionCleanerChain)
+	}
 
 	opts := []refyne.Option{
 		refyne.WithProvider(llmCfg.Provider),
@@ -991,7 +1045,7 @@ func (s *ExtractionService) createRefyneInstance(llmCfg *LLMConfigInput) (*refyn
 	if err != nil {
 		return nil, "", err
 	}
-	return r, contentCleaner.Name(), nil
+	return r, chainName, nil
 }
 
 // addURLsQueuedCallback adds the OnURLsQueued callback to crawl options.
@@ -1116,12 +1170,32 @@ func (s *ExtractionService) processExtractionResult(rawData any, pageURL string)
 // Helper Methods
 // ========================================
 
+// SchemaError represents a schema parsing error.
+// This is a user-facing error that should be returned as 400 Bad Request.
+type SchemaError struct {
+	Message string
+}
+
+func (e *SchemaError) Error() string {
+	return e.Message
+}
+
 // parseSchema attempts to parse schema data as JSON first, then YAML if JSON fails.
 // This allows the API to accept schemas in either format.
+// Also handles JSON string-wrapped schemas (e.g., from jq --arg).
 func parseSchema(data []byte) (schema.Schema, error) {
+	// If data looks like a JSON string (starts with "), unwrap it first
+	// This handles cases where the schema was sent as a JSON string value
+	if len(data) >= 2 && data[0] == '"' {
+		var unwrapped string
+		if err := json.Unmarshal(data, &unwrapped); err == nil {
+			data = []byte(unwrapped)
+		}
+	}
+
 	// Try JSON first (most common)
-	sch, err := schema.FromJSON(data)
-	if err == nil {
+	sch, jsonErr := schema.FromJSON(data)
+	if jsonErr == nil {
 		return sch, nil
 	}
 
@@ -1131,8 +1205,103 @@ func parseSchema(data []byte) (schema.Schema, error) {
 		return sch, nil
 	}
 
-	// Both failed - return the JSON error as it's the primary format
-	return schema.Schema{}, fmt.Errorf("invalid schema format (tried JSON and YAML): %w", err)
+	// Both failed - build a helpful error message
+	return schema.Schema{}, &SchemaError{
+		Message: formatSchemaError(data, jsonErr, yamlErr),
+	}
+}
+
+// formatSchemaError creates a user-friendly error message for schema parsing failures.
+func formatSchemaError(data []byte, jsonErr, yamlErr error) string {
+	// Check for schema validation errors (field-level issues)
+	var validationErr schema.ValidationError
+	if errors.As(jsonErr, &validationErr) || errors.As(yamlErr, &validationErr) {
+		if validationErr.Field != "" {
+			return fmt.Sprintf("schema validation failed: field '%s' - %s", validationErr.Field, validationErr.Message)
+		}
+		return fmt.Sprintf("schema validation failed: %s", validationErr.Message)
+	}
+
+	// Check for JSON syntax errors
+	var syntaxErr *json.SyntaxError
+	if errors.As(jsonErr, &syntaxErr) {
+		// Find the line number from the offset
+		line, col := findPosition(data, int(syntaxErr.Offset))
+		return fmt.Sprintf("invalid JSON syntax at line %d, column %d", line, col)
+	}
+
+	// Check for JSON type errors
+	var typeErr *json.UnmarshalTypeError
+	if errors.As(jsonErr, &typeErr) {
+		if typeErr.Field != "" {
+			return fmt.Sprintf("invalid type for field '%s': expected %s", typeErr.Field, typeErr.Type.String())
+		}
+		return fmt.Sprintf("invalid type: expected %s", typeErr.Type.String())
+	}
+
+	// For YAML errors, try to extract line info from the error message
+	yamlErrStr := yamlErr.Error()
+	if strings.Contains(yamlErrStr, "line") {
+		// YAML errors often include "line X:" - extract just that part
+		if idx := strings.Index(yamlErrStr, "line"); idx >= 0 {
+			// Find the end of the line reference
+			endIdx := strings.Index(yamlErrStr[idx:], ":")
+			if endIdx > 0 && endIdx < 20 {
+				return fmt.Sprintf("invalid YAML syntax at %s", yamlErrStr[idx:idx+endIdx])
+			}
+		}
+	}
+
+	// Check if schema is empty
+	if len(bytes.TrimSpace(data)) == 0 {
+		return "schema cannot be empty"
+	}
+
+	// Check if it looks like neither JSON nor YAML
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) > 0 && trimmed[0] != '{' && trimmed[0] != '[' && !isYAMLStart(trimmed) {
+		return "invalid schema format: must be valid JSON object or YAML"
+	}
+
+	// Generic fallback
+	return "invalid schema format: failed to parse as JSON or YAML"
+}
+
+// findPosition calculates line and column from byte offset.
+func findPosition(data []byte, offset int) (line, col int) {
+	line = 1
+	col = 1
+	for i := 0; i < offset && i < len(data); i++ {
+		if data[i] == '\n' {
+			line++
+			col = 1
+		} else {
+			col++
+		}
+	}
+	return line, col
+}
+
+// isYAMLStart checks if data looks like it could be YAML.
+func isYAMLStart(data []byte) bool {
+	// YAML typically starts with a key (word followed by colon) or a dash for lists
+	if len(data) == 0 {
+		return false
+	}
+	// Check for common YAML starters
+	if data[0] == '-' || data[0] == '#' {
+		return true
+	}
+	// Check for "key:" pattern
+	for i := 0; i < len(data) && i < 50; i++ {
+		if data[i] == ':' {
+			return true
+		}
+		if data[i] == '\n' {
+			break
+		}
+	}
+	return false
 }
 
 // ResolveRelativeURLs recursively walks through extracted data and resolves

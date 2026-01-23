@@ -26,6 +26,7 @@ func Register(api huma.API, h *Handlers) {
 		mw.WithSummary("List subscription tiers"),
 		mw.WithOperationID("listTiers"))
 
+
 	// Kubernetes probes (hidden from docs - internal use only)
 	mw.HiddenGet(api, "/healthz", h.Livez)
 	mw.HiddenGet(api, "/readyz", h.Readyz)
@@ -70,6 +71,13 @@ func Register(api huma.API, h *Handlers) {
 		mw.WithTags("Usage"),
 		mw.WithSummary("Get usage statistics"),
 		mw.WithOperationID("getUsage"))
+
+	// --- Configuration ---
+	mw.ProtectedGet(api, "/api/v1/cleaners", h.ListCleaners,
+		mw.WithTags("Configuration"),
+		mw.WithSummary("List content cleaners"),
+		mw.WithDescription("Returns available content cleaners with their options. Cleaners process HTML before extraction to reduce tokens or extract main content."),
+		mw.WithOperationID("listCleaners"))
 
 	// --- LLM Providers ---
 	mw.ProtectedGet(api, "/api/v1/llm/providers", h.UserLLM.ListProviders,

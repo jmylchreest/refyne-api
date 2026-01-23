@@ -125,6 +125,7 @@ type Handlers struct {
 	// Public endpoints
 	HealthCheck    func(ctx context.Context, input *struct{}) (*handlers.HealthCheckOutput, error)
 	ListTierLimits func(ctx context.Context, input *struct{}) (*handlers.ListTierLimitsOutput, error)
+	ListCleaners   func(ctx context.Context, input *struct{}) (*handlers.ListCleanersOutput, error)
 
 	// Kubernetes probes (hidden from docs)
 	Livez  func(ctx context.Context, input *struct{}) (*handlers.LivezOutput, error)

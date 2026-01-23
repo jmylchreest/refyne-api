@@ -16,6 +16,7 @@ func StubHandlers() *Handlers {
 		// Public endpoints
 		HealthCheck:    stubHealthCheck,
 		ListTierLimits: stubListTierLimits,
+		ListCleaners:   stubListCleaners,
 
 		// Kubernetes probes
 		Livez:  stubLivez,
@@ -44,6 +45,10 @@ func stubHealthCheck(_ context.Context, _ *struct{}) (*handlers.HealthCheckOutpu
 }
 
 func stubListTierLimits(_ context.Context, _ *struct{}) (*handlers.ListTierLimitsOutput, error) {
+	return nil, nil
+}
+
+func stubListCleaners(_ context.Context, _ *struct{}) (*handlers.ListCleanersOutput, error) {
 	return nil, nil
 }
 

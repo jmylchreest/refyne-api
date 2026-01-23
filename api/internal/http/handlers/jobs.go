@@ -72,17 +72,33 @@ type CrawlInlineWebhookInput struct {
 	Headers []CrawlWebhookHeaderInput `json:"headers,omitempty" maxItems:"10" doc:"Custom headers"`
 }
 
+// JobCleanerConfigInput represents a cleaner in the chain (duplicated to avoid import cycle).
+type JobCleanerConfigInput struct {
+	Name    string                  `json:"name" minLength:"1" doc:"Cleaner name (noop, markdown, trafilatura, readability)"`
+	Options *JobCleanerOptionsInput `json:"options,omitempty" doc:"Cleaner-specific options"`
+}
+
+// JobCleanerOptionsInput represents cleaner configuration options.
+type JobCleanerOptionsInput struct {
+	Output  string `json:"output,omitempty" enum:"html,text" default:"html" doc:"Output format for trafilatura/readability"`
+	Tables  bool   `json:"tables,omitempty" default:"true" doc:"Include tables in output (trafilatura)"`
+	Links   bool   `json:"links,omitempty" default:"true" doc:"Include links in output (trafilatura)"`
+	Images  bool   `json:"images,omitempty" default:"true" doc:"Include images in output (trafilatura)"`
+	BaseURL string `json:"base_url,omitempty" doc:"Base URL for resolving relative links (readability)"`
+}
+
 type CreateCrawlJobInput struct {
 	Wait    bool `query:"wait" default:"false" doc:"Block until job completes and return results directly. Max wait time is 2 minutes. Returns 202 if timeout exceeded."`
 	Timeout int  `query:"timeout" default:"120" minimum:"10" maximum:"120" doc:"Maximum seconds to wait when wait=true (default 120s, max 120s/2min). For longer jobs, use async mode."`
 	Body    struct {
-		URL        string          `json:"url" minLength:"1" example:"https://example.com/products" doc:"Seed URL to start crawling from"`
-		Schema     json.RawMessage `json:"schema" doc:"JSON Schema defining the data structure to extract. Example: {\"name\":\"string\",\"price\":\"number\",\"description\":\"string\"}"`
-		Options    CrawlOptions    `json:"options,omitempty" doc:"Crawl configuration options"`
-		WebhookID  string          `json:"webhook_id,omitempty" doc:"ID of a saved webhook to call on job events"`
-		Webhook    *CrawlInlineWebhookInput `json:"webhook,omitempty" doc:"Inline ephemeral webhook configuration"`
-		WebhookURL string          `json:"webhook_url,omitempty" format:"uri" example:"https://my-app.com/webhook/crawl-complete" doc:"Simple webhook URL (backward compatible)"`
-		LLMConfig  *LLMConfigInput `json:"llm_config,omitempty" doc:"Optional LLM configuration override (BYOK)"`
+		URL          string                  `json:"url" minLength:"1" example:"https://example.com/products" doc:"Seed URL to start crawling from"`
+		Schema       json.RawMessage         `json:"schema" doc:"JSON Schema defining the data structure to extract. Example: {\"name\":\"string\",\"price\":\"number\",\"description\":\"string\"}"`
+		Options      CrawlOptions            `json:"options,omitempty" doc:"Crawl configuration options"`
+		CleanerChain []JobCleanerConfigInput `json:"cleaner_chain,omitempty" doc:"Content cleaner chain (default: [markdown])"`
+		WebhookID    string                  `json:"webhook_id,omitempty" doc:"ID of a saved webhook to call on job events"`
+		Webhook      *CrawlInlineWebhookInput `json:"webhook,omitempty" doc:"Inline ephemeral webhook configuration"`
+		WebhookURL   string                  `json:"webhook_url,omitempty" format:"uri" example:"https://my-app.com/webhook/crawl-complete" doc:"Simple webhook URL (backward compatible)"`
+		LLMConfig    *LLMConfigInput         `json:"llm_config,omitempty" doc:"Optional LLM configuration override (BYOK)"`
 	}
 }
 
@@ -166,6 +182,26 @@ func (h *JobHandler) CreateCrawlJob(ctx context.Context, input *CreateCrawlJobIn
 		return nil, huma.Error500InternalServerError("failed to resolve LLM configuration")
 	}
 
+	// Convert cleaner chain from handler input to service input
+	var cleanerChain []service.CleanerConfig
+	if len(input.Body.CleanerChain) > 0 {
+		cleanerChain = make([]service.CleanerConfig, len(input.Body.CleanerChain))
+		for i, c := range input.Body.CleanerChain {
+			cleanerChain[i] = service.CleanerConfig{
+				Name: c.Name,
+			}
+			if c.Options != nil {
+				cleanerChain[i].Options = &service.CleanerOptions{
+					Output:  c.Options.Output,
+					Tables:  c.Options.Tables,
+					Links:   c.Options.Links,
+					Images:  c.Options.Images,
+					BaseURL: c.Options.BaseURL,
+				}
+			}
+		}
+	}
+
 	result, err := h.jobSvc.CreateCrawlJob(ctx, uc.UserID, service.CreateCrawlJobInput{
 		URL:    input.Body.URL,
 		Schema: input.Body.Schema,
@@ -182,10 +218,11 @@ func (h *JobHandler) CreateCrawlJob(ctx context.Context, input *CreateCrawlJobIn
 			ExtractFromSeeds: input.Body.Options.ExtractFromSeeds,
 			UseSitemap:       input.Body.Options.UseSitemap,
 		},
-		WebhookURL: input.Body.WebhookURL,
-		LLMConfigs: llmConfigs,
-		Tier:       uc.Tier,
-		IsBYOK:     isBYOK,
+		CleanerChain: cleanerChain,
+		WebhookURL:   input.Body.WebhookURL,
+		LLMConfigs:   llmConfigs,
+		Tier:         uc.Tier,
+		IsBYOK:       isBYOK,
 	})
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to create crawl job: " + err.Error())

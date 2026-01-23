@@ -195,10 +195,22 @@ func main() {
 			Logger:   logger,
 		})
 
+		// API key configuration (for demo/partner/internal keys)
+		config.InitAPIKeyLoader(config.S3LoaderConfig{
+			S3Client: services.Storage.Client(),
+			Bucket:   bucket,
+			Key:      "config/api-keys.json",
+			Logger:   logger,
+		})
+		// Pre-load API keys so they're available for the first request
+		if loader := config.GetAPIKeyLoader(); loader != nil {
+			loader.Load(context.Background())
+		}
+
 		logger.Info("S3 config loaders enabled",
 			"bucket", bucket,
 			"cache_ttl", "5m",
-			"configs", []string{"blocklist.json", "logfilters.json", "model_defaults.json", "tier_settings.json"},
+			"configs", []string{"blocklist.json", "logfilters.json", "model_defaults.json", "tier_settings.json", "api-keys.json"},
 		)
 	}
 
@@ -278,6 +290,7 @@ func main() {
 	routeHandlers := &routes.Handlers{
 		HealthCheck:    handlers.HealthCheck,
 		ListTierLimits: handlers.ListTierLimits,
+		ListCleaners:   handlers.ListCleaners,
 		Livez:          handlers.Livez,
 		Readyz:         readyzHandler.Readyz,
 		Job:            jobHandler,
