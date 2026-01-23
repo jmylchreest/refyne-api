@@ -490,14 +490,13 @@ jobs:
           workingDirectory: docs
 
   # Deploy Demo to Cloudflare Pages (static Astro site)
-  # Only deploys to production - no staging demo site
+  # Deploys on any push when demo content changes
   deploy-demo:
     name: Deploy Demo
     runs-on: ubuntu-latest
     needs: [prepare, test-demo]
     if: |
       always() &&
-      needs.prepare.outputs.environment == 'production' &&
       needs.prepare.outputs.demo_changed == 'true' &&
       (needs.test-demo.result == 'success' || needs.test-demo.result == 'skipped')
     outputs:
@@ -531,14 +530,13 @@ jobs:
           workingDirectory: demo
 
   # Deploy Recipe App to Cloudflare Pages with D1
-  # Only deploys to production - no staging recipe app
+  # Deploys on any push when recipeapp content changes
   deploy-recipeapp:
     name: Deploy Recipe App
     runs-on: ubuntu-latest
     needs: [prepare, test-recipeapp]
     if: |
       always() &&
-      needs.prepare.outputs.environment == 'production' &&
       needs.prepare.outputs.recipeapp_changed == 'true' &&
       (needs.test-recipeapp.result == 'success' || needs.test-recipeapp.result == 'skipped')
     outputs:
