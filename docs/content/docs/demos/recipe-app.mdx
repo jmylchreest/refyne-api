@@ -1,0 +1,186 @@
+---
+title: Recipe App
+description: A recipe book demo that extracts recipes from any URL
+---
+
+# Recipe App Demo
+
+The Recipe App demonstrates how to build a practical application using Refyne's extraction API. It allows users to save recipes from any website by automatically extracting ingredients, instructions, and metadata.
+
+<Callout type="info">
+  Try it live at [recipeapp.demo.refyne.uk](https://recipeapp.demo.refyne.uk)
+</Callout>
+
+## Features
+
+- **Recipe Extraction**: Paste any recipe URL and extract structured data
+- **Recipe Book**: Save and browse your extracted recipes
+- **Shopping List**: Add ingredients to a shopping list
+- **Responsive Design**: Works on desktop and mobile
+
+## How It Works
+
+The app uses a YAML schema to define what data to extract from recipe pages:
+
+```yaml
+name: Recipe
+description: Extract recipe details from a webpage
+
+fields:
+  - name: title
+    type: string
+    required: true
+    description: The recipe name or title
+
+  - name: description
+    type: string
+    description: Brief description or intro paragraph
+
+  - name: image_url
+    type: string
+    description: URL of the main recipe image
+
+  - name: prep_time
+    type: string
+    description: Preparation time (e.g., "15 minutes")
+
+  - name: cook_time
+    type: string
+    description: Cooking time (e.g., "30 minutes")
+
+  - name: total_time
+    type: string
+    description: Total time (e.g., "45 minutes")
+
+  - name: servings
+    type: integer
+    description: Number of servings
+
+  - name: ingredients
+    type: array
+    description: List of ingredients
+    items:
+      type: object
+      properties:
+        name:
+          type: string
+          required: true
+          description: Ingredient name
+        quantity:
+          type: string
+          description: Amount (e.g., "2", "1/2")
+        unit:
+          type: string
+          description: Unit of measure (e.g., "cups", "tbsp")
+        notes:
+          type: string
+          description: Preparation notes (e.g., "diced", "softened")
+
+  - name: instructions
+    type: array
+    description: Step-by-step instructions
+    items:
+      type: object
+      properties:
+        step:
+          type: integer
+          description: Step number
+        text:
+          type: string
+          required: true
+          description: Instruction text
+```
+
+## API Integration
+
+The core integration is straightforward. Here's the TypeScript code that calls the Refyne API:
+
+```typescript
+export async function extractRecipe(
+  url: string,
+  apiUrl: string,
+  apiKey: string
+): Promise<RefyneResponse> {
+  const response = await fetch(`${apiUrl}/api/v1/extract`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      url,
+      schema: RECIPE_SCHEMA,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    return {
+      success: false,
+      error: errorData.error || `API error: ${response.status}`,
+    };
+  }
+
+  const data = await response.json();
+  return {
+    success: true,
+    data: data.data || data,
+  };
+}
+```
+
+## Response Example
+
+When you extract a recipe, Refyne returns structured data like this:
+
+```json
+{
+  "title": "Classic Spaghetti Carbonara",
+  "description": "A traditional Italian pasta dish with eggs, cheese, and pancetta",
+  "image_url": "https://example.com/carbonara.jpg",
+  "prep_time": "10 minutes",
+  "cook_time": "20 minutes",
+  "total_time": "30 minutes",
+  "servings": 4,
+  "ingredients": [
+    { "name": "spaghetti", "quantity": "400", "unit": "g" },
+    { "name": "pancetta", "quantity": "200", "unit": "g", "notes": "cubed" },
+    { "name": "eggs", "quantity": "4", "unit": "large" },
+    { "name": "Pecorino Romano", "quantity": "100", "unit": "g", "notes": "grated" },
+    { "name": "black pepper", "notes": "freshly ground" }
+  ],
+  "instructions": [
+    { "step": 1, "text": "Bring a large pot of salted water to boil and cook spaghetti until al dente." },
+    { "step": 2, "text": "While pasta cooks, fry pancetta until crispy." },
+    { "step": 3, "text": "Whisk eggs with grated cheese and pepper." },
+    { "step": 4, "text": "Drain pasta, toss with pancetta, then remove from heat." },
+    { "step": 5, "text": "Add egg mixture and toss quickly until creamy." }
+  ]
+}
+```
+
+## Tech Stack
+
+The demo is built with:
+
+- **[Astro](https://astro.build/)** - Static site generator with SSR support
+- **[Cloudflare Pages](https://pages.cloudflare.com/)** - Hosting with edge functions
+- **[Cloudflare D1](https://developers.cloudflare.com/d1/)** - SQLite database at the edge
+- **[Tailwind CSS](https://tailwindcss.com/)** - Styling
+
+## Source Code
+
+The complete source code is available in the [recipeapp directory](https://github.com/jmylchreest/refyne-api/tree/main/recipeapp) of the Refyne repository.
+
+Key files:
+- `src/lib/refyne.ts` - Refyne API client and schema
+- `src/lib/db.ts` - Database operations
+- `src/pages/add.astro` - Recipe extraction page
+- `src/pages/recipe/[id].astro` - Recipe detail page
+
+## Try It Yourself
+
+1. Visit [recipeapp.demo.refyne.uk](https://recipeapp.demo.refyne.uk)
+2. Click "Add Recipe"
+3. Paste a recipe URL (try one from [demo.refyne.uk/recipes](https://demo.refyne.uk/recipes))
+4. See the extracted data and save it to your recipe book
