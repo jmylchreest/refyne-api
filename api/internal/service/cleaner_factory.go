@@ -30,8 +30,8 @@ const (
 )
 
 // DefaultExtractionCleaner is the default cleaner chain for extraction operations.
-// Uses markdown-only to preserve all content (Trafilatura strips form elements).
-var DefaultExtractionCleanerChain = []CleanerConfig{{Name: "markdown"}}
+// Uses refyne (default preset) -> markdown for optimal token reduction while preserving content.
+var DefaultExtractionCleanerChain = []CleanerConfig{{Name: "refyne"}, {Name: "markdown"}}
 
 // DefaultAnalyzerCleaner is the default cleaner for analysis operations.
 // Uses noop to preserve maximum detail for schema generation.
