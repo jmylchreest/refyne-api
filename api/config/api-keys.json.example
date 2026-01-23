@@ -4,7 +4,7 @@
       "key": "rfs_demo_recipe_app_2026",
       "enabled": true,
       "name": "Demo Recipe App",
-      "description": "Powers the recipe extraction demo at recipeapp.demo.refyne.uk",
+      "description": "Powers the recipe extraction demo at recipeapp-demo.refyne.uk",
 
       "identity": {
         "client_id": "demo-recipe-app",
@@ -17,7 +17,7 @@
           "POST /api/v1/extract"
         ],
         "referrers": [
-          "recipeapp.demo.refyne.uk",
+          "recipeapp-demo.refyne.uk",
           "demo.refyne.uk",
           "docs.refyne.uk",
           "localhost:*"

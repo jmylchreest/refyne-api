@@ -550,7 +550,7 @@ jobs:
       url: ${{ steps.deploy.outputs.deployment-url }}
     environment:
       name: recipeapp
-      url: https://recipeapp.demo.refyne.uk
+      url: https://recipeapp-demo.refyne.uk
 
     steps:
       - uses: actions/checkout@v4
