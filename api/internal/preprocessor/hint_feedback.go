@@ -98,12 +98,17 @@ func (h *HintFeedback) ProcessWithURL(content, url string) (*Hints, error) {
 	// Aggregate signals and determine if feedback is present
 	aggregated := h.aggregateSignals(signals)
 
-	// Check if we have enough signal to indicate feedback content
-	// Require BOTH sufficient score AND actual detected elements (count > 0)
-	if aggregated.totalScore >= h.MinScore && aggregated.totalCount >= h.MinRepeats {
-		// Add detected feedback types to hints - only include types with actual counts
+	// Determine if we have enough signal to indicate feedback content
+	// Two paths to detection:
+	// 1. High-confidence URL detection (e.g., /reviews path) - trust it even without element counts
+	// 2. Content-based detection with sufficient score AND element counts
+	hasHighConfidenceURL := aggregated.urlScore >= 0.5
+	hasContentDetection := aggregated.totalScore >= h.MinScore && aggregated.totalCount >= h.MinRepeats
+
+	if hasHighConfidenceURL || hasContentDetection {
+		// Collect detected feedback types
+		// For URL-based detection, add the URL-detected type even without counts
 		for feedbackType, count := range aggregated.typeCounts {
-			// Must have actual detected elements (count > 0) and meet minimum threshold
 			if count >= h.MinRepeats {
 				hints.DetectedTypes = append(hints.DetectedTypes, DetectedContentType{
 					Name:  feedbackType,
@@ -112,7 +117,20 @@ func (h *HintFeedback) ProcessWithURL(content, url string) (*Hints, error) {
 			}
 		}
 
-		// Sort by count descending
+		// For high-confidence URL detection without element counts, add the URL type
+		if hasHighConfidenceURL && len(hints.DetectedTypes) == 0 {
+			for feedbackType, score := range aggregated.typeScores {
+				// Only add types that came from URL detection (high individual score)
+				if score >= 0.5 {
+					hints.DetectedTypes = append(hints.DetectedTypes, DetectedContentType{
+						Name:  feedbackType,
+						Count: 0, // Unknown count, but high confidence from URL
+					})
+				}
+			}
+		}
+
+		// Sort by count descending (types with counts first, then alphabetically)
 		for i := 0; i < len(hints.DetectedTypes)-1; i++ {
 			for j := i + 1; j < len(hints.DetectedTypes); j++ {
 				if hints.DetectedTypes[j].Count > hints.DetectedTypes[i].Count {
@@ -121,7 +139,7 @@ func (h *HintFeedback) ProcessWithURL(content, url string) (*Hints, error) {
 			}
 		}
 
-		// Only add feedback hints if we actually detected feedback types with counts
+		// Add feedback hints if we detected feedback types
 		if len(hints.DetectedTypes) > 0 {
 			// Build type names for hint output
 			typeNames := make([]string, 0, len(hints.DetectedTypes))
@@ -156,6 +174,7 @@ func (h *HintFeedback) ProcessWithURL(content, url string) (*Hints, error) {
 // aggregatedSignals holds the combined results from all detection methods.
 type aggregatedSignals struct {
 	totalScore float64
+	urlScore   float64 // Score from URL-based detection only
 	totalCount int
 	typeCounts map[string]int
 	typeScores map[string]float64
@@ -175,6 +194,11 @@ func (h *HintFeedback) aggregateSignals(signals []FeedbackSignal) aggregatedSign
 		result.totalScore += s.Score
 		result.totalCount += s.Count
 		result.typeCounts[s.Type] += s.Count
+
+		// Track URL-based score separately for high-confidence detection
+		if s.Source == "url" {
+			result.urlScore += s.Score
+		}
 		result.typeScores[s.Type] += s.Score
 
 		if !methodSet[s.Source] {

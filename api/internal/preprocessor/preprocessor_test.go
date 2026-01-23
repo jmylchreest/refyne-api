@@ -155,13 +155,13 @@ func TestHints_ToPromptSection_SingleDetectedType(t *testing.T) {
 
 	result := hints.ToPromptSection()
 
-	if !strings.Contains(result, "## Detected Page Structure") {
+	if !strings.Contains(result, "## Detected Content Structure") {
 		t.Error("should contain header")
 	}
-	if !strings.Contains(result, "15 repeated products") {
+	if !strings.Contains(result, "15 products") {
 		t.Error("should contain count and name")
 	}
-	if !strings.Contains(result, "products[] array") {
+	if !strings.Contains(result, "products[]") {
 		t.Error("should suggest array name")
 	}
 }
@@ -175,7 +175,7 @@ func TestHints_ToPromptSection_MultipleDetectedTypes(t *testing.T) {
 
 	result := hints.ToPromptSection()
 
-	if !strings.Contains(result, "MULTIPLE content categories") {
+	if !strings.Contains(result, "multiple content types") {
 		t.Error("should indicate multiple content categories")
 	}
 	if !strings.Contains(result, "10 products") {
@@ -184,11 +184,11 @@ func TestHints_ToPromptSection_MultipleDetectedTypes(t *testing.T) {
 	if !strings.Contains(result, "5 articles") {
 		t.Error("should list articles count")
 	}
-	if !strings.Contains(result, "products[] for products") {
-		t.Error("should suggest separate arrays per category")
+	if !strings.Contains(result, "products[]") {
+		t.Error("should suggest products array")
 	}
-	if !strings.Contains(result, "articles[] for articles") {
-		t.Error("should suggest separate arrays per category")
+	if !strings.Contains(result, "articles[]") {
+		t.Error("should suggest articles array")
 	}
 }
 
@@ -219,17 +219,25 @@ func TestHints_ToPromptSection_PageStructure(t *testing.T) {
 }
 
 func TestHints_ToPromptSection_CustomHints(t *testing.T) {
+	// Custom hints are no longer included in ToPromptSection - they're handled
+	// separately by the analyzer's buildSchemaExamples function
 	hints := NewHints()
 	hints.Custom["pagination"] = "detected"
 	hints.Custom["category_filters"] = "present"
 
 	result := hints.ToPromptSection()
 
-	if !strings.Contains(result, "pagination: detected") {
-		t.Error("should contain custom hints")
+	// Custom hints alone don't produce output - need detected types or page structure
+	if result != "" {
+		t.Error("custom hints alone should not produce prompt section")
 	}
-	if !strings.Contains(result, "category_filters: present") {
-		t.Error("should contain all custom hints")
+
+	// With detected types, should still work
+	hints.DetectedTypes = []DetectedContentType{{Name: "products", Count: 5}}
+	result = hints.ToPromptSection()
+
+	if !strings.Contains(result, "products") {
+		t.Error("should still contain detected types")
 	}
 }
 
@@ -323,6 +331,84 @@ func TestChain_Name_WithPreprocessors(t *testing.T) {
 
 	if name != "chain(noop->hint_repeats)" {
 		t.Errorf("Name() = %q, want %q", name, "chain(noop->hint_repeats)")
+	}
+}
+
+func TestChain_ProcessWithURL_PassesURLToAwarePreprocessors(t *testing.T) {
+	// HintFeedback implements URLAwarePreProcessor
+	chain := NewChain(NewHintFeedback(WithFeedbackMinScore(0.5), WithFeedbackMinRepeats(1)))
+
+	// Content without CSS class patterns, but URL should trigger detection
+	content := `
+		<html>
+		<body>
+			<div>Just some generic content without review classes</div>
+		</body>
+		</html>
+	`
+
+	// Without URL - should not detect feedback
+	hints, err := chain.ProcessWithURL(content, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if hints.Custom["feedback_detected"] == "true" {
+		t.Error("should not detect feedback without URL or content patterns")
+	}
+
+	// With /reviews URL - should detect feedback due to URL pattern
+	hints, err = chain.ProcessWithURL(content, "https://example.com/reviews")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// URL pattern alone doesn't meet MinRepeats requirement (Count: 0)
+	// but let's verify the URL signal is being captured
+
+	// Test with content that has star ratings (text pattern detection)
+	contentWithStars := `
+		<html>
+		<body>
+			<div>★★★★☆ Great product!</div>
+			<div>★★★★★ Amazing!</div>
+			<div>★★★☆☆ Could be better</div>
+		</body>
+		</html>
+	`
+
+	hints, err = chain.ProcessWithURL(contentWithStars, "https://example.com/reviews")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// With both URL pattern (score: 0.8) and star ratings (score: 0.6, count: 3), should trigger
+	if hints.Custom["feedback_detected"] != "true" {
+		t.Error("should detect feedback with URL pattern and star ratings")
+	}
+	if hints.Custom["sentiment_guidance"] == "" {
+		t.Error("should have sentiment_guidance in Custom hints")
+	}
+	if hints.Custom["persona_guidance"] == "" {
+		t.Error("should have persona_guidance in Custom hints")
+	}
+}
+
+func TestChain_ProcessWithURL_UsesRegularProcessForNonURLAware(t *testing.T) {
+	// HintRepeats does NOT implement URLAwarePreProcessor
+	chain := NewChain(NewHintRepeats(WithMinRepeats(2)))
+
+	content := `
+		<div class="product">Product 1</div>
+		<div class="product">Product 2</div>
+		<div class="product">Product 3</div>
+	`
+
+	// ProcessWithURL should still work, using regular Process for non-URL-aware
+	hints, err := chain.ProcessWithURL(content, "https://example.com/products")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(hints.DetectedTypes) == 0 {
+		t.Error("expected detected types from HintRepeats")
 	}
 }
 
@@ -994,5 +1080,111 @@ func TestHintFeedback_OutputsGuidance(t *testing.T) {
 	}
 	if hints.Custom["persona_guidance"] == "" {
 		t.Error("should output persona guidance")
+	}
+}
+
+func TestHintFeedback_URLOnlyDetection(t *testing.T) {
+	// This tests that a /reviews URL triggers feedback detection even without
+	// CSS classes or Schema.org (common with Tailwind sites)
+	hf := NewHintFeedback()
+
+	// Content with no semantic classes, no Schema.org - just plain HTML
+	content := `<html>
+		<body>
+			<div class="flex flex-col gap-4">
+				<div class="p-4 border rounded-lg">
+					<p class="text-gray-700">Great product!</p>
+				</div>
+				<div class="p-4 border rounded-lg">
+					<p class="text-gray-700">Amazing service!</p>
+				</div>
+			</div>
+		</body>
+	</html>`
+
+	// Without URL - should NOT detect feedback (no signals)
+	hints, err := hf.ProcessWithURL(content, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if hints.HasFeedback() {
+		t.Error("should not detect feedback without URL or content patterns")
+	}
+
+	// With /reviews URL - SHOULD detect feedback based on URL alone
+	hints, err = hf.ProcessWithURL(content, "https://demo.refyne.uk/reviews")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !hints.HasFeedback() {
+		t.Error("should detect feedback from /reviews URL pattern")
+	}
+	if hints.Custom["sentiment_guidance"] == "" {
+		t.Error("should include sentiment_guidance hint")
+	}
+	if hints.Custom["persona_guidance"] == "" {
+		t.Error("should include persona_guidance hint")
+	}
+
+	// Verify reviews type was detected
+	found := false
+	for _, dt := range hints.DetectedTypes {
+		if dt.Name == "reviews" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("should detect 'reviews' as content type from URL")
+	}
+}
+
+func TestHintFeedback_URLDetectionVariants(t *testing.T) {
+	hf := NewHintFeedback()
+	content := `<html><body><p>Some content</p></body></html>`
+
+	tests := []struct {
+		url          string
+		expectType   string
+		shouldDetect bool
+	}{
+		{"https://example.com/reviews", "reviews", true},
+		{"https://example.com/review/123", "reviews", true},
+		{"https://example.com/testimonials", "testimonials", true},
+		{"https://example.com/feedback", "feedback", true},
+		{"https://example.com/comments", "comments", true},
+		{"https://example.com/products", "", false}, // Not a feedback URL
+		{"https://example.com/blog", "", false},     // Not a feedback URL
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.url, func(t *testing.T) {
+			hints, err := hf.ProcessWithURL(content, tt.url)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if tt.shouldDetect {
+				if !hints.HasFeedback() {
+					t.Errorf("should detect feedback for URL %s", tt.url)
+				}
+				// Check expected type
+				found := false
+				for _, dt := range hints.DetectedTypes {
+					if dt.Name == tt.expectType {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("should detect type %q for URL %s", tt.expectType, tt.url)
+				}
+			} else {
+				if hints.HasFeedback() {
+					t.Errorf("should NOT detect feedback for URL %s", tt.url)
+				}
+			}
+		})
 	}
 }

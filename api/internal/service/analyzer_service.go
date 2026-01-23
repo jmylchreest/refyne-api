@@ -34,8 +34,8 @@ type AnalyzerService struct {
 	logger          *slog.Logger
 	encryptor       *crypto.Encryptor
 	cleaner         cleaner.Cleaner
-	fallbackCleaner cleaner.Cleaner                // Used when content is too large for context window
-	preprocessor    preprocessor.LLMPreProcessor   // Preprocessor for generating LLM hints
+	fallbackCleaner cleaner.Cleaner       // Used when content is too large for context window
+	preprocessor    *preprocessor.Chain   // Preprocessor chain for generating LLM hints
 }
 
 // getStrictMode determines if a model supports strict JSON schema mode.
@@ -281,7 +281,7 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 	// First try with raw content (noop cleaner), retry with fallback cleaner on context length errors
 	llmStart := time.Now()
 	s.logger.Debug("calling LLM for analysis", "request_id", requestID, "user_id", userID, "provider", llmConfig.Provider, "model", llmConfig.Model)
-	result, err := s.analyzeWithLLM(ctx, mainContent, detailContents, detailURLs, links, llmConfig)
+	result, err := s.analyzeWithLLM(ctx, targetURL, mainContent, detailContents, detailURLs, links, llmConfig)
 	llmDuration := time.Since(llmStart)
 
 	// If context length error, retry with cleaned content
@@ -320,7 +320,7 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 
 		// Retry with cleaned content
 		llmRetryStart := time.Now()
-		result, err = s.analyzeWithLLM(ctx, cleanedMain, cleanedDetails, detailURLs, links, llmConfig)
+		result, err = s.analyzeWithLLM(ctx, targetURL, cleanedMain, cleanedDetails, detailURLs, links, llmConfig)
 		llmDuration = time.Since(llmStart) + time.Since(llmRetryStart) // Total LLM time including retry
 
 		if err != nil {
@@ -692,9 +692,10 @@ type analyzeResult struct {
 }
 
 // analyzeWithLLM calls the LLM to analyze page content and generate a schema.
-func (s *AnalyzerService) analyzeWithLLM(ctx context.Context, mainContent string, detailContents []string, detailURLs []string, links []string, llmConfig *LLMConfigInput) (*analyzeResult, error) {
+func (s *AnalyzerService) analyzeWithLLM(ctx context.Context, mainURL string, mainContent string, detailContents []string, detailURLs []string, links []string, llmConfig *LLMConfigInput) (*analyzeResult, error) {
 	// Run preprocessor to generate hints before truncation (needs full content)
-	hints, err := s.preprocessor.Process(mainContent)
+	// Pass URL for URL-aware detection (e.g., /reviews triggers feedback hints)
+	hints, err := s.preprocessor.ProcessWithURL(mainContent, mainURL)
 	if err != nil {
 		s.logger.Warn("preprocessor failed", "error", err)
 		hints = preprocessor.NewHints() // Continue with empty hints
@@ -812,22 +813,11 @@ Generate a schema that works across listing AND detail pages. Fields should be o
 
 ### Schema Approach
 
-**Group content by its natural category using separate arrays.** Identify what types of content are on the page and create appropriately named arrays for each:
-- Blog posts/news → articles[]
-- Products for sale → products[]
-- Job listings → jobs[]
-- Recipes/meals → recipes[]
-- Podcast episodes → episodes[]
-- Case studies → case_studies[]
-- Services offered → services[]
-- Team members → team_members[]
-- Events → events[]
-- Or any other category that fits the content
+**Group content by its natural category using separate arrays.** Identify what types of content are on the page and create appropriately named arrays for each.
 
-**IMPORTANT**: Do NOT use a generic items[] array with a content_type field. Instead, create separate arrays for each distinct content type you identify. If a page has blog posts AND recipes, create both articles[] and recipes[] arrays.
+**IMPORTANT**: Do NOT use a generic items[] array with a content_type field. Instead, create separate arrays for each distinct content type you identify.
 
 **Required fields**: title, url (always include these as required)
-**Common fields**: description, image_url, date, category, price, currency
 **Add relevant fields** based on what you observe in the content - don't limit yourself to a fixed template.
 
 ### Schema Rules
@@ -846,12 +836,191 @@ Generate a schema that works across listing AND detail pages. Fields should be o
   "follow_patterns": [{"pattern": "a[href*='/path/']", "description": "..."}]
 }
 
-The suggested_schema MUST be a YAML string with this exact structure:
+The suggested_schema MUST be a YAML string with this structure:
 
 name: SchemaName
 description: What this schema extracts
 fields:
-  - name: [category_name]  # e.g., products, articles, recipes, jobs
+  - name: [category_name]
+    type: array
+    items:
+      type: object
+      properties:
+        - name: title
+          type: string
+          required: true
+        - name: url
+          type: string
+          required: true
+        # Add category-specific fields as needed
+`)
+
+	// Add contextual examples based on detected content types
+	sb.WriteString(s.buildSchemaExamples(hints))
+
+	sb.WriteString(`
+Valid types: string, integer, number, boolean, array, object. Use "items" for arrays, "properties" for objects.
+
+### Follow Patterns
+
+Generate CSS selectors from the Links Found section. Use ONLY href-based selectors:
+- GOOD: a[href*='/blog/'], a[href*='/products/'], a[href^='/jobs/']
+- BAD: .blog-post a (invented class), main a[href*='/x/'] (assumes main exists)
+
+Identify ALL distinct URL patterns. Large sites need 3-6 patterns for different sections.
+`)
+
+	return sb.String()
+}
+
+// schemaExample holds a schema example for a content type.
+type schemaExample struct {
+	name        string
+	description string
+	yaml        string
+}
+
+// getSchemaExampleForType returns a schema example for the given content type.
+func getSchemaExampleForType(contentType string) *schemaExample {
+	examples := map[string]*schemaExample{
+		"reviews": {
+			name:        "reviews",
+			description: "Customer/user reviews with sentiment analysis",
+			yaml: `  - name: reviews
+    type: array
+    items:
+      type: object
+      properties:
+        - name: title
+          type: string
+          required: true
+        - name: url
+          type: string
+          required: true
+        - name: reviewer_name
+          type: string
+        - name: rating
+          type: integer
+          description: Rating value (e.g., 1-5)
+        - name: review_text
+          type: string
+        - name: review_date
+          type: string
+        - name: sentiment
+          type: string
+          description: "positive, neutral, or negative"
+        - name: persona_summary
+          type: string
+          description: Brief description of reviewer type (e.g., "experienced user", "first-time buyer")
+        - name: verified_purchase
+          type: boolean`,
+		},
+		"ratings": {
+			name:        "ratings",
+			description: "User ratings",
+			yaml: `  - name: ratings
+    type: array
+    items:
+      type: object
+      properties:
+        - name: title
+          type: string
+          required: true
+        - name: url
+          type: string
+          required: true
+        - name: rating
+          type: integer
+        - name: max_rating
+          type: integer
+        - name: reviewer_name
+          type: string
+        - name: sentiment
+          type: string
+          description: "positive, neutral, or negative"`,
+		},
+		"comments": {
+			name:        "comments",
+			description: "User comments or discussion",
+			yaml: `  - name: comments
+    type: array
+    items:
+      type: object
+      properties:
+        - name: title
+          type: string
+          required: true
+        - name: url
+          type: string
+          required: true
+        - name: author
+          type: string
+        - name: comment_text
+          type: string
+        - name: posted_date
+          type: string
+        - name: sentiment
+          type: string
+          description: "positive, neutral, or negative"
+        - name: reply_count
+          type: integer`,
+		},
+		"testimonials": {
+			name:        "testimonials",
+			description: "Customer testimonials",
+			yaml: `  - name: testimonials
+    type: array
+    items:
+      type: object
+      properties:
+        - name: title
+          type: string
+          required: true
+        - name: url
+          type: string
+          required: true
+        - name: quote
+          type: string
+        - name: author_name
+          type: string
+        - name: author_title
+          type: string
+        - name: company
+          type: string
+        - name: sentiment
+          type: string
+          description: "positive, neutral, or negative"`,
+		},
+		"feedback": {
+			name:        "feedback",
+			description: "User feedback",
+			yaml: `  - name: feedback
+    type: array
+    items:
+      type: object
+      properties:
+        - name: title
+          type: string
+          required: true
+        - name: url
+          type: string
+          required: true
+        - name: feedback_text
+          type: string
+        - name: author
+          type: string
+        - name: date
+          type: string
+        - name: sentiment
+          type: string
+          description: "positive, neutral, or negative"
+        - name: category
+          type: string`,
+		},
+		"products": {
+			name:        "products",
+			description: "Products for sale",
+			yaml: `  - name: products
     type: array
     items:
       type: object
@@ -864,11 +1033,171 @@ fields:
           required: true
         - name: description
           type: string
-        # Add category-specific fields as needed
+        - name: price
+          type: integer
+          description: Price in smallest currency unit
+        - name: currency
+          type: string
+        - name: image_url
+          type: string
+        - name: category
+          type: string
+        - name: sku
+          type: string
+        - name: in_stock
+          type: boolean`,
+		},
+		"articles": {
+			name:        "articles",
+			description: "Blog posts or news articles",
+			yaml: `  - name: articles
+    type: array
+    items:
+      type: object
+      properties:
+        - name: title
+          type: string
+          required: true
+        - name: url
+          type: string
+          required: true
+        - name: description
+          type: string
+        - name: author
+          type: string
+        - name: published_date
+          type: string
+        - name: category
+          type: string
+        - name: image_url
+          type: string
+        - name: read_time
+          type: string`,
+		},
+		"jobs": {
+			name:        "jobs",
+			description: "Job listings",
+			yaml: `  - name: jobs
+    type: array
+    items:
+      type: object
+      properties:
+        - name: title
+          type: string
+          required: true
+        - name: url
+          type: string
+          required: true
+        - name: company
+          type: string
+        - name: location
+          type: string
+        - name: salary
+          type: string
+        - name: job_type
+          type: string
+        - name: posted_date
+          type: string
+        - name: description
+          type: string`,
+		},
+		"recipes": {
+			name:        "recipes",
+			description: "Recipes or meals",
+			yaml: `  - name: recipes
+    type: array
+    items:
+      type: object
+      properties:
+        - name: title
+          type: string
+          required: true
+        - name: url
+          type: string
+          required: true
+        - name: description
+          type: string
+        - name: cooking_time
+          type: string
+        - name: prep_time
+          type: string
+        - name: servings
+          type: integer
+        - name: difficulty
+          type: string
+        - name: image_url
+          type: string`,
+		},
+		"events": {
+			name:        "events",
+			description: "Events or happenings",
+			yaml: `  - name: events
+    type: array
+    items:
+      type: object
+      properties:
+        - name: title
+          type: string
+          required: true
+        - name: url
+          type: string
+          required: true
+        - name: description
+          type: string
+        - name: date
+          type: string
+        - name: time
+          type: string
+        - name: location
+          type: string
+        - name: price
+          type: integer
+        - name: currency
+          type: string`,
+		},
+	}
 
-Example for a site with both blog posts and recipes:
-fields:
-  - name: articles
+	if example, ok := examples[contentType]; ok {
+		return example
+	}
+	return nil
+}
+
+// buildSchemaExamples generates schema examples based on detected content types.
+func (s *AnalyzerService) buildSchemaExamples(hints *preprocessor.Hints) string {
+	var sb strings.Builder
+
+	// Get detected types
+	detectedTypes := []string{}
+	if hints != nil {
+		detectedTypes = hints.GetDetectedTypeNames()
+	}
+
+	// If we have detected specific types, show relevant examples
+	if len(detectedTypes) > 0 {
+		sb.WriteString("\n### Schema Examples for Detected Content\n\n")
+		sb.WriteString("Based on the detected content, here are relevant schema examples:\n\n")
+		sb.WriteString("```yaml\nfields:\n")
+
+		for _, contentType := range detectedTypes {
+			if example := getSchemaExampleForType(contentType); example != nil {
+				sb.WriteString(example.yaml)
+				sb.WriteString("\n")
+			}
+		}
+		sb.WriteString("```\n")
+
+		// Add special guidance for feedback content
+		if hints.HasFeedback() {
+			sb.WriteString("\n**Important for feedback content**: Include `sentiment` (positive/neutral/negative) ")
+			sb.WriteString("and `persona_summary` (brief reviewer description) fields to capture the qualitative aspects.\n")
+		}
+	} else {
+		// No specific detection - show generic examples
+		sb.WriteString("\n### Schema Example\n\n")
+		sb.WriteString("Example for a site with blog posts:\n")
+		sb.WriteString("```yaml\nfields:\n")
+		sb.WriteString(`  - name: articles
     type: array
     items:
       type: object
@@ -883,32 +1212,9 @@ fields:
           type: string
         - name: author
           type: string
-  - name: recipes
-    type: array
-    items:
-      type: object
-      properties:
-        - name: title
-          type: string
-          required: true
-        - name: url
-          type: string
-          required: true
-        - name: cooking_time
-          type: string
-        - name: servings
-          type: integer
-
-Valid types: string, integer, number, boolean, array, object. Use "items" for arrays, "properties" for objects.
-
-### Follow Patterns
-
-Generate CSS selectors from the Links Found section. Use ONLY href-based selectors:
-- GOOD: a[href*='/blog/'], a[href*='/products/'], a[href^='/jobs/']
-- BAD: .blog-post a (invented class), main a[href*='/x/'] (assumes main exists)
-
-Identify ALL distinct URL patterns. Large sites need 3-6 patterns for different sections.
 `)
+		sb.WriteString("```\n")
+	}
 
 	return sb.String()
 }
