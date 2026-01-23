@@ -262,15 +262,15 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
-          cache-dependency-path: recipeapp/package-lock.json
+          cache-dependency-path: recipeapp/recipeapp/package-lock.json
 
       - name: Install dependencies
         run: npm ci
-        working-directory: recipeapp
+        working-directory: recipeapp/recipeapp
 
       - name: Build (validation)
         run: npm run build
-        working-directory: recipeapp
+        working-directory: recipeapp/recipeapp
 
   # Build OpenAPI spec (needed if API, Web, or Docs changed)
   build-openapi:
@@ -454,6 +454,7 @@ jobs:
       url: ${{ steps.deploy.outputs.deployment-url }}
     environment:
       name: ${{ needs.prepare.outputs.environment }}
+      url: ${{ vars.DOCS_URL }}
 
     steps:
       - uses: actions/checkout@v4
@@ -504,6 +505,9 @@ jobs:
       (needs.test-demo.result == 'success' || needs.test-demo.result == 'skipped')
     outputs:
       url: ${{ steps.deploy.outputs.deployment-url }}
+    environment:
+      name: demo
+      url: https://demo.refyne.uk
 
     steps:
       - uses: actions/checkout@v4
@@ -544,6 +548,9 @@ jobs:
       (needs.test-recipeapp.result == 'success' || needs.test-recipeapp.result == 'skipped')
     outputs:
       url: ${{ steps.deploy.outputs.deployment-url }}
+    environment:
+      name: recipeapp
+      url: https://recipeapp.demo.refyne.uk
 
     steps:
       - uses: actions/checkout@v4
@@ -556,15 +563,15 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
-          cache-dependency-path: recipeapp/package-lock.json
+          cache-dependency-path: recipeapp/recipeapp/package-lock.json
 
       - name: Install dependencies
         run: npm ci
-        working-directory: recipeapp
+        working-directory: recipeapp/recipeapp
 
       - name: Build site
         run: npm run build
-        working-directory: recipeapp
+        working-directory: recipeapp/recipeapp
 
       - name: Deploy to Cloudflare Pages
         id: deploy
@@ -573,7 +580,7 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy dist --project-name=refyne-recipeapp --branch=main
-          workingDirectory: recipeapp
+          workingDirectory: recipeapp/recipeapp
 
   # Post-deployment notification
   notify:
