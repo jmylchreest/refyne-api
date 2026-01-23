@@ -44,6 +44,22 @@ const JOB_TITLES = [
   'Solutions Architect',
   'Platform Engineer',
   'Infrastructure Engineer',
+  // Entry-level and lower-paying positions
+  'Junior Software Developer',
+  'Junior Frontend Developer',
+  'Junior QA Tester',
+  'Software Development Intern',
+  'Technical Support Specialist',
+  'IT Help Desk Technician',
+  'Data Entry Clerk',
+  'Junior Data Analyst',
+  'Web Content Coordinator',
+  'IT Support Intern',
+  'Graduate Software Engineer',
+  'Trainee Developer',
+  'Associate QA Analyst',
+  'Junior Systems Administrator',
+  'Entry Level IT Technician',
 ];
 
 const CATEGORIES = [
@@ -66,30 +82,51 @@ interface LocationData {
 }
 
 const LOCATIONS: LocationData[] = [
-  // USA (USD)
+  // USA - High cost of living (USD)
   { city: 'San Francisco, CA', country: 'United States', currency: 'USD', salaryMin: 120000, salaryMax: 250000 },
   { city: 'New York, NY', country: 'United States', currency: 'USD', salaryMin: 110000, salaryMax: 230000 },
   { city: 'Seattle, WA', country: 'United States', currency: 'USD', salaryMin: 115000, salaryMax: 240000 },
-  { city: 'Austin, TX', country: 'United States', currency: 'USD', salaryMin: 100000, salaryMax: 200000 },
-  { city: 'Boston, MA', country: 'United States', currency: 'USD', salaryMin: 105000, salaryMax: 210000 },
-  { city: 'Denver, CO', country: 'United States', currency: 'USD', salaryMin: 95000, salaryMax: 190000 },
-  { city: 'Chicago, IL', country: 'United States', currency: 'USD', salaryMin: 95000, salaryMax: 195000 },
   { city: 'Los Angeles, CA', country: 'United States', currency: 'USD', salaryMin: 110000, salaryMax: 220000 },
+  { city: 'Boston, MA', country: 'United States', currency: 'USD', salaryMin: 105000, salaryMax: 210000 },
+  // USA - Medium cost of living (USD)
+  { city: 'Austin, TX', country: 'United States', currency: 'USD', salaryMin: 85000, salaryMax: 180000 },
+  { city: 'Denver, CO', country: 'United States', currency: 'USD', salaryMin: 80000, salaryMax: 170000 },
+  { city: 'Chicago, IL', country: 'United States', currency: 'USD', salaryMin: 80000, salaryMax: 175000 },
+  { city: 'Atlanta, GA', country: 'United States', currency: 'USD', salaryMin: 75000, salaryMax: 160000 },
+  { city: 'Phoenix, AZ', country: 'United States', currency: 'USD', salaryMin: 70000, salaryMax: 150000 },
+  // USA - Lower cost of living (USD)
+  { city: 'Indianapolis, IN', country: 'United States', currency: 'USD', salaryMin: 55000, salaryMax: 120000 },
+  { city: 'Columbus, OH', country: 'United States', currency: 'USD', salaryMin: 55000, salaryMax: 115000 },
+  { city: 'Kansas City, MO', country: 'United States', currency: 'USD', salaryMin: 50000, salaryMax: 110000 },
+  { city: 'Louisville, KY', country: 'United States', currency: 'USD', salaryMin: 45000, salaryMax: 100000 },
+  { city: 'Oklahoma City, OK', country: 'United States', currency: 'USD', salaryMin: 42000, salaryMax: 95000 },
   // UK (GBP)
   { city: 'London', country: 'United Kingdom', currency: 'GBP', salaryMin: 65000, salaryMax: 150000 },
-  { city: 'Manchester', country: 'United Kingdom', currency: 'GBP', salaryMin: 50000, salaryMax: 110000 },
-  { city: 'Edinburgh', country: 'United Kingdom', currency: 'GBP', salaryMin: 50000, salaryMax: 105000 },
-  { city: 'Bristol', country: 'United Kingdom', currency: 'GBP', salaryMin: 48000, salaryMax: 100000 },
-  { city: 'Cambridge', country: 'United Kingdom', currency: 'GBP', salaryMin: 55000, salaryMax: 120000 },
-  // Europe (EUR)
-  { city: 'Berlin', country: 'Germany', currency: 'EUR', salaryMin: 60000, salaryMax: 120000 },
-  { city: 'Munich', country: 'Germany', currency: 'EUR', salaryMin: 65000, salaryMax: 130000 },
-  { city: 'Amsterdam', country: 'Netherlands', currency: 'EUR', salaryMin: 60000, salaryMax: 125000 },
-  { city: 'Paris', country: 'France', currency: 'EUR', salaryMin: 55000, salaryMax: 115000 },
-  { city: 'Dublin', country: 'Ireland', currency: 'EUR', salaryMin: 65000, salaryMax: 140000 },
-  { city: 'Stockholm', country: 'Sweden', currency: 'EUR', salaryMin: 55000, salaryMax: 110000 },
-  { city: 'Barcelona', country: 'Spain', currency: 'EUR', salaryMin: 45000, salaryMax: 90000 },
-  { city: 'Lisbon', country: 'Portugal', currency: 'EUR', salaryMin: 40000, salaryMax: 85000 },
+  { city: 'Manchester', country: 'United Kingdom', currency: 'GBP', salaryMin: 40000, salaryMax: 90000 },
+  { city: 'Edinburgh', country: 'United Kingdom', currency: 'GBP', salaryMin: 38000, salaryMax: 85000 },
+  { city: 'Bristol', country: 'United Kingdom', currency: 'GBP', salaryMin: 35000, salaryMax: 80000 },
+  { city: 'Cambridge', country: 'United Kingdom', currency: 'GBP', salaryMin: 45000, salaryMax: 100000 },
+  { city: 'Leeds', country: 'United Kingdom', currency: 'GBP', salaryMin: 30000, salaryMax: 70000 },
+  { city: 'Birmingham', country: 'United Kingdom', currency: 'GBP', salaryMin: 28000, salaryMax: 65000 },
+  { city: 'Newcastle', country: 'United Kingdom', currency: 'GBP', salaryMin: 26000, salaryMax: 60000 },
+  // Europe - Higher paying (EUR)
+  { city: 'Berlin', country: 'Germany', currency: 'EUR', salaryMin: 55000, salaryMax: 110000 },
+  { city: 'Munich', country: 'Germany', currency: 'EUR', salaryMin: 60000, salaryMax: 120000 },
+  { city: 'Amsterdam', country: 'Netherlands', currency: 'EUR', salaryMin: 55000, salaryMax: 115000 },
+  { city: 'Dublin', country: 'Ireland', currency: 'EUR', salaryMin: 55000, salaryMax: 120000 },
+  // Europe - Medium (EUR)
+  { city: 'Paris', country: 'France', currency: 'EUR', salaryMin: 45000, salaryMax: 95000 },
+  { city: 'Stockholm', country: 'Sweden', currency: 'EUR', salaryMin: 45000, salaryMax: 95000 },
+  { city: 'Vienna', country: 'Austria', currency: 'EUR', salaryMin: 42000, salaryMax: 90000 },
+  // Europe - Lower cost of living (EUR)
+  { city: 'Barcelona', country: 'Spain', currency: 'EUR', salaryMin: 32000, salaryMax: 70000 },
+  { city: 'Madrid', country: 'Spain', currency: 'EUR', salaryMin: 30000, salaryMax: 65000 },
+  { city: 'Lisbon', country: 'Portugal', currency: 'EUR', salaryMin: 25000, salaryMax: 55000 },
+  { city: 'Prague', country: 'Czech Republic', currency: 'EUR', salaryMin: 28000, salaryMax: 60000 },
+  { city: 'Warsaw', country: 'Poland', currency: 'EUR', salaryMin: 25000, salaryMax: 55000 },
+  { city: 'Budapest', country: 'Hungary', currency: 'EUR', salaryMin: 22000, salaryMax: 50000 },
+  { city: 'Bucharest', country: 'Romania', currency: 'EUR', salaryMin: 20000, salaryMax: 45000 },
+  { city: 'Sofia', country: 'Bulgaria', currency: 'EUR', salaryMin: 18000, salaryMax: 40000 },
 ];
 
 const WORK_MODES: WorkMode[] = ['remote', 'hybrid', 'on-site'];
@@ -135,17 +172,65 @@ const BENEFITS = [
 // Use a fixed seed for consistent data across builds
 faker.seed(42);
 
+// Determine salary modifier based on job title seniority
+function getSalaryModifier(title: string): number {
+  const lowerTitle = title.toLowerCase();
+
+  // Intern positions - very low pay
+  if (lowerTitle.includes('intern')) return 0.25;
+
+  // Entry-level positions
+  if (lowerTitle.includes('junior') || lowerTitle.includes('trainee') ||
+      lowerTitle.includes('graduate') || lowerTitle.includes('entry level') ||
+      lowerTitle.includes('associate')) return 0.45;
+
+  // Support and clerical roles
+  if (lowerTitle.includes('support') || lowerTitle.includes('help desk') ||
+      lowerTitle.includes('clerk') || lowerTitle.includes('technician') ||
+      lowerTitle.includes('coordinator')) return 0.35;
+
+  // Senior/Lead positions
+  if (lowerTitle.includes('senior') || lowerTitle.includes('lead') ||
+      lowerTitle.includes('principal')) return 1.1;
+
+  // Management positions
+  if (lowerTitle.includes('manager') || lowerTitle.includes('director') ||
+      lowerTitle.includes('architect')) return 1.25;
+
+  // Standard mid-level
+  return 0.75;
+}
+
 function generateJob(index: number): Job {
   const title = JOB_TITLES[index % JOB_TITLES.length];
   const locationData = faker.helpers.arrayElement(LOCATIONS);
   const workMode = faker.helpers.arrayElement(WORK_MODES);
 
-  // Generate salary within the location's range
+  // Determine job type - internships are more likely for intern titles
+  const isIntern = title.toLowerCase().includes('intern');
+  const jobType = isIntern
+    ? 'contract' as const
+    : faker.helpers.arrayElement(JOB_TYPES);
+
+  // Apply salary modifier based on seniority level
+  const salaryModifier = getSalaryModifier(title);
+  const adjustedMin = Math.round(locationData.salaryMin * salaryModifier);
+  const adjustedMax = Math.round(locationData.salaryMax * salaryModifier);
+
+  // Generate salary within the adjusted range
   const salaryBase = faker.number.int({
-    min: locationData.salaryMin,
-    max: locationData.salaryMax - 20000
+    min: adjustedMin,
+    max: Math.max(adjustedMin, adjustedMax - 10000)
   });
-  const salaryRange = faker.number.int({ min: 15000, max: 40000 });
+  const salaryRange = faker.number.int({
+    min: Math.round(5000 * salaryModifier),
+    max: Math.round(25000 * salaryModifier)
+  });
+
+  // Part-time jobs get further reduced salaries (pro-rata)
+  const partTimeModifier = jobType === 'part-time' ? 0.5 : 1;
+  const finalSalaryMin = Math.round(salaryBase * partTimeModifier);
+  const finalSalaryMax = Math.round((salaryBase + salaryRange) * partTimeModifier);
 
   // For remote jobs, use a mixed approach - could be based anywhere
   const isFullyRemote = workMode === 'remote';
@@ -157,6 +242,13 @@ function generateJob(index: number): Job {
 
   const companyName = faker.company.name();
 
+  // Adjust requirements based on seniority
+  const numRequirements = isIntern ? { min: 2, max: 4 } :
+    salaryModifier < 0.5 ? { min: 3, max: 5 } : { min: 4, max: 7 };
+
+  // Adjust benefits - entry level may have fewer
+  const numBenefits = salaryModifier < 0.5 ? { min: 3, max: 6 } : { min: 5, max: 10 };
+
   return {
     id: `job-${index + 1}`,
     title,
@@ -165,21 +257,21 @@ function generateJob(index: number): Job {
     city: locationData.city,
     country: locationData.country,
     work_mode: workMode,
-    salary_min: salaryBase,
-    salary_max: salaryBase + salaryRange,
+    salary_min: finalSalaryMin,
+    salary_max: finalSalaryMax,
     currency: locationData.currency,
-    type: faker.helpers.arrayElement(JOB_TYPES),
+    type: jobType,
     category: faker.helpers.arrayElement(CATEGORIES),
     description: faker.lorem.paragraphs(3),
-    requirements: faker.helpers.arrayElements(REQUIREMENTS, { min: 4, max: 7 }),
-    benefits: faker.helpers.arrayElements(BENEFITS, { min: 5, max: 10 }),
+    requirements: faker.helpers.arrayElements(REQUIREMENTS, numRequirements),
+    benefits: faker.helpers.arrayElements(BENEFITS, numBenefits),
     posted_at: faker.date.recent({ days: 30 }),
     company_logo: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(companyName)}&backgroundColor=6366f1`,
   };
 }
 
-// Generate 75 jobs
-const allJobs: Job[] = Array.from({ length: 75 }, (_, i) => generateJob(i));
+// Generate 100 jobs to cover all job title variations
+const allJobs: Job[] = Array.from({ length: 100 }, (_, i) => generateJob(i));
 
 export function getJobs(): Job[] {
   return allJobs;
