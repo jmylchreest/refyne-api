@@ -152,6 +152,7 @@ func main() {
 	router := chi.NewRouter()
 
 	// Global middleware
+	router.Use(middleware.CleanPath) // Normalize double slashes (//api -> /api)
 	router.Use(middleware.RequestID)
 	router.Use(middleware.RealIP)
 
