@@ -11,6 +11,7 @@ on:
       - "docs/**"
       - "demo/**"
       - "recipeapp/**"
+      - "diyviewer/**"
       - ".github/workflows/deploy.yml"
   schedule:
     # Daily rebuild of demo site at 6 AM UTC for fresh data
@@ -53,6 +54,7 @@ jobs:
       docs_changed: ${{ steps.changes.outputs.docs }}
       demo_changed: ${{ steps.changes.outputs.demo }}
       recipeapp_changed: ${{ steps.changes.outputs.recipeapp }}
+      diyviewer_changed: ${{ steps.changes.outputs.diyviewer }}
       deploy_all: ${{ steps.changes.outputs.deploy_all }}
     steps:
       - uses: actions/checkout@v4
@@ -62,15 +64,16 @@ jobs:
       - name: Detect changes
         id: changes
         run: |
-          # For scheduled runs, deploy demo and recipeapp (daily rebuild for fresh data)
+          # For scheduled runs, deploy demo apps (daily rebuild for fresh data)
           if [[ "${{ github.event_name }}" == "schedule" ]]; then
             echo "api=false" >> $GITHUB_OUTPUT
             echo "web=false" >> $GITHUB_OUTPUT
             echo "docs=false" >> $GITHUB_OUTPUT
             echo "demo=true" >> $GITHUB_OUTPUT
             echo "recipeapp=true" >> $GITHUB_OUTPUT
+            echo "diyviewer=true" >> $GITHUB_OUTPUT
             echo "deploy_all=false" >> $GITHUB_OUTPUT
-            echo "Scheduled run: deploying demo and recipeapp only"
+            echo "Scheduled run: deploying demo, recipeapp, and diyviewer only"
             exit 0
           fi
 
@@ -81,6 +84,7 @@ jobs:
             echo "docs=true" >> $GITHUB_OUTPUT
             echo "demo=true" >> $GITHUB_OUTPUT
             echo "recipeapp=true" >> $GITHUB_OUTPUT
+            echo "diyviewer=true" >> $GITHUB_OUTPUT
             echo "deploy_all=true" >> $GITHUB_OUTPUT
             echo "Deploying all components (tag or deploy_all flag)"
             exit 0
@@ -133,6 +137,13 @@ jobs:
             echo "Recipe App changed"
           else
             echo "recipeapp=false" >> $GITHUB_OUTPUT
+          fi
+
+          if echo "$CHANGED" | grep -q "^diyviewer/"; then
+            echo "diyviewer=true" >> $GITHUB_OUTPUT
+            echo "DIY Viewer changed"
+          else
+            echo "diyviewer=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Determine environment
@@ -271,6 +282,33 @@ jobs:
       - name: Build (validation)
         run: npm run build
         working-directory: recipeapp/recipeapp
+
+  # Run DIY Viewer build check (only if DIY Viewer changed)
+  test-diyviewer:
+    name: Test DIY Viewer
+    runs-on: ubuntu-latest
+    needs: prepare
+    if: needs.prepare.outputs.diyviewer_changed == 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: diyviewer/diyviewer/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: diyviewer/diyviewer
+
+      - name: Build (validation)
+        run: npm run build
+        working-directory: diyviewer/diyviewer
 
   # Build OpenAPI spec (needed if API, Web, or Docs changed)
   build-openapi:
@@ -586,11 +624,61 @@ jobs:
           command: pages deploy dist --project-name=refyne-recipeapp --branch=main
           workingDirectory: recipeapp/recipeapp
 
+  # Deploy DIY Viewer to Cloudflare Pages with D1
+  # Deploys on any push when diyviewer content changes
+  deploy-diyviewer:
+    name: Deploy DIY Viewer
+    runs-on: ubuntu-latest
+    needs: [prepare, test-diyviewer]
+    if: |
+      always() &&
+      needs.prepare.outputs.diyviewer_changed == 'true' &&
+      (needs.test-diyviewer.result == 'success' || needs.test-diyviewer.result == 'skipped')
+    outputs:
+      url: ${{ steps.deploy.outputs.deployment-url }}
+    environment:
+      name: diyviewer
+      url: https://diyviewer-demo.refyne.uk
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: diyviewer/diyviewer/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: diyviewer/diyviewer
+
+      - name: Build site
+        run: npm run build
+        working-directory: diyviewer/diyviewer
+
+      - name: Remove wrangler.toml to use dashboard-managed settings
+        run: rm -f wrangler.toml
+        working-directory: diyviewer/diyviewer
+
+      - name: Deploy to Cloudflare Pages
+        id: deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=refyne-diyviewer --branch=main
+          workingDirectory: diyviewer/diyviewer
+
   # Post-deployment notification
   notify:
     name: Notify
     runs-on: ubuntu-latest
-    needs: [prepare, deploy-api, deploy-web, deploy-docs, deploy-demo, deploy-recipeapp]
+    needs: [prepare, deploy-api, deploy-web, deploy-docs, deploy-demo, deploy-recipeapp, deploy-diyviewer]
     if: always()
     steps:
       - name: Deployment summary
@@ -608,6 +696,7 @@ jobs:
           echo "| Docs | ${{ needs.prepare.outputs.docs_changed }} | ${{ needs.deploy-docs.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Demo | ${{ needs.prepare.outputs.demo_changed }} | ${{ needs.deploy-demo.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Recipe App | ${{ needs.prepare.outputs.recipeapp_changed }} | ${{ needs.deploy-recipeapp.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| DIY Viewer | ${{ needs.prepare.outputs.diyviewer_changed }} | ${{ needs.deploy-diyviewer.result }} |" >> $GITHUB_STEP_SUMMARY
 
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### URLs" >> $GITHUB_STEP_SUMMARY
@@ -625,4 +714,7 @@ jobs:
           fi
           if [[ -n "${{ needs.deploy-recipeapp.outputs.url }}" ]]; then
             echo "- **Recipe App:** ${{ needs.deploy-recipeapp.outputs.url }}" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [[ -n "${{ needs.deploy-diyviewer.outputs.url }}" ]]; then
+            echo "- **DIY Viewer:** ${{ needs.deploy-diyviewer.outputs.url }}" >> $GITHUB_STEP_SUMMARY
           fi

@@ -13,3 +13,6 @@
 [submodule "recipeapp"]
 	path = recipeapp
 	url = git@github.com:jmylchreest/refyne-demos.git
+[submodule "diyviewer"]
+	path = diyviewer
+	url = git@github.com:jmylchreest/refyne-demos.git
