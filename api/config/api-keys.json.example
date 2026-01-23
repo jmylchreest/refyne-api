@@ -45,6 +45,50 @@
       }
     },
     {
+      "key": "rfs_demo_diy_viewer_2026",
+      "enabled": true,
+      "name": "Demo DIY Viewer",
+      "description": "Powers the DIY tutorial extraction demo at diyviewer-demo.refyne.uk",
+
+      "identity": {
+        "client_id": "demo-diy-viewer",
+        "tier": "demo",
+        "features": ["extract"]
+      },
+
+      "restrictions": {
+        "endpoints": [
+          "POST /api/v1/extract"
+        ],
+        "referrers": [
+          "diyviewer-demo.refyne.uk",
+          "demo.refyne.uk",
+          "docs.refyne.uk",
+          "localhost:*"
+        ],
+        "url_patterns": [
+          "https://demo.refyne.uk/*",
+          "https://docs.refyne.uk/*"
+        ]
+      },
+
+      "rate_limits": {
+        "requests_per_minute": 5,
+        "requests_per_hour": 30,
+        "requests_per_day": 100
+      },
+
+      "llm_config": {
+        "provider": "openrouter",
+        "model": "xiaomi/mimo-v2-flash:free"
+      },
+
+      "tier_overrides": {
+        "max_pages_per_crawl": 1,
+        "monthly_extractions": 100
+      }
+    },
+    {
       "key": "rfs_partner_acme_revoked_2025",
       "enabled": false,
       "name": "ACME Corp Integration (REVOKED)",
