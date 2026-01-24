@@ -97,49 +97,68 @@ fields:
 
 ## API Integration
 
-The Recipe App uses direct `fetch()` calls to the Refyne API for synchronous extraction. This is the simplest way to integrate - no SDK required:
+The Recipe App uses the official `@refyne/sdk` TypeScript SDK for synchronous extraction:
+
+```bash
+npm install @refyne/sdk
+```
 
 ```typescript
-export async function extractRecipe(
-  url: string,
-  apiUrl: string,
-  apiKey: string
-): Promise<RefyneResponse> {
-  // Direct POST to the extract endpoint
-  const response = await fetch(`${apiUrl}/api/v1/extract`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      url,
-      schema: RECIPE_SCHEMA,
-    }),
+import { Refyne } from '@refyne/sdk';
+
+// Create the SDK client
+const client = new Refyne({
+  apiKey: 'your-api-key',
+  baseUrl: 'https://api.refyne.uk',
+});
+
+export async function extractRecipe(url: string): Promise<RefyneResponse> {
+  // Synchronous extraction - waits for result
+  const result = await client.extract({
+    url,
+    schema: RECIPE_SCHEMA,
   });
 
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    return {
-      success: false,
-      error: errorData.error || `API error: ${response.status}`,
-    };
+  if (!result || result.error) {
+    return { success: false, error: result?.error || 'Extraction failed' };
   }
 
-  // Response contains extracted data directly
-  const data = await response.json();
   return {
     success: true,
-    data: data.data || data,
+    data: result.data,
   };
 }
 ```
+
+### Photo Extraction
+
+The Recipe App schema extracts cooking photos for each instruction step:
+
+```yaml
+instructions:
+  type: array
+  items:
+    type: object
+    properties:
+      step:
+        type: integer
+      text:
+        type: string
+        required: true
+      image_urls:
+        type: array
+        description: URLs of images showing this cooking step
+        items:
+          type: string
+```
+
+The schema includes instructions to only extract relevant recipe photos (cooking steps, ingredients) and ignore unrelated images (ads, author photos, UI elements).
 
 ### When to Use Sync vs Async
 
 | Sync Extract (this demo) | Async Crawler (DIY Viewer) |
 |--------------------------|---------------------------|
-| Simple, single API call | Start job, poll for results |
+| Single API call via SDK | Start job, poll for results |
 | Best for quick pages | Best for complex pages |
 | Blocks until complete | Shows progress to users |
 | Simpler error handling | Better timeout handling |
