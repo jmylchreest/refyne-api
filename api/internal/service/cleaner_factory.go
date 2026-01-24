@@ -47,13 +47,15 @@ var DefaultExtractionCleanerChain = []CleanerConfig{{
 var DefaultAnalyzerCleanerChain = []CleanerConfig{{Name: "noop"}}
 
 // AnalyzerFallbackCleanerChain is used when analyzer content exceeds context limits.
+// Uses refyne with markdown output for optimal token reduction while preserving structure.
 var AnalyzerFallbackCleanerChain = []CleanerConfig{{
-	Name: "trafilatura",
+	Name: "refyne",
 	Options: &CleanerOptions{
-		Output: "html",
-		Tables: true,
-		Links:  true,
-		Images: false, // Exclude images to save tokens
+		Output:             "markdown",
+		Preset:             "default",
+		IncludeFrontmatter: true,
+		ExtractImages:      false, // Exclude images to save tokens for analysis
+		ExtractHeadings:    true,
 	},
 }}
 
