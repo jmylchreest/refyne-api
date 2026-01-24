@@ -29,9 +29,18 @@ const (
 	CleanerRefyne CleanerType = "refyne"
 )
 
-// DefaultExtractionCleaner is the default cleaner chain for extraction operations.
-// Uses refyne (default preset) -> markdown for optimal token reduction while preserving content.
-var DefaultExtractionCleanerChain = []CleanerConfig{{Name: "refyne"}, {Name: "markdown"}}
+// DefaultExtractionCleaner is the default cleaner for extraction operations.
+// Uses refyne with markdown output and frontmatter for optimal LLM consumption.
+// Images are extracted to frontmatter with {{IMG_001}} placeholders in the body.
+var DefaultExtractionCleanerChain = []CleanerConfig{{
+	Name: "refyne",
+	Options: &CleanerOptions{
+		Output:             "markdown",
+		IncludeFrontmatter: true,
+		ExtractImages:      true,
+		ExtractHeadings:    true,
+	},
+}}
 
 // DefaultAnalyzerCleaner is the default cleaner for analysis operations.
 // Uses noop to preserve maximum detail for schema generation.
@@ -51,7 +60,7 @@ var AnalyzerFallbackCleanerChain = []CleanerConfig{{
 // CleanerOptions contains configuration options for cleaners.
 // Not all options apply to all cleaners.
 type CleanerOptions struct {
-	// Output format: "html" or "text" (trafilatura, readability)
+	// Output format: "html", "text", or "markdown" (trafilatura, readability, refyne)
 	Output string `json:"output,omitempty"`
 
 	// Tables: include tables in output (trafilatura, readability)
@@ -63,7 +72,7 @@ type CleanerOptions struct {
 	// Images: include images in output (trafilatura)
 	Images bool `json:"images,omitempty"`
 
-	// BaseURL: base URL for resolving relative links (readability)
+	// BaseURL: base URL for resolving relative links (readability, refyne)
 	BaseURL string `json:"base_url,omitempty"`
 
 	// Preset: refyne preset name ("default", "minimal", "aggressive")
@@ -74,6 +83,19 @@ type CleanerOptions struct {
 
 	// KeepSelectors: CSS selectors to always keep (refyne, overrides removals)
 	KeepSelectors []string `json:"keep_selectors,omitempty"`
+
+	// IncludeFrontmatter: prepend YAML frontmatter with metadata (refyne markdown output)
+	IncludeFrontmatter bool `json:"include_frontmatter,omitempty"`
+
+	// ExtractImages: extract images to frontmatter with placeholders in body (refyne markdown)
+	ExtractImages bool `json:"extract_images,omitempty"`
+
+	// ExtractHeadings: extract heading structure to frontmatter (refyne markdown)
+	ExtractHeadings bool `json:"extract_headings,omitempty"`
+
+	// ResolveURLs: resolve relative URLs to absolute using BaseURL (refyne)
+	// Default: false (API postprocessor handles URL resolution)
+	ResolveURLs bool `json:"resolve_urls,omitempty"`
 }
 
 // CleanerConfig defines a single cleaner in a chain.
@@ -197,6 +219,33 @@ func (f *CleanerFactory) createRefyne(opts *CleanerOptions) cleaner.Cleaner {
 			cfg = refynecleaner.PresetMinimal()
 		case "aggressive":
 			cfg = refynecleaner.PresetAggressive()
+		}
+
+		// Apply output format
+		switch opts.Output {
+		case "text":
+			cfg.Output = refynecleaner.OutputText
+		case "markdown":
+			cfg.Output = refynecleaner.OutputMarkdown
+		case "html", "":
+			cfg.Output = refynecleaner.OutputHTML
+		}
+
+		// Apply markdown-specific options
+		if opts.IncludeFrontmatter {
+			cfg.IncludeFrontmatter = true
+		}
+		if opts.ExtractImages {
+			cfg.ExtractImages = true
+		}
+		if opts.ExtractHeadings {
+			cfg.ExtractHeadings = true
+		}
+		if opts.BaseURL != "" {
+			cfg.BaseURL = opts.BaseURL
+		}
+		if opts.ResolveURLs {
+			cfg.ResolveURLs = true
 		}
 
 		// Append custom remove selectors
@@ -325,9 +374,15 @@ func GetAvailableCleaners() []CleanerInfo {
 		},
 		{
 			Name:        "refyne",
-			Description: "Custom configurable cleaner with heuristic-based HTML cleaning. Removes scripts, styles, hidden elements while preserving content structure.",
+			Description: "Custom configurable cleaner with heuristic-based HTML cleaning. Removes scripts, styles, hidden elements while preserving content structure. Supports LLM-optimized markdown output with frontmatter.",
 			Options: []CleanerOptionInfo{
+				{Name: "output", Type: "string", Default: "html", Description: "Output format: 'html', 'text', or 'markdown'"},
 				{Name: "preset", Type: "string", Default: "default", Description: "Preset: 'default', 'minimal', or 'aggressive'"},
+				{Name: "include_frontmatter", Type: "boolean", Default: false, Description: "Prepend YAML frontmatter with metadata (markdown output only)"},
+				{Name: "extract_images", Type: "boolean", Default: true, Description: "Extract images to frontmatter with {{IMG_001}} placeholders in body"},
+				{Name: "extract_headings", Type: "boolean", Default: true, Description: "Include heading structure in frontmatter"},
+				{Name: "base_url", Type: "string", Default: "", Description: "Base URL for resolving relative URLs (only used when resolve_urls is true)"},
+				{Name: "resolve_urls", Type: "boolean", Default: false, Description: "Resolve relative URLs to absolute using base_url"},
 				{Name: "remove_selectors", Type: "array", Default: nil, Description: "CSS selectors for elements to remove (e.g., '.sidebar', 'nav')"},
 				{Name: "keep_selectors", Type: "array", Default: nil, Description: "CSS selectors for elements to always keep (overrides removals)"},
 			},

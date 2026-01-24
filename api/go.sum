@@ -121,8 +121,8 @@ github.com/jalaali/go-jalaali v0.0.0-20250521085720-bf793ab67800 h1:lvIuaX7hO0eO
 github.com/jalaali/go-jalaali v0.0.0-20250521085720-bf793ab67800/go.mod h1:Wqfu7mjUHj9WDzSSPI5KfBclTTEnLveRUFr/ujWnTgE=
 github.com/jarcoal/httpmock v1.3.1 h1:iUx3whfZWVf3jT01hQTO/Eo5sAYtB2/rqaUuOtpInww=
 github.com/jarcoal/httpmock v1.3.1/go.mod h1:3yb8rc4BI7TCBhFY8ng0gjuLKJNquuDNiPaZjnENuYg=
-github.com/jmylchreest/refyne v0.1.4 h1:o1O+NUKiC1JSGSZZbnd08mQE2UDU36ouW5n8xXlY7LA=
-github.com/jmylchreest/refyne v0.1.4/go.mod h1:BiEpsOaQpH40paBU/RcD7fvxqTx+072uY3sWLpmaXaw=
+github.com/jmylchreest/refyne v0.1.5 h1:gL667fHlNlX3VjOEAsSk6fD0pvSDJUBJFqnSFHwfpv8=
+github.com/jmylchreest/refyne v0.1.5/go.mod h1:BiEpsOaQpH40paBU/RcD7fvxqTx+072uY3sWLpmaXaw=
 github.com/jmylchreest/slog-logfilter v0.0.1 h1:9vFZpvrVhBY59WtNC8lUxRLLXSKL1NlmVwJvxNPPluc=
 github.com/jmylchreest/slog-logfilter v0.0.1/go.mod h1:OGJcNIvPUIGvcs/i7igxFxScBumZ1dq7wwdliAtxQoc=
 github.com/kennygrant/sanitize v1.2.4 h1:gN25/otpP5vAsO2djbMhF/LQX6R7+O1TB4yv8NzpJ3o=

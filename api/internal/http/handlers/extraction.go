@@ -32,16 +32,22 @@ type CleanerConfigInput struct {
 // CleanerOptionsInput represents cleaner configuration options.
 type CleanerOptionsInput struct {
 	// Common options
-	Output  string `json:"output,omitempty" enum:"html,text" default:"html" doc:"Output format for trafilatura/readability"`
+	Output  string `json:"output,omitempty" enum:"html,text,markdown" default:"html" doc:"Output format (trafilatura, readability, refyne)"`
 	Tables  bool   `json:"tables,omitempty" default:"true" doc:"Include tables in output (trafilatura)"`
 	Links   bool   `json:"links,omitempty" default:"true" doc:"Include links in output (trafilatura)"`
 	Images  bool   `json:"images,omitempty" default:"true" doc:"Include images in output (trafilatura)"`
-	BaseURL string `json:"base_url,omitempty" doc:"Base URL for resolving relative links (readability)"`
+	BaseURL string `json:"base_url,omitempty" doc:"Base URL for resolving relative links (readability, refyne)"`
 
 	// Refyne-specific options
 	Preset          string   `json:"preset,omitempty" enum:"default,minimal,aggressive" doc:"Refyne preset: default, minimal, or aggressive"`
 	RemoveSelectors []string `json:"remove_selectors,omitempty" doc:"CSS selectors for elements to remove (refyne)"`
 	KeepSelectors   []string `json:"keep_selectors,omitempty" doc:"CSS selectors for elements to always keep (refyne)"`
+
+	// Refyne markdown output options
+	IncludeFrontmatter bool `json:"include_frontmatter,omitempty" doc:"Prepend YAML frontmatter with metadata (refyne markdown output)"`
+	ExtractImages      bool `json:"extract_images,omitempty" doc:"Extract images to frontmatter with {{IMG_001}} placeholders (refyne markdown)"`
+	ExtractHeadings    bool `json:"extract_headings,omitempty" doc:"Extract heading structure to frontmatter (refyne markdown)"`
+	ResolveURLs        bool `json:"resolve_urls,omitempty" doc:"Resolve relative URLs to absolute using base_url (refyne)"`
 }
 
 // ExtractInput represents extraction request.
@@ -185,14 +191,18 @@ func (h *ExtractionHandler) Extract(ctx context.Context, input *ExtractInput) (*
 			}
 			if c.Options != nil {
 				cleanerChain[i].Options = &service.CleanerOptions{
-					Output:          c.Options.Output,
-					Tables:          c.Options.Tables,
-					Links:           c.Options.Links,
-					Images:          c.Options.Images,
-					BaseURL:         c.Options.BaseURL,
-					Preset:          c.Options.Preset,
-					RemoveSelectors: c.Options.RemoveSelectors,
-					KeepSelectors:   c.Options.KeepSelectors,
+					Output:             c.Options.Output,
+					Tables:             c.Options.Tables,
+					Links:              c.Options.Links,
+					Images:             c.Options.Images,
+					BaseURL:            c.Options.BaseURL,
+					Preset:             c.Options.Preset,
+					RemoveSelectors:    c.Options.RemoveSelectors,
+					KeepSelectors:      c.Options.KeepSelectors,
+					IncludeFrontmatter: c.Options.IncludeFrontmatter,
+					ExtractImages:      c.Options.ExtractImages,
+					ExtractHeadings:    c.Options.ExtractHeadings,
+					ResolveURLs:        c.Options.ResolveURLs,
 				}
 			}
 		}
