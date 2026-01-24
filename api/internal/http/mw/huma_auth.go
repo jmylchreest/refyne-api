@@ -349,7 +349,14 @@ func validateS3APIKeyHuma(ctx huma.Context, apiKey string) *UserClaims {
 	}
 
 	// Validate referrer restriction
+	// Check multiple headers in priority order:
+	// 1. Referer - standard browser header
+	// 2. X-Referer - custom header for server-to-server calls (Cloudflare Workers may strip Referer)
+	// 3. Origin - fallback for CORS requests
 	referrer := ctx.Header("Referer")
+	if referrer == "" {
+		referrer = ctx.Header("X-Referer")
+	}
 	if referrer == "" {
 		referrer = ctx.Header("Origin")
 	}
@@ -357,6 +364,9 @@ func validateS3APIKeyHuma(ctx huma.Context, apiKey string) *UserClaims {
 		slog.Warn("S3 API key referrer restriction failed",
 			"key_name", keyConfig.Name,
 			"referrer", referrer,
+			"referer_header", ctx.Header("Referer"),
+			"x_referer_header", ctx.Header("X-Referer"),
+			"origin_header", ctx.Header("Origin"),
 		)
 		return nil
 	}
