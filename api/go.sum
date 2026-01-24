@@ -123,6 +123,8 @@ github.com/jarcoal/httpmock v1.3.1 h1:iUx3whfZWVf3jT01hQTO/Eo5sAYtB2/rqaUuOtpInw
 github.com/jarcoal/httpmock v1.3.1/go.mod h1:3yb8rc4BI7TCBhFY8ng0gjuLKJNquuDNiPaZjnENuYg=
 github.com/jmylchreest/refyne v0.1.0 h1:8z9QELP5XwlFILYGgdN1rctrniGvJj+E88KUwCzclcA=
 github.com/jmylchreest/refyne v0.1.0/go.mod h1:BiEpsOaQpH40paBU/RcD7fvxqTx+072uY3sWLpmaXaw=
+github.com/jmylchreest/refyne v0.1.1-0.20260124100159-c0220e4649f8 h1:k/ffBM0sTFSNvbIWN0x7b0zgSQeXi+KnHYjnF7M023A=
+github.com/jmylchreest/refyne v0.1.1-0.20260124100159-c0220e4649f8/go.mod h1:BiEpsOaQpH40paBU/RcD7fvxqTx+072uY3sWLpmaXaw=
 github.com/jmylchreest/slog-logfilter v0.0.1 h1:9vFZpvrVhBY59WtNC8lUxRLLXSKL1NlmVwJvxNPPluc=
 github.com/jmylchreest/slog-logfilter v0.0.1/go.mod h1:OGJcNIvPUIGvcs/i7igxFxScBumZ1dq7wwdliAtxQoc=
 github.com/kennygrant/sanitize v1.2.4 h1:gN25/otpP5vAsO2djbMhF/LQX6R7+O1TB4yv8NzpJ3o=

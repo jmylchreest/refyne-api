@@ -13,7 +13,7 @@ require (
 	github.com/go-chi/httprate v0.15.0
 	github.com/gocolly/colly/v2 v2.3.0
 	github.com/golang-jwt/jwt/v5 v5.3.0
-	github.com/jmylchreest/refyne v0.1.0
+	github.com/jmylchreest/refyne v0.1.1-0.20260124100159-c0220e4649f8
 	github.com/jmylchreest/slog-logfilter v0.0.1
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/stripe/stripe-go/v78 v78.12.0
