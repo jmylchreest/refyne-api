@@ -3,6 +3,8 @@ version: '3'
 vars:
   API_DIR: ./api
   WEB_DIR: ./web
+  DOCS_DIR: ./docs
+  DOCS_PORT: '{{.DOCS_PORT | default "4001"}}'
   VERSION_PKG: github.com/jmylchreest/refyne-api/internal/version
   VERSION:
     sh: git describe --tags --always --dirty 2>/dev/null || echo "0.0.0-dev"
@@ -106,6 +108,31 @@ tasks:
     cmds:
       - npm run lint
 
+  # Docs tasks
+  docs:deps:
+    desc: Install docs dependencies
+    dir: '{{.DOCS_DIR}}'
+    cmds:
+      - npm install
+
+  docs:dev:
+    desc: Run docs site in development mode (default port 4001, override with DOCS_PORT=xxxx)
+    dir: '{{.DOCS_DIR}}'
+    cmds:
+      - npm run dev -- --port {{.DOCS_PORT}}
+
+  docs:build:
+    desc: Build docs site
+    dir: '{{.DOCS_DIR}}'
+    cmds:
+      - npm run build
+
+  docs:lint:
+    desc: Lint docs code
+    dir: '{{.DOCS_DIR}}'
+    cmds:
+      - npm run lint
+
   # Database tasks
   db:migrate:
     desc: Run database migrations (happens automatically on startup)
@@ -119,18 +146,21 @@ tasks:
     cmds:
       - task: api:deps
       - task: web:deps
+      - task: docs:deps
 
   build:
     desc: Build everything
     cmds:
       - task: api:build
       - task: web:build
+      - task: docs:build
 
   dev:
     desc: Start development servers (run in separate terminals)
     cmds:
       - echo "Run 'task api:dev' in one terminal"
       - echo "Run 'task web:dev' in another terminal"
+      - echo "Run 'task docs:dev' for docs (port {{.DOCS_PORT}}, override with DOCS_PORT=xxxx)"
 
   test:
     desc: Run all tests
@@ -156,10 +186,11 @@ tasks:
 
   # Lint tasks
   lint:
-    desc: Run linting across all components (api, web, demo)
+    desc: Run linting across all components (api, web, docs, demo)
     cmds:
       - task: api:lint
       - task: web:lint
+      - task: docs:lint
       - task: demo:lint
 
   demo:dev:
@@ -210,6 +241,7 @@ tasks:
     cmds:
       - task: api:deps:update
       - task: web:deps:update
+      - task: docs:deps:update
       - task: demo:deps:update
 
   deps:upgrade:
@@ -217,6 +249,7 @@ tasks:
     cmds:
       - task: api:deps:upgrade
       - task: web:deps:upgrade
+      - task: docs:deps:upgrade
       - task: demo:deps:upgrade
 
   api:deps:update:
@@ -246,6 +279,19 @@ tasks:
       - npx npm-check-updates -u
       - npm install
 
+  docs:deps:update:
+    desc: Update docs dependencies within semver ranges (safe)
+    dir: '{{.DOCS_DIR}}'
+    cmds:
+      - npm update
+
+  docs:deps:upgrade:
+    desc: Upgrade docs dependencies to latest versions
+    dir: '{{.DOCS_DIR}}'
+    cmds:
+      - npx npm-check-updates -u
+      - npm install
+
   demo:deps:update:
     desc: Update demo dependencies within semver ranges (safe)
     dir: ./demo
@@ -266,6 +312,8 @@ tasks:
       - rm -rf bin/
       - rm -rf web/.next/
       - rm -rf web/node_modules/
+      - rm -rf docs/.next/
+      - rm -rf docs/node_modules/
       - rm -rf demo/node_modules/
       - rm -rf demo/dist/
 
