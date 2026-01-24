@@ -10,10 +10,8 @@ on:
       - "web/**"
       - "docs/**"
       - "demo/**"
-      - "recipeapp/**"
-      - "recipeapp"        # Submodule pointer change
-      - "diyviewer/**"
-      - "diyviewer"        # Submodule pointer change
+      - "demos/**"
+      - "demos"            # Submodule pointer change
       - ".github/workflows/deploy.yml"
   schedule:
     # Daily rebuild of demo site at 6 AM UTC for fresh data
@@ -55,8 +53,7 @@ jobs:
       web_changed: ${{ steps.changes.outputs.web }}
       docs_changed: ${{ steps.changes.outputs.docs }}
       demo_changed: ${{ steps.changes.outputs.demo }}
-      recipeapp_changed: ${{ steps.changes.outputs.recipeapp }}
-      diyviewer_changed: ${{ steps.changes.outputs.diyviewer }}
+      demos_changed: ${{ steps.changes.outputs.demos }}
       deploy_all: ${{ steps.changes.outputs.deploy_all }}
     steps:
       - uses: actions/checkout@v4
@@ -72,10 +69,9 @@ jobs:
             echo "web=false" >> $GITHUB_OUTPUT
             echo "docs=false" >> $GITHUB_OUTPUT
             echo "demo=true" >> $GITHUB_OUTPUT
-            echo "recipeapp=true" >> $GITHUB_OUTPUT
-            echo "diyviewer=true" >> $GITHUB_OUTPUT
+            echo "demos=true" >> $GITHUB_OUTPUT
             echo "deploy_all=false" >> $GITHUB_OUTPUT
-            echo "Scheduled run: deploying demo, recipeapp, and diyviewer only"
+            echo "Scheduled run: deploying demo and demos apps only"
             exit 0
           fi
 
@@ -85,8 +81,7 @@ jobs:
             echo "web=true" >> $GITHUB_OUTPUT
             echo "docs=true" >> $GITHUB_OUTPUT
             echo "demo=true" >> $GITHUB_OUTPUT
-            echo "recipeapp=true" >> $GITHUB_OUTPUT
-            echo "diyviewer=true" >> $GITHUB_OUTPUT
+            echo "demos=true" >> $GITHUB_OUTPUT
             echo "deploy_all=true" >> $GITHUB_OUTPUT
             echo "Deploying all components (tag or deploy_all flag)"
             exit 0
@@ -134,20 +129,13 @@ jobs:
             echo "demo=false" >> $GITHUB_OUTPUT
           fi
 
-          # recipeapp: match both "recipeapp/" (direct changes) and "recipeapp" (submodule pointer)
-          if echo "$CHANGED" | grep -qE "^recipeapp(/|$)"; then
-            echo "recipeapp=true" >> $GITHUB_OUTPUT
-            echo "Recipe App changed"
+          # demos: match both "demos/" (direct changes) and "demos" (submodule pointer)
+          # This covers both recipeapp and diyviewer since they're in the demos submodule
+          if echo "$CHANGED" | grep -qE "^demos(/|$)"; then
+            echo "demos=true" >> $GITHUB_OUTPUT
+            echo "Demos (Recipe App & DIY Viewer) changed"
           else
-            echo "recipeapp=false" >> $GITHUB_OUTPUT
-          fi
-
-          # diyviewer: match both "diyviewer/" (direct changes) and "diyviewer" (submodule pointer)
-          if echo "$CHANGED" | grep -qE "^diyviewer(/|$)"; then
-            echo "diyviewer=true" >> $GITHUB_OUTPUT
-            echo "DIY Viewer changed"
-          else
-            echo "diyviewer=false" >> $GITHUB_OUTPUT
+            echo "demos=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Determine environment
@@ -260,12 +248,12 @@ jobs:
         run: npm run build
         working-directory: demo
 
-  # Run Recipe App build check (only if Recipe App changed)
+  # Run Recipe App build check (only if demos changed)
   test-recipeapp:
     name: Test Recipe App
     runs-on: ubuntu-latest
     needs: prepare
-    if: needs.prepare.outputs.recipeapp_changed == 'true'
+    if: needs.prepare.outputs.demos_changed == 'true'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -277,22 +265,22 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
-          cache-dependency-path: recipeapp/recipeapp/package-lock.json
+          cache-dependency-path: demos/recipeapp/package-lock.json
 
       - name: Install dependencies
         run: npm ci
-        working-directory: recipeapp/recipeapp
+        working-directory: demos/recipeapp
 
       - name: Build (validation)
         run: npm run build
-        working-directory: recipeapp/recipeapp
+        working-directory: demos/recipeapp
 
-  # Run DIY Viewer build check (only if DIY Viewer changed)
+  # Run DIY Viewer build check (only if demos changed)
   test-diyviewer:
     name: Test DIY Viewer
     runs-on: ubuntu-latest
     needs: prepare
-    if: needs.prepare.outputs.diyviewer_changed == 'true'
+    if: needs.prepare.outputs.demos_changed == 'true'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -304,15 +292,15 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
-          cache-dependency-path: diyviewer/diyviewer/package-lock.json
+          cache-dependency-path: demos/diyviewer/package-lock.json
 
       - name: Install dependencies
         run: npm ci
-        working-directory: diyviewer/diyviewer
+        working-directory: demos/diyviewer
 
       - name: Build (validation)
         run: npm run build
-        working-directory: diyviewer/diyviewer
+        working-directory: demos/diyviewer
 
   # Build OpenAPI spec (needed if API, Web, or Docs changed)
   build-openapi:
@@ -579,14 +567,14 @@ jobs:
           workingDirectory: demo
 
   # Deploy Recipe App to Cloudflare Pages with D1
-  # Deploys on any push when recipeapp content changes
+  # Deploys on any push when demos content changes
   deploy-recipeapp:
     name: Deploy Recipe App
     runs-on: ubuntu-latest
     needs: [prepare, test-recipeapp]
     if: |
       always() &&
-      needs.prepare.outputs.recipeapp_changed == 'true' &&
+      needs.prepare.outputs.demos_changed == 'true' &&
       (needs.test-recipeapp.result == 'success' || needs.test-recipeapp.result == 'skipped')
     outputs:
       url: ${{ steps.deploy.outputs.deployment-url }}
@@ -605,19 +593,19 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
-          cache-dependency-path: recipeapp/recipeapp/package-lock.json
+          cache-dependency-path: demos/recipeapp/package-lock.json
 
       - name: Install dependencies
         run: npm ci
-        working-directory: recipeapp/recipeapp
+        working-directory: demos/recipeapp
 
       - name: Build site
         run: npm run build
-        working-directory: recipeapp/recipeapp
+        working-directory: demos/recipeapp
 
       - name: Remove wrangler.toml to use dashboard-managed settings
         run: rm -f wrangler.toml
-        working-directory: recipeapp/recipeapp
+        working-directory: demos/recipeapp
 
       - name: Deploy to Cloudflare Pages
         id: deploy
@@ -626,17 +614,17 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy dist --project-name=refyne-recipeapp --branch=main
-          workingDirectory: recipeapp/recipeapp
+          workingDirectory: demos/recipeapp
 
   # Deploy DIY Viewer to Cloudflare Pages with D1
-  # Deploys on any push when diyviewer content changes
+  # Deploys on any push when demos content changes
   deploy-diyviewer:
     name: Deploy DIY Viewer
     runs-on: ubuntu-latest
     needs: [prepare, test-diyviewer]
     if: |
       always() &&
-      needs.prepare.outputs.diyviewer_changed == 'true' &&
+      needs.prepare.outputs.demos_changed == 'true' &&
       (needs.test-diyviewer.result == 'success' || needs.test-diyviewer.result == 'skipped')
     outputs:
       url: ${{ steps.deploy.outputs.deployment-url }}
@@ -655,19 +643,19 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
-          cache-dependency-path: diyviewer/diyviewer/package-lock.json
+          cache-dependency-path: demos/diyviewer/package-lock.json
 
       - name: Install dependencies
         run: npm ci
-        working-directory: diyviewer/diyviewer
+        working-directory: demos/diyviewer
 
       - name: Build site
         run: npm run build
-        working-directory: diyviewer/diyviewer
+        working-directory: demos/diyviewer
 
       - name: Remove wrangler.toml to use dashboard-managed settings
         run: rm -f wrangler.toml
-        working-directory: diyviewer/diyviewer
+        working-directory: demos/diyviewer
 
       - name: Deploy to Cloudflare Pages
         id: deploy
@@ -676,7 +664,7 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy dist --project-name=refyne-diyviewer --branch=main
-          workingDirectory: diyviewer/diyviewer
+          workingDirectory: demos/diyviewer
 
   # Post-deployment notification
   notify:
@@ -699,8 +687,8 @@ jobs:
           echo "| Web | ${{ needs.prepare.outputs.web_changed }} | ${{ needs.deploy-web.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Docs | ${{ needs.prepare.outputs.docs_changed }} | ${{ needs.deploy-docs.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Demo | ${{ needs.prepare.outputs.demo_changed }} | ${{ needs.deploy-demo.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Recipe App | ${{ needs.prepare.outputs.recipeapp_changed }} | ${{ needs.deploy-recipeapp.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| DIY Viewer | ${{ needs.prepare.outputs.diyviewer_changed }} | ${{ needs.deploy-diyviewer.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Recipe App | ${{ needs.prepare.outputs.demos_changed }} | ${{ needs.deploy-recipeapp.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| DIY Viewer | ${{ needs.prepare.outputs.demos_changed }} | ${{ needs.deploy-diyviewer.result }} |" >> $GITHUB_STEP_SUMMARY
 
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### URLs" >> $GITHUB_STEP_SUMMARY
