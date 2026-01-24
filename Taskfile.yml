@@ -5,6 +5,15 @@ vars:
   WEB_DIR: ./web
   DOCS_DIR: ./docs
   DOCS_PORT: '{{.DOCS_PORT | default "4001"}}'
+  # External repos (sibling directories)
+  DEMOS_DIR: ../refyne-demos
+  SDK_GO_DIR: ../refyne-sdk-go
+  SDK_PYTHON_DIR: ../refyne-sdk-python
+  SDK_RUST_DIR: ../refyne-sdk-rust
+  SDK_TS_DIR: ../refyne-sdk-ts
+  # Demo app ports
+  RECIPEAPP_PORT: '{{.RECIPEAPP_PORT | default "4002"}}'
+  DIYVIEWER_PORT: '{{.DIYVIEWER_PORT | default "4003"}}'
   VERSION_PKG: github.com/jmylchreest/refyne-api/internal/version
   VERSION:
     sh: git describe --tags --always --dirty 2>/dev/null || echo "0.0.0-dev"
@@ -217,6 +226,264 @@ tasks:
     cmds:
       - npm run lint 2>/dev/null || echo "No lint script configured for demo"
 
+  # ============================================
+  # External Demo Apps (../refyne-demos)
+  # ============================================
+  demos:recipeapp:deps:
+    desc: Install recipeapp dependencies
+    dir: '{{.DEMOS_DIR}}/recipeapp'
+    cmds:
+      - npm install
+
+  demos:recipeapp:dev:
+    desc: Run recipeapp locally (default port 4002, override with RECIPEAPP_PORT=xxxx)
+    dir: '{{.DEMOS_DIR}}/recipeapp'
+    cmds:
+      - npm run dev -- --port {{.RECIPEAPP_PORT}}
+
+  demos:recipeapp:build:
+    desc: Build recipeapp
+    dir: '{{.DEMOS_DIR}}/recipeapp'
+    cmds:
+      - npm run build
+
+  demos:recipeapp:deps:update:
+    desc: Update recipeapp dependencies within semver ranges
+    dir: '{{.DEMOS_DIR}}/recipeapp'
+    cmds:
+      - npm update
+
+  demos:recipeapp:deps:upgrade:
+    desc: Upgrade recipeapp dependencies to latest versions
+    dir: '{{.DEMOS_DIR}}/recipeapp'
+    cmds:
+      - npx npm-check-updates -u
+      - npm install
+
+  demos:diyviewer:deps:
+    desc: Install diyviewer dependencies
+    dir: '{{.DEMOS_DIR}}/diyviewer'
+    cmds:
+      - npm install
+
+  demos:diyviewer:dev:
+    desc: Run diyviewer locally (default port 4003, override with DIYVIEWER_PORT=xxxx)
+    dir: '{{.DEMOS_DIR}}/diyviewer'
+    cmds:
+      - npm run dev -- --port {{.DIYVIEWER_PORT}}
+
+  demos:diyviewer:build:
+    desc: Build diyviewer
+    dir: '{{.DEMOS_DIR}}/diyviewer'
+    cmds:
+      - npm run build
+
+  demos:diyviewer:deps:update:
+    desc: Update diyviewer dependencies within semver ranges
+    dir: '{{.DEMOS_DIR}}/diyviewer'
+    cmds:
+      - npm update
+
+  demos:diyviewer:deps:upgrade:
+    desc: Upgrade diyviewer dependencies to latest versions
+    dir: '{{.DEMOS_DIR}}/diyviewer'
+    cmds:
+      - npx npm-check-updates -u
+      - npm install
+
+  demos:deps:
+    desc: Install all demo app dependencies
+    cmds:
+      - task: demos:recipeapp:deps
+      - task: demos:diyviewer:deps
+
+  demos:deps:update:
+    desc: Update all demo app dependencies
+    cmds:
+      - task: demos:recipeapp:deps:update
+      - task: demos:diyviewer:deps:update
+
+  demos:deps:upgrade:
+    desc: Upgrade all demo app dependencies
+    cmds:
+      - task: demos:recipeapp:deps:upgrade
+      - task: demos:diyviewer:deps:upgrade
+
+  # ============================================
+  # SDKs (../refyne-sdk-*)
+  # ============================================
+  sdk:go:deps:
+    desc: Download Go SDK dependencies
+    dir: '{{.SDK_GO_DIR}}'
+    cmds:
+      - go mod tidy
+      - go mod download
+
+  sdk:go:deps:update:
+    desc: Update Go SDK dependencies within compatible versions
+    dir: '{{.SDK_GO_DIR}}'
+    cmds:
+      - go get -u=patch ./...
+      - go mod tidy
+
+  sdk:go:deps:upgrade:
+    desc: Upgrade Go SDK dependencies to latest versions
+    dir: '{{.SDK_GO_DIR}}'
+    cmds:
+      - go get -u ./...
+      - go mod tidy
+
+  sdk:go:test:
+    desc: Run Go SDK tests
+    dir: '{{.SDK_GO_DIR}}'
+    cmds:
+      - go test -v ./...
+
+  sdk:go:generate:
+    desc: Regenerate Go SDK from OpenAPI spec
+    dir: '{{.SDK_GO_DIR}}'
+    cmds:
+      - make generate 2>/dev/null || echo "Run 'make generate' in the SDK repo"
+
+  sdk:python:deps:
+    desc: Install Python SDK dependencies
+    dir: '{{.SDK_PYTHON_DIR}}'
+    cmds:
+      - uv sync
+
+  sdk:python:deps:update:
+    desc: Update Python SDK dependencies
+    dir: '{{.SDK_PYTHON_DIR}}'
+    cmds:
+      - uv lock --upgrade
+
+  sdk:python:deps:upgrade:
+    desc: Upgrade Python SDK dependencies to latest versions
+    dir: '{{.SDK_PYTHON_DIR}}'
+    cmds:
+      - uv lock --upgrade
+      - uv sync
+
+  sdk:python:test:
+    desc: Run Python SDK tests
+    dir: '{{.SDK_PYTHON_DIR}}'
+    cmds:
+      - uv run pytest
+
+  sdk:python:generate:
+    desc: Regenerate Python SDK from OpenAPI spec
+    dir: '{{.SDK_PYTHON_DIR}}'
+    cmds:
+      - ./scripts/generate.sh 2>/dev/null || echo "Run './scripts/generate.sh' in the SDK repo"
+
+  sdk:rust:deps:
+    desc: Install Rust SDK dependencies
+    dir: '{{.SDK_RUST_DIR}}'
+    cmds:
+      - cargo fetch
+
+  sdk:rust:deps:update:
+    desc: Update Rust SDK dependencies within compatible versions
+    dir: '{{.SDK_RUST_DIR}}'
+    cmds:
+      - cargo update --compatible
+
+  sdk:rust:deps:upgrade:
+    desc: Upgrade Rust SDK dependencies to latest versions
+    dir: '{{.SDK_RUST_DIR}}'
+    cmds:
+      - cargo update
+
+  sdk:rust:test:
+    desc: Run Rust SDK tests
+    dir: '{{.SDK_RUST_DIR}}'
+    cmds:
+      - cargo test
+
+  sdk:rust:generate:
+    desc: Regenerate Rust SDK from OpenAPI spec
+    dir: '{{.SDK_RUST_DIR}}'
+    cmds:
+      - make generate 2>/dev/null || ./scripts/generate.sh 2>/dev/null || echo "Run generation script in the SDK repo"
+
+  sdk:ts:deps:
+    desc: Install TypeScript SDK dependencies
+    dir: '{{.SDK_TS_DIR}}'
+    cmds:
+      - npm install
+
+  sdk:ts:deps:update:
+    desc: Update TypeScript SDK dependencies within semver ranges
+    dir: '{{.SDK_TS_DIR}}'
+    cmds:
+      - npm update
+
+  sdk:ts:deps:upgrade:
+    desc: Upgrade TypeScript SDK dependencies to latest versions
+    dir: '{{.SDK_TS_DIR}}'
+    cmds:
+      - npx npm-check-updates -u
+      - npm install
+
+  sdk:ts:test:
+    desc: Run TypeScript SDK tests
+    dir: '{{.SDK_TS_DIR}}'
+    cmds:
+      - npm test
+
+  sdk:ts:build:
+    desc: Build TypeScript SDK
+    dir: '{{.SDK_TS_DIR}}'
+    cmds:
+      - npm run build
+
+  sdk:ts:generate:
+    desc: Regenerate TypeScript SDK from OpenAPI spec
+    dir: '{{.SDK_TS_DIR}}'
+    cmds:
+      - ./scripts/generate.sh 2>/dev/null || echo "Run './scripts/generate.sh' in the SDK repo"
+
+  # Combined SDK tasks
+  sdk:deps:
+    desc: Install all SDK dependencies
+    cmds:
+      - task: sdk:go:deps
+      - task: sdk:python:deps
+      - task: sdk:rust:deps
+      - task: sdk:ts:deps
+
+  sdk:deps:update:
+    desc: Update all SDK dependencies within compatible versions
+    cmds:
+      - task: sdk:go:deps:update
+      - task: sdk:python:deps:update
+      - task: sdk:rust:deps:update
+      - task: sdk:ts:deps:update
+
+  sdk:deps:upgrade:
+    desc: Upgrade all SDK dependencies to latest versions
+    cmds:
+      - task: sdk:go:deps:upgrade
+      - task: sdk:python:deps:upgrade
+      - task: sdk:rust:deps:upgrade
+      - task: sdk:ts:deps:upgrade
+
+  sdk:test:
+    desc: Run all SDK tests
+    cmds:
+      - task: sdk:go:test
+      - task: sdk:python:test
+      - task: sdk:rust:test
+      - task: sdk:ts:test
+
+  sdk:generate:
+    desc: Regenerate all SDKs from OpenAPI spec
+    cmds:
+      - task: sdk:go:generate
+      - task: sdk:python:generate
+      - task: sdk:rust:generate
+      - task: sdk:ts:generate
+
   lint:fix:
     desc: Run linting with auto-fix across all components
     cmds:
@@ -237,7 +504,7 @@ tasks:
 
   # Dependency tasks
   deps:update:
-    desc: Update dependencies within compatible versions (safe)
+    desc: Update dependencies within compatible versions (safe) - this repo only
     cmds:
       - task: api:deps:update
       - task: web:deps:update
@@ -245,12 +512,26 @@ tasks:
       - task: demo:deps:update
 
   deps:upgrade:
-    desc: Upgrade all dependencies to latest versions (may include breaking changes)
+    desc: Upgrade all dependencies to latest versions (may include breaking changes) - this repo only
     cmds:
       - task: api:deps:upgrade
       - task: web:deps:upgrade
       - task: docs:deps:upgrade
       - task: demo:deps:upgrade
+
+  deps:update:all:
+    desc: Update ALL dependencies including external repos (demos, SDKs)
+    cmds:
+      - task: deps:update
+      - task: demos:deps:update
+      - task: sdk:deps:update
+
+  deps:upgrade:all:
+    desc: Upgrade ALL dependencies including external repos (demos, SDKs)
+    cmds:
+      - task: deps:upgrade
+      - task: demos:deps:upgrade
+      - task: sdk:deps:upgrade
 
   api:deps:update:
     desc: Update Go dependencies within compatible versions (safe)
