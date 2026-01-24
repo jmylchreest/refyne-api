@@ -28,7 +28,7 @@ async fn main() -> Result<(), refyne::Error> {
         .build()?;
 
     let result = client.extract(ExtractRequest {
-        url: "https://example.com/product".into(),
+        url: "https://demo.refyne.uk/products/5".into(),
         schema: json!({
             "name": "string",
             "price": "number",
@@ -72,7 +72,7 @@ async fn main() -> Result<(), refyne::Error> {
         .build()?;
 
     let analysis = client.analyze(AnalyzeRequest {
-        url: "https://example.com/products".into(),
+        url: "https://demo.refyne.uk/products".into(),
         depth: Some(1),
     }).await?;
 
@@ -81,7 +81,7 @@ async fn main() -> Result<(), refyne::Error> {
 
     // Use the analysis results for a crawl
     let job = client.crawl(CrawlRequest {
-        url: "https://example.com/products".into(),
+        url: "https://demo.refyne.uk/products".into(),
         schema: analysis.suggested_schema,
         options: Some(CrawlOptions {
             follow_selector: Some(analysis.follow_patterns.join(", ")),
@@ -110,7 +110,7 @@ async fn main() -> Result<(), refyne::Error> {
 
     // Start a crawl job
     let job = client.crawl(CrawlRequest {
-        url: "https://example.com/products".into(),
+        url: "https://demo.refyne.uk/products".into(),
         schema: json!({
             "name": "string",
             "price": "number",
@@ -177,7 +177,7 @@ async fn main() -> Result<(), refyne::Error> {
         .build()?;
 
     let result = client.extract(ExtractRequest {
-        url: "https://example.com/product".into(),
+        url: "https://demo.refyne.uk/products/5".into(),
         schema: json!({
             "name": "string",
             "price": "number",

@@ -12,7 +12,7 @@ curl -X POST https://api.refyne.uk/api/v1/extract \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "url": "https://example.com/product/123",
+    "url": "https://demo.refyne.uk/products/5",
     "schema": {
       "name": "string",
       "price": "number",
@@ -39,18 +39,15 @@ Extract complex nested data:
 
 ```json
 {
-  "url": "https://example.com/article",
+  "url": "https://demo.refyne.uk/products/5",
   "schema": {
-    "title": "string",
-    "author": {
-      "name": "string",
-      "bio": "string"
-    },
-    "comments": [{
-      "author": "string",
-      "text": "string",
-      "likes": "number"
-    }]
+    "name": "string",
+    "brand": "string",
+    "price": "number",
+    "specs": {
+      "warranty": "string",
+      "shipping": "string"
+    }
   }
 }
 ```
@@ -61,7 +58,7 @@ Specify which LLM provider and model to use:
 
 ```json
 {
-  "url": "https://example.com",
+  "url": "https://demo.refyne.uk/recipes",
   "schema": { ... },
   "llm_config": {
     "provider": "openrouter",
@@ -75,7 +72,7 @@ Specify which LLM provider and model to use:
 ```json
 {
   "data": { ... },
-  "url": "https://example.com/product/123",
+  "url": "https://demo.refyne.uk/products/5",
   "fetched_at": "2024-01-15T10:30:00Z",
   "usage": {
     "input_tokens": 1523,

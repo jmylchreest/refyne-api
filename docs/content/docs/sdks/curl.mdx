@@ -28,11 +28,12 @@ curl -X POST https://api.refyne.uk/api/v1/extract \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "url": "https://example.com/product",
+    "url": "https://demo.refyne.uk/products/5",
     "schema": {
       "name": "string",
+      "brand": "string",
       "price": "number",
-      "description": "string"
+      "in_stock": "boolean"
     }
   }'
 ```
@@ -46,14 +47,15 @@ curl -X POST https://api.refyne.uk/api/v1/crawl \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "url": "https://example.com/products",
+    "url": "https://demo.refyne.uk/recipes",
     "schema": {
-      "name": "string",
-      "price": "number"
+      "title": "string",
+      "description": "string",
+      "prep_time": "string"
     },
     "options": {
-      "follow_selector": "a.product-link",
-      "max_pages": 20
+      "follow_selector": "a.recipe-link",
+      "max_pages": 10
     }
   }'
 ```
@@ -84,7 +86,7 @@ curl -X POST https://api.refyne.uk/api/v1/analyze \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "url": "https://example.com",
+    "url": "https://demo.refyne.uk",
     "depth": 1
   }'
 ```

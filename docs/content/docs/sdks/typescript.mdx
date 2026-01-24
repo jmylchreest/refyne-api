@@ -32,7 +32,7 @@ const refyne = new Refyne({
 
 // Extract data from a page
 const result = await refyne.extract({
-  url: 'https://example.com/product',
+  url: 'https://demo.refyne.uk/products/5',
   schema: {
     name: 'string',
     price: 'number',
@@ -57,7 +57,7 @@ interface ProductSchema {
 }
 
 const result = await refyne.extract<ProductSchema>({
-  url: 'https://example.com/product',
+  url: 'https://demo.refyne.uk/products/5',
   schema: {
     name: 'string',
     price: 'number',
@@ -75,7 +75,7 @@ console.log(result.data.name);
 ```typescript
 // Start a crawl job
 const job = await refyne.crawl({
-  url: 'https://example.com/products',
+  url: 'https://demo.refyne.uk/products',
   schema: { name: 'string', price: 'number' },
   options: {
     followSelector: 'a.product-link',
@@ -103,7 +103,7 @@ Use the analyze endpoint to discover the structure of a website before crawling:
 
 ```typescript
 const analysis = await refyne.analyze({
-  url: 'https://example.com/products',
+  url: 'https://demo.refyne.uk/products',
   depth: 1,
 });
 
@@ -115,7 +115,7 @@ console.log(analysis.followPatterns);
 
 // Use the suggested schema and follow patterns in a crawl
 const job = await refyne.crawl({
-  url: 'https://example.com/products',
+  url: 'https://demo.refyne.uk/products',
   schema: analysis.suggestedSchema,
   options: {
     followSelector: analysis.followPatterns.join(', '),

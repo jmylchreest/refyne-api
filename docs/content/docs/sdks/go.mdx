@@ -29,7 +29,7 @@ func main() {
     client := refyne.NewClient(os.Getenv("REFYNE_API_KEY"))
 
     result, err := client.Extract(context.Background(), refyne.ExtractRequest{
-        URL: "https://example.com/product",
+        URL: "https://demo.refyne.uk/products/5",
         Schema: map[string]any{
             "name":  "string",
             "price": "number",
@@ -63,7 +63,7 @@ Analyze a website to discover structure and suggested schemas:
 
 ```go
 analysis, err := client.Analyze(ctx, refyne.AnalyzeRequest{
-    URL:   "https://example.com/products",
+    URL:   "https://demo.refyne.uk/products",
     Depth: 1,
 })
 if err != nil {
@@ -75,7 +75,7 @@ fmt.Printf("Follow Patterns: %+v\n", analysis.FollowPatterns)
 
 // Use the analysis results for a crawl
 job, err := client.Crawl(ctx, refyne.CrawlRequest{
-    URL:    "https://example.com/products",
+    URL:    "https://demo.refyne.uk/products",
     Schema: analysis.SuggestedSchema,
     Options: &refyne.CrawlOptions{
         FollowSelector: strings.Join(analysis.FollowPatterns, ", "),
@@ -89,7 +89,7 @@ job, err := client.Crawl(ctx, refyne.CrawlRequest{
 ```go
 // Start a crawl job
 job, err := client.Crawl(ctx, refyne.CrawlRequest{
-    URL: "https://example.com/products",
+    URL: "https://demo.refyne.uk/products",
     Schema: map[string]any{
         "name":  "string",
         "price": "number",

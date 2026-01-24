@@ -11,6 +11,8 @@ Sign up at [refyne.uk](https://refyne.uk) and create an API key from your [dashb
 
 ## 2. Make Your First Request
 
+### Using a Schema
+
 Extract data from any webpage by defining a schema:
 
 ```bash
@@ -18,38 +20,43 @@ curl -X POST https://api.refyne.uk/api/v1/extract \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "url": "https://news.ycombinator.com",
+    "url": "https://demo.refyne.uk/products/5",
     "schema": {
-      "top_stories": [{
-        "title": "string",
-        "points": "number",
-        "author": "string"
-      }]
+      "name": "string",
+      "brand": "string",
+      "price": "number",
+      "in_stock": "boolean"
     }
+  }'
+```
+
+### Using a Prompt
+
+Alternatively, describe what you want in natural language:
+
+```bash
+curl -X POST https://api.refyne.uk/api/v1/extract \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://demo.refyne.uk/products/5",
+    "prompt": "Extract the product name, brand, price, and whether it is in stock"
   }'
 ```
 
 ## 3. Get Structured Data
 
-<Refyne /> returns clean JSON matching your schema:
+<Refyne /> returns clean JSON matching your schema or prompt:
 
 ```json
 {
   "data": {
-    "top_stories": [
-      {
-        "title": "Show HN: I built an LLM-powered web scraper",
-        "points": 342,
-        "author": "developer123"
-      },
-      {
-        "title": "The future of structured data extraction",
-        "points": 256,
-        "author": "airesearcher"
-      }
-    ]
+    "name": "Red Nail Polish",
+    "brand": "Nail Couture",
+    "price": 8.99,
+    "in_stock": true
   },
-  "url": "https://news.ycombinator.com",
+  "url": "https://demo.refyne.uk/products/5",
   "usage": {
     "input_tokens": 1523,
     "output_tokens": 234

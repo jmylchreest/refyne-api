@@ -12,11 +12,11 @@ curl -X POST https://api.refyne.uk/api/v1/extract \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "url": "https://example.com/product",
+    "url": "https://demo.refyne.uk/products/5",
     "schema": {
       "name": "string",
       "price": "number",
-      "description": "string"
+      "in_stock": "boolean"
     }
   }'
 ```

@@ -51,8 +51,8 @@ curl -X POST https://api.refyne.uk/api/v1/crawl \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "url": "https://example.com/products",
-    "schema": {"name": "string", "price": "number"},
+    "url": "https://demo.refyne.uk/recipes",
+    "schema": {"title": "string", "description": "string"},
     "webhook_id": "01HXYZ..."
   }'
 ```
@@ -66,8 +66,8 @@ curl -X POST https://api.refyne.uk/api/v1/crawl \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "url": "https://example.com/products",
-    "schema": {"name": "string", "price": "number"},
+    "url": "https://demo.refyne.uk/recipes",
+    "schema": {"title": "string", "description": "string"},
     "webhook": {
       "url": "https://your-server.com/webhook",
       "secret": "optional-secret",
@@ -87,8 +87,8 @@ curl -X POST https://api.refyne.uk/api/v1/crawl \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "url": "https://example.com/products",
-    "schema": {"name": "string", "price": "number"},
+    "url": "https://demo.refyne.uk/recipes",
+    "schema": {"title": "string", "description": "string"},
     "webhook_url": "https://your-server.com/webhook"
   }'
 ```

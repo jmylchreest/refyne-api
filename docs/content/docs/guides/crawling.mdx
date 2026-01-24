@@ -12,13 +12,13 @@ curl -X POST https://api.refyne.uk/api/v1/crawl \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "url": "https://example.com/products",
+    "url": "https://demo.refyne.uk/recipes",
     "schema": {
-      "name": "string",
-      "price": "number"
+      "title": "string",
+      "description": "string"
     },
     "options": {
-      "follow_selector": "a.product-link",
+      "follow_selector": "a.recipe-link",
       "max_pages": 10
     }
   }'
