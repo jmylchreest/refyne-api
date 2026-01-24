@@ -134,7 +134,7 @@
     },
     "xiaomi/mimo-v2-flash:free": {
       "Temperature": 0.2,
-      "MaxTokens": 4096,
+      "MaxTokens": 32768,
       "StrictMode": false
     },
     "openai/gpt-oss-120b:free": {
