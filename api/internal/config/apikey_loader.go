@@ -185,6 +185,7 @@ func (l *APIKeyLoader) GetConfig(apiKey string) *APIKeyConfig {
 }
 
 // ValidateEndpoint checks if the endpoint is allowed for this API key.
+// Supports wildcard patterns (e.g., "GET /api/v1/jobs/*").
 func (c *APIKeyConfig) ValidateEndpoint(method, path string) bool {
 	if len(c.Restrictions.Endpoints) == 0 {
 		return true // No restrictions means all endpoints allowed
@@ -192,7 +193,7 @@ func (c *APIKeyConfig) ValidateEndpoint(method, path string) bool {
 
 	endpoint := method + " " + path
 	for _, allowed := range c.Restrictions.Endpoints {
-		if endpoint == allowed {
+		if matchPattern(endpoint, allowed) {
 			return true
 		}
 	}

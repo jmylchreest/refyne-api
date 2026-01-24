@@ -14,7 +14,9 @@
 
       "restrictions": {
         "endpoints": [
-          "POST /api/v1/extract"
+          "POST /api/v1/extract",
+          "POST /api/v1/crawl",
+          "GET /api/v1/jobs/*"
         ],
         "referrers": [
           "recipeapp-demo.refyne.uk",
@@ -58,7 +60,9 @@
 
       "restrictions": {
         "endpoints": [
-          "POST /api/v1/extract"
+          "POST /api/v1/extract",
+          "POST /api/v1/crawl",
+          "GET /api/v1/jobs/*"
         ],
         "referrers": [
           "diyviewer-demo.refyne.uk",
