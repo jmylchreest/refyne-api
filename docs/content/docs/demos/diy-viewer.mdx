@@ -5,7 +5,7 @@ description: A DIY tutorial viewer that extracts project guides from sites like 
 
 # DIY Viewer Demo
 
-The DIY Viewer demonstrates how to extract complex, multi-step tutorial content using Refyne's **async crawler API** via the official **@refyne/sdk**. It pulls tutorials from DIY sites like Instructables, including materials lists, step-by-step instructions, and helpful resource links.
+The DIY Viewer demonstrates how to extract complex, multi-step tutorial content using <Refyne />'s **async crawler API** via the official **@refyne/sdk**. It pulls tutorials from DIY sites like Instructables, including materials lists, step-by-step instructions, and measurement conversions.
 
 <Callout type="info">
   Try it live at [diyviewer-demo.refyne.uk](https://diyviewer-demo.refyne.uk)
@@ -18,187 +18,45 @@ The DIY Viewer demonstrates how to extract complex, multi-step tutorial content 
 ## Features
 
 - **Tutorial Extraction**: Paste any DIY tutorial URL and extract structured data
-- **Smart Filtering**: Automatically skips useless steps (intros, conclusions, promotional content)
-- **Purchase Links**: Materials include links to buy them from Amazon and other retailers
-- **Helpful Resources**: Steps include related YouTube tutorials and guides
-- **Materials Checklist**: Track what materials you have for your project
-- **Step Navigation**: Easy previous/next navigation between steps
+- **Smart Filtering**: Automatically skips non-actionable steps (intros, conclusions, promotional content)
+- **Glossary Generation**: Creates definitions for technical terms beginners might not understand
+- **Measurement Conversions**: Automatically converts between metric and imperial units
+- **Materials vs Tools**: Separates consumables from reusable equipment
+- **Materials Checklist**: Track what you have for your project
 
-## How It Works
+## Schema Definition
 
-The app uses a YAML schema with intelligent instructions to extract clean, actionable tutorial data:
+The schema instructs <Refyne /> to intelligently extract and organize tutorial content:
 
-```yaml
-name: DIYTutorial
-description: |
-  Extracts tutorial information from DIY sites like Instructables.
-  IMPORTANT: Only include steps that contain actual actionable instructions.
-  Skip and exclude any steps that are:
-  - Introduction or overview steps (this goes in the overview field instead)
-  - Conclusion, summary, or "final thoughts" steps
-  - Steps asking users to subscribe, follow, or vote
-  - Steps promoting other content or products
-  - Steps with only images and no real instructions
-  - "Supplies" or "Materials" steps (these go in materials_and_tools instead)
-  Renumber the remaining steps sequentially starting from 1.
-
-fields:
-  - name: title
-    type: string
-    required: true
-    description: The title of the tutorial/project
-
-  - name: overview
-    type: string
-    required: true
-    description: A descriptive summary of what this tutorial covers
-
-  - name: image_url
-    type: string
-    description: URL of the main project image
-
-  - name: difficulty
-    type: string
-    description: Difficulty level (Beginner, Intermediate, Advanced)
-
-  - name: estimated_time
-    type: string
-    description: Estimated time to complete (e.g., "2-3 hours")
-
-  - name: materials_and_tools
-    type: array
-    description: List of materials and tools needed
-    items:
-      type: object
-      properties:
-        item:
-          type: string
-          required: true
-          description: Name of the material or tool
-        quantity:
-          type: string
-          description: Amount needed
-        notes:
-          type: string
-          description: Additional notes (sizes, alternatives)
-        purchase_url:
-          type: string
-          description: URL to buy this item (Amazon search URL if specific link unavailable)
-
-  - name: steps
-    type: array
-    description: Step-by-step instructions (actionable steps only)
-    items:
-      type: object
-      properties:
-        step_number:
-          type: integer
-          required: true
-          description: Step number in sequence
-        title:
-          type: string
-          required: true
-          description: Title of this step
-        instructions:
-          type: string
-          required: true
-          description: Detailed instructions
-        tips:
-          type: string
-          description: Tips or warnings for this step
-        image_urls:
-          type: array
-          description: URLs of images for this step
-          items:
-            type: string
-        helpful_links:
-          type: array
-          description: External resources (tutorials, videos, product links)
-          items:
-            type: object
-            properties:
-              title:
-                type: string
-                required: true
-              url:
-                type: string
-                required: true
-              type:
-                type: string
-                description: One of "tutorial", "video", "product", "reference"
-```
+<include lang="yaml">../../../../demos/diyviewer/src/lib/refyne.ts#tutorial-schema</include>
 
 ## API Integration
 
-The DIY Viewer uses the official `@refyne/sdk` TypeScript SDK for async crawler operations:
+Install the official TypeScript SDK:
 
 ```bash
 npm install @refyne/sdk
 ```
 
-### Starting the Extraction Job
+### Starting an Async Extraction Job
 
-The SDK's `crawl()` method starts an async job and returns immediately with a job ID:
+The `crawl()` method starts an async job and returns immediately with a job ID for polling:
 
-```typescript
-import { Refyne, type CrawlJobResponse } from '@refyne/sdk';
-
-// Create the SDK client
-const client = new Refyne({
-  apiKey: 'your-api-key',
-  baseUrl: 'https://api.refyne.uk',
-});
-
-// Start async extraction
-export async function startExtraction(url: string) {
-  const result: CrawlJobResponse = await client.crawl({
-    url,
-    schema: TUTORIAL_SCHEMA,
-    options: {
-      max_pages: 1,
-      max_urls: 1,
-      extract_from_seeds: true,
-    },
-  });
-
-  // Returns job_id for polling
-  return {
-    jobId: result.job_id,
-    status: result.status, // 'pending' | 'running' | 'completed' | 'failed'
-  };
-}
-```
+<include lang="typescript">../../../../demos/diyviewer/src/lib/refyne.ts#start-extraction</include>
 
 ### Polling for Results
 
 Poll the job status until extraction is complete:
 
-```typescript
-export async function getJobStatus(jobId: string) {
-  // Use SDK's jobs.getResults with merge=true for combined results
-  const data = await client.jobs.getResults(jobId, { merge: true });
-
-  if (data.status === 'completed') {
-    return {
-      success: true,
-      data: data.merged || data.results?.[0],
-    };
-  }
-
-  return {
-    status: data.status,
-    // Keep polling...
-  };
-}
-```
+<include lang="typescript">../../../../demos/diyviewer/src/lib/refyne.ts#get-job-status</include>
 
 ### Client-Side Polling Loop
 
-The frontend polls every second and shows progress:
+The frontend polls the API and shows progress to users:
 
 ```typescript
 async function pollForResults(jobId: string) {
-  const maxAttempts = 300; // 5 minutes
+  const maxAttempts = 300; // 5 minutes max
   let attempts = 0;
 
   const interval = setInterval(async () => {
@@ -209,72 +67,99 @@ async function pollForResults(jobId: string) {
       return;
     }
 
-    const result = await fetch(`/api/poll/${jobId}`);
-    const data = await result.json();
+    const response = await fetch(`/api/poll/${jobId}`);
+    const result = await response.json();
 
-    if (data.status === 'completed') {
+    if (result.status === 'completed') {
       clearInterval(interval);
-      showResults(data);
+      showResults(result.data);
+    } else if (result.status === 'failed') {
+      clearInterval(interval);
+      showError(result.error);
     }
+    // Otherwise keep polling...
   }, 1000);
 }
 ```
 
 ## Response Example
 
-When you extract a tutorial, Refyne returns structured data like this:
+When extraction completes, you get structured data with glossary terms and measurement conversions:
 
 ```json
 {
   "title": "Build a Simple Bookshelf",
-  "overview": "Learn how to build a sturdy wooden bookshelf using basic tools and materials. Perfect for beginners looking to get into woodworking.",
+  "overview": "Learn how to build a sturdy wooden bookshelf using basic tools...",
   "image_url": "https://example.com/bookshelf.jpg",
+  "author": "DIY Workshop",
+  "author_url": "https://example.com/author",
   "difficulty": "Beginner",
   "estimated_time": "4-6 hours",
-  "materials_and_tools": [
+  "glossary": [
     {
-      "item": "Pine boards (1x10x6ft)",
+      "term": "miter cut",
+      "definition": "An angled cut across the width of a board, typically at 45 degrees",
+      "context": "Used for joining corners of the shelf frame"
+    }
+  ],
+  "materials": [
+    {
+      "name": "Pine boards",
       "quantity": "4",
-      "purchase_url": "https://www.amazon.com/s?k=pine+board+1x10"
+      "notes": "1x10 lumber",
+      "measurement": {
+        "original": "6 feet",
+        "metric": "183 cm",
+        "imperial": "6 ft"
+      }
+    }
+  ],
+  "tools": [
+    {
+      "name": "Circular saw",
+      "notes": "Or hand saw",
+      "required": true
     },
     {
-      "item": "Wood screws (2 inch)",
-      "quantity": "1 box",
-      "purchase_url": "https://www.amazon.com/s?k=wood+screws+2+inch"
-    },
-    {
-      "item": "Drill/Driver",
-      "notes": "Cordless recommended",
-      "purchase_url": "https://www.amazon.com/s?k=cordless+drill"
+      "name": "Clamps",
+      "notes": "For holding pieces while drilling",
+      "required": false
     }
   ],
   "steps": [
     {
       "step_number": 1,
       "title": "Cut the Side Panels",
-      "instructions": "Measure and mark your pine boards at 36 inches. Use a circular saw or hand saw to make straight cuts.",
+      "instructions": "Measure and mark your pine boards at 36 inches...",
       "tips": "Clamp a straight edge as a guide for cleaner cuts",
-      "helpful_links": [
+      "image_urls": ["https://example.com/step1.jpg"],
+      "measurements": [
         {
-          "title": "How to Make Straight Cuts with a Circular Saw",
-          "url": "https://www.youtube.com/results?search_query=straight+cuts+circular+saw",
-          "type": "video"
+          "original": "36 inches",
+          "metric": "91.4 cm",
+          "imperial": "36 in"
         }
       ]
-    },
-    {
-      "step_number": 2,
-      "title": "Mark Shelf Positions",
-      "instructions": "Measure and mark where each shelf will go. Space them evenly at 10 inches apart.",
-      "image_urls": ["https://example.com/marking.jpg"]
     }
-  ]
+  ],
+  "tags": ["woodworking", "furniture", "beginner"]
 }
 ```
 
-## Tech Stack
+## When to Use Async vs Sync
 
-The demo is built with:
+| Async Crawler (this demo) | Sync Extract (Recipe App) |
+|---------------------------|---------------------------|
+| Start job, poll for results | Single API call |
+| Best for complex/long pages | Best for quick pages |
+| Shows progress to users | Blocks until complete |
+| Better timeout handling | Simpler error handling |
+
+<Callout type="tip">
+  Use the async crawler pattern when extracting from complex pages with lots of content, or when you want to show extraction progress to users.
+</Callout>
+
+## Tech Stack
 
 - **[Astro](https://astro.build/)** - Static site generator with SSR support
 - **[Cloudflare Pages](https://pages.cloudflare.com/)** - Hosting with edge functions
@@ -286,7 +171,7 @@ The demo is built with:
 The complete source code is available in the [refyne-demos](https://github.com/jmylchreest/refyne-demos) repository.
 
 Key files:
-- `diyviewer/src/lib/refyne.ts` - Refyne API client and schema
+- `diyviewer/src/lib/refyne.ts` - <Refyne /> SDK integration and schema
 - `diyviewer/src/lib/db.ts` - Database operations
 - `diyviewer/src/pages/add.astro` - Tutorial extraction page
 - `diyviewer/src/pages/tutorial/[id].astro` - Tutorial detail page
@@ -296,6 +181,6 @@ Key files:
 
 1. Visit [diyviewer-demo.refyne.uk](https://diyviewer-demo.refyne.uk)
 2. Click "Add Project"
-3. Paste a tutorial URL from [Instructables](https://www.instructables.com/)
-4. See the extracted data with purchase links and helpful resources
-5. Save it to your project list and track materials with the checklist
+3. Paste a tutorial URL from [Instructables](https://www.instructables.com/) or [Make:](https://makezine.com/projects/)
+4. Watch the extraction progress
+5. Save to your project list and track materials with the checklist

@@ -5,7 +5,7 @@ description: A recipe book demo that extracts recipes from any URL
 
 # Recipe App Demo
 
-The Recipe App demonstrates how to build a practical application using Refyne's **synchronous extraction API**. It allows users to save recipes from any website by automatically extracting ingredients, instructions, and metadata.
+The Recipe App demonstrates how to build a practical application using <Refyne />'s **synchronous extraction API**. It allows users to save recipes from any website by automatically extracting ingredients, instructions, cooking photos, and metadata.
 
 <Callout type="info">
   Try it live at [recipeapp-demo.refyne.uk](https://recipeapp-demo.refyne.uk)
@@ -20,162 +20,60 @@ The Recipe App demonstrates how to build a practical application using Refyne's 
 - **Recipe Extraction**: Paste any recipe URL and extract structured data
 - **Recipe Book**: Save and browse your extracted recipes
 - **Shopping List**: Add ingredients to a shopping list
+- **Author Attribution**: Shows original recipe author with link
+- **Step Photos**: Extracts cooking process images for each step
 - **Responsive Design**: Works on desktop and mobile
 
-## How It Works
+## Schema Definition
 
-The app uses a YAML schema to define what data to extract from recipe pages:
+The schema tells <Refyne /> exactly what to extract from recipe pages:
 
-```yaml
-name: Recipe
-description: Extract recipe details from a webpage
-
-fields:
-  - name: title
-    type: string
-    required: true
-    description: The recipe name or title
-
-  - name: description
-    type: string
-    description: Brief description or intro paragraph
-
-  - name: image_url
-    type: string
-    description: URL of the main recipe image
-
-  - name: prep_time
-    type: string
-    description: Preparation time (e.g., "15 minutes")
-
-  - name: cook_time
-    type: string
-    description: Cooking time (e.g., "30 minutes")
-
-  - name: total_time
-    type: string
-    description: Total time (e.g., "45 minutes")
-
-  - name: servings
-    type: integer
-    description: Number of servings
-
-  - name: ingredients
-    type: array
-    description: List of ingredients
-    items:
-      type: object
-      properties:
-        name:
-          type: string
-          required: true
-          description: Ingredient name
-        quantity:
-          type: string
-          description: Amount (e.g., "2", "1/2")
-        unit:
-          type: string
-          description: Unit of measure (e.g., "cups", "tbsp")
-        notes:
-          type: string
-          description: Preparation notes (e.g., "diced", "softened")
-
-  - name: instructions
-    type: array
-    description: Step-by-step instructions
-    items:
-      type: object
-      properties:
-        step:
-          type: integer
-          description: Step number
-        text:
-          type: string
-          required: true
-          description: Instruction text
-```
+<include lang="yaml">../../../../demos/recipeapp/src/lib/refyne.ts#recipe-schema</include>
 
 ## API Integration
 
-The Recipe App uses the official `@refyne/sdk` TypeScript SDK for synchronous extraction:
+Install the official TypeScript SDK:
 
 ```bash
 npm install @refyne/sdk
 ```
 
+### Synchronous Extraction
+
+The `extract()` method makes a single API call and waits for the result:
+
+<include lang="typescript">../../../../demos/recipeapp/src/lib/refyne.ts#extract-recipe</include>
+
+### Usage in Your App
+
 ```typescript
-import { Refyne } from '@refyne/sdk';
+// In your API route or server action
+const result = await extractRecipe(
+  url,
+  process.env.REFYNE_API_URL,
+  process.env.REFYNE_API_KEY
+);
 
-// Create the SDK client
-const client = new Refyne({
-  apiKey: 'your-api-key',
-  baseUrl: 'https://api.refyne.uk',
-});
-
-export async function extractRecipe(url: string): Promise<RefyneResponse> {
-  // Synchronous extraction - waits for result
-  const result = await client.extract({
-    url,
-    schema: RECIPE_SCHEMA,
-  });
-
-  if (!result || result.error) {
-    return { success: false, error: result?.error || 'Extraction failed' };
-  }
-
-  return {
-    success: true,
-    data: result.data,
-  };
+if (result.success) {
+  // Save to database
+  await saveRecipe(result.data);
+} else {
+  // Handle error
+  console.error(result.error);
 }
 ```
 
-### Photo Extraction
-
-The Recipe App schema extracts cooking photos for each instruction step:
-
-```yaml
-instructions:
-  type: array
-  items:
-    type: object
-    properties:
-      step:
-        type: integer
-      text:
-        type: string
-        required: true
-      image_urls:
-        type: array
-        description: URLs of images showing this cooking step
-        items:
-          type: string
-```
-
-The schema includes instructions to only extract relevant recipe photos (cooking steps, ingredients) and ignore unrelated images (ads, author photos, UI elements).
-
-### When to Use Sync vs Async
-
-| Sync Extract (this demo) | Async Crawler (DIY Viewer) |
-|--------------------------|---------------------------|
-| Single API call via SDK | Start job, poll for results |
-| Best for quick pages | Best for complex pages |
-| Blocks until complete | Shows progress to users |
-| Simpler error handling | Better timeout handling |
-
-<Callout type="tip">
-  For most recipe sites, synchronous extraction completes in a few seconds. If you need to handle longer extractions or want to show progress, see the [DIY Viewer](/docs/demos/diy-viewer) for the async pattern using the SDK.
-</Callout>
-
 ## Response Example
 
-When you extract a recipe, Refyne returns structured data like this:
+When you extract a recipe, <Refyne /> returns structured data like this:
 
 ```json
 {
   "title": "Classic Spaghetti Carbonara",
   "description": "A traditional Italian pasta dish with eggs, cheese, and pancetta",
   "image_url": "https://example.com/carbonara.jpg",
+  "author": "Chef Mario",
+  "author_url": "https://example.com/chef-mario",
   "prep_time": "10 minutes",
   "cook_time": "20 minutes",
   "total_time": "30 minutes",
@@ -188,18 +86,44 @@ When you extract a recipe, Refyne returns structured data like this:
     { "name": "black pepper", "notes": "freshly ground" }
   ],
   "instructions": [
-    { "step": 1, "text": "Bring a large pot of salted water to boil and cook spaghetti until al dente." },
-    { "step": 2, "text": "While pasta cooks, fry pancetta until crispy." },
+    {
+      "step": 1,
+      "text": "Bring a large pot of salted water to boil and cook spaghetti until al dente.",
+      "image_urls": ["https://example.com/step1.jpg"]
+    },
+    {
+      "step": 2,
+      "text": "While pasta cooks, fry pancetta until crispy.",
+      "image_urls": ["https://example.com/step2.jpg"]
+    },
     { "step": 3, "text": "Whisk eggs with grated cheese and pepper." },
     { "step": 4, "text": "Drain pasta, toss with pancetta, then remove from heat." },
     { "step": 5, "text": "Add egg mixture and toss quickly until creamy." }
-  ]
+  ],
+  "nutrition": {
+    "calories": "650",
+    "protein": "25g",
+    "carbs": "75g",
+    "fat": "28g"
+  },
+  "tags": ["Italian", "pasta", "quick", "classic"]
 }
 ```
 
-## Tech Stack
+## When to Use Sync vs Async
 
-The demo is built with:
+| Sync Extract (this demo) | Async Crawler (DIY Viewer) |
+|--------------------------|---------------------------|
+| Single API call via SDK | Start job, poll for results |
+| Best for quick pages | Best for complex pages |
+| Blocks until complete | Shows progress to users |
+| Simpler error handling | Better timeout handling |
+
+<Callout type="tip">
+  For most recipe sites, synchronous extraction completes in a few seconds. If you need to handle longer extractions or want to show progress, see the [DIY Viewer](/docs/demos/diy-viewer) for the async pattern.
+</Callout>
+
+## Tech Stack
 
 - **[Astro](https://astro.build/)** - Static site generator with SSR support
 - **[Cloudflare Pages](https://pages.cloudflare.com/)** - Hosting with edge functions
@@ -211,14 +135,16 @@ The demo is built with:
 The complete source code is available in the [refyne-demos](https://github.com/jmylchreest/refyne-demos) repository.
 
 Key files:
-- `recipeapp/src/lib/refyne.ts` - Refyne API client and schema
+- `recipeapp/src/lib/refyne.ts` - <Refyne /> SDK integration and schema
 - `recipeapp/src/lib/db.ts` - Database operations
 - `recipeapp/src/pages/add.astro` - Recipe extraction page
 - `recipeapp/src/pages/recipe/[id].astro` - Recipe detail page
+- `recipeapp/src/pages/shopping-list.astro` - Shopping list page
 
 ## Try It Yourself
 
 1. Visit [recipeapp-demo.refyne.uk](https://recipeapp-demo.refyne.uk)
 2. Click "Add Recipe"
-3. Paste a recipe URL (try one from [demo.refyne.uk/recipes](https://demo.refyne.uk/recipes))
+3. Paste a recipe URL from your favorite cooking site
 4. See the extracted data and save it to your recipe book
+5. Add ingredients to your shopping list
