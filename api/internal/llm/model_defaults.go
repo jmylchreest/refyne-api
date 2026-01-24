@@ -140,6 +140,9 @@ func (m *ModelDefaultsLoader) refresh(ctx context.Context) {
 // GetModelSettings returns settings for a model.
 // Priority: chain config override > model override > provider default > hardcoded fallback
 func (m *ModelDefaultsLoader) GetModelSettings(provider, model string, chainTemp *float64, chainMaxTokens *int, chainStrictMode *bool) (temperature float64, maxTokens int, strictMode bool) {
+	// Try to refresh from S3 if needed (non-blocking)
+	m.MaybeRefresh(context.Background())
+
 	m.mu.RLock()
 	providerDefs := m.providerDefs
 	modelOverrides := m.modelOverrides
