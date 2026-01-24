@@ -514,6 +514,11 @@ jobs:
         run: npm ci
         working-directory: docs
 
+      - name: Update version info (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: npm run update-versions
+        working-directory: docs
+
       - name: Build static site
         run: npm run build
         working-directory: docs
