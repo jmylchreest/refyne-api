@@ -6,8 +6,8 @@ import { RefyneLogo } from '@/components/refyne-logo';
 import { HeaderThemeToggle } from '@/components/header-theme-toggle';
 import { cn } from '@/lib/utils';
 
-// Main site URL for cross-site links
-const MAIN_SITE_URL = process.env.NEXT_PUBLIC_MAIN_SITE_URL || 'https://refyne.uk';
+// Main site URL for cross-site links (localhost:3000 for local dev)
+const MAIN_SITE_URL = process.env.NEXT_PUBLIC_MAIN_SITE_URL || 'http://localhost:3000';
 
 // Check if Clerk is configured (env var is baked in at build time)
 const CLERK_ENABLED = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;

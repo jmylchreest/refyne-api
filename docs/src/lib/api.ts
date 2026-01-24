@@ -1,5 +1,6 @@
 // Simplified API client for docs site (only public endpoints)
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.refyne.uk';
+// API URL (localhost:8080 for local dev)
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
 // Pricing / Tier Limits (public endpoint)
 export interface TierLimits {

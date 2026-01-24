@@ -7,8 +7,8 @@ import { HeaderThemeToggle } from '@/components/header-theme-toggle';
 import { cn } from '@/lib/utils';
 import { useEffect, useState } from 'react';
 
-// Docs site URL for cross-site links
-const DOCS_SITE_URL = process.env.NEXT_PUBLIC_DOCS_SITE_URL || 'https://docs.refyne.uk';
+// Docs site URL for cross-site links (localhost:4001 for local dev)
+const DOCS_SITE_URL = process.env.NEXT_PUBLIC_DOCS_SITE_URL || 'http://localhost:4001';
 
 interface SiteHeaderProps {
   fixed?: boolean;

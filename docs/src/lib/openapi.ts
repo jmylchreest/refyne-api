@@ -6,7 +6,8 @@ import * as path from 'path';
 const localSpecPath = path.join(process.cwd(), 'openapi.json');
 const hasLocalSpec = fs.existsSync(localSpecPath);
 
-const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://api.refyne.uk';
+// API URL (localhost:8080 for local dev)
+const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 const openApiUrl = `${apiUrl}/openapi.json`;
 
 // Use local file in CI, fetch from API in development
