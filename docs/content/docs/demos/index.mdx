@@ -9,16 +9,25 @@ See Refyne in action with these example applications. Each demo showcases differ
 
 <Cards>
   <Card title="Recipe App" href="/docs/demos/recipe-app">
-    A recipe book app that extracts recipes from any URL using Refyne's extraction API.
+    Uses **synchronous extraction** via direct API calls. Best for quick, single-page extractions where you can wait for the response.
   </Card>
   <Card title="DIY Viewer" href="/docs/demos/diy-viewer">
-    A tutorial viewer that extracts DIY projects from sites like Instructables, with purchase links and helpful resources.
+    Uses the **@refyne/sdk** with **async crawler operations**. Best for longer extractions with progress feedback and polling.
   </Card>
 </Cards>
 
+## Integration Patterns
+
+The two demos showcase different ways to integrate with Refyne:
+
+| Pattern | Demo | Best For |
+|---------|------|----------|
+| **Sync Extract** | Recipe App | Quick extractions, simple pages, when you can block on the response |
+| **Async Crawler** | DIY Viewer | Complex pages, longer processing, progress indicators, background jobs |
+
 ## Building Your Own
 
-These demos are open source and available in the [Refyne repository](https://github.com/jmylchreest/refyne-api). Use them as starting points for your own integrations.
+These demos are open source and available in the [refyne-demos](https://github.com/jmylchreest/refyne-demos) repository. Use them as starting points for your own integrations.
 
 Each demo includes:
 - Complete source code

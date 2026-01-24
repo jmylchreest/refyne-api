@@ -5,10 +5,14 @@ description: A DIY tutorial viewer that extracts project guides from sites like 
 
 # DIY Viewer Demo
 
-The DIY Viewer demonstrates how to extract complex, multi-step tutorial content using Refyne's extraction API. It pulls tutorials from DIY sites like Instructables, including materials lists, step-by-step instructions, and helpful resource links.
+The DIY Viewer demonstrates how to extract complex, multi-step tutorial content using Refyne's **async crawler API** via the official **@refyne/sdk**. It pulls tutorials from DIY sites like Instructables, including materials lists, step-by-step instructions, and helpful resource links.
 
 <Callout type="info">
   Try it live at [diyviewer-demo.refyne.uk](https://diyviewer-demo.refyne.uk)
+</Callout>
+
+<Callout type="note">
+  This demo uses the **async crawler pattern** - it starts a job, then polls for results. This is ideal for longer extractions where you want to show progress to users. See the [Recipe App](/docs/demos/recipe-app) for a simpler synchronous approach.
 </Callout>
 
 ## Features
@@ -126,39 +130,93 @@ fields:
 
 ## API Integration
 
-The TypeScript code that calls the Refyne API:
+The DIY Viewer uses the official `@refyne/sdk` TypeScript SDK for async crawler operations:
+
+```bash
+npm install @refyne/sdk
+```
+
+### Starting the Extraction Job
+
+The SDK's `crawl()` method starts an async job and returns immediately with a job ID:
 
 ```typescript
-export async function extractTutorial(
-  url: string,
-  apiUrl: string,
-  apiKey: string
-): Promise<RefyneResponse> {
-  const response = await fetch(`${apiUrl}/api/v1/extract`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
+import { Refyne, type CrawlJobResponse } from '@refyne/sdk';
+
+// Create the SDK client
+const client = new Refyne({
+  apiKey: 'your-api-key',
+  baseUrl: 'https://api.refyne.uk',
+});
+
+// Start async extraction
+export async function startExtraction(url: string) {
+  const result: CrawlJobResponse = await client.crawl({
+    url,
+    schema: TUTORIAL_SCHEMA,
+    options: {
+      max_pages: 1,
+      max_urls: 1,
+      extract_from_seeds: true,
     },
-    body: JSON.stringify({
-      url,
-      schema: TUTORIAL_SCHEMA,
-    }),
   });
 
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
+  // Returns job_id for polling
+  return {
+    jobId: result.job_id,
+    status: result.status, // 'pending' | 'running' | 'completed' | 'failed'
+  };
+}
+```
+
+### Polling for Results
+
+Poll the job status until extraction is complete:
+
+```typescript
+export async function getJobStatus(jobId: string) {
+  // Use SDK's jobs.getResults with merge=true for combined results
+  const data = await client.jobs.getResults(jobId, { merge: true });
+
+  if (data.status === 'completed') {
     return {
-      success: false,
-      error: errorData.error || `API error: ${response.status}`,
+      success: true,
+      data: data.merged || data.results?.[0],
     };
   }
 
-  const data = await response.json();
   return {
-    success: true,
-    data: data.data || data,
+    status: data.status,
+    // Keep polling...
   };
+}
+```
+
+### Client-Side Polling Loop
+
+The frontend polls every second and shows progress:
+
+```typescript
+async function pollForResults(jobId: string) {
+  const maxAttempts = 300; // 5 minutes
+  let attempts = 0;
+
+  const interval = setInterval(async () => {
+    attempts++;
+    if (attempts > maxAttempts) {
+      clearInterval(interval);
+      showError('Extraction timed out');
+      return;
+    }
+
+    const result = await fetch(`/api/poll/${jobId}`);
+    const data = await result.json();
+
+    if (data.status === 'completed') {
+      clearInterval(interval);
+      showResults(data);
+    }
+  }, 1000);
 }
 ```
 

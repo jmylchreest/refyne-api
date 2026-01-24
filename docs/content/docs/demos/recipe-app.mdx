@@ -5,10 +5,14 @@ description: A recipe book demo that extracts recipes from any URL
 
 # Recipe App Demo
 
-The Recipe App demonstrates how to build a practical application using Refyne's extraction API. It allows users to save recipes from any website by automatically extracting ingredients, instructions, and metadata.
+The Recipe App demonstrates how to build a practical application using Refyne's **synchronous extraction API**. It allows users to save recipes from any website by automatically extracting ingredients, instructions, and metadata.
 
 <Callout type="info">
   Try it live at [recipeapp-demo.refyne.uk](https://recipeapp-demo.refyne.uk)
+</Callout>
+
+<Callout type="note">
+  This demo uses the **synchronous extraction pattern** - it makes a direct API call and waits for the response. This is the simplest integration approach, ideal for quick extractions. See the [DIY Viewer](/docs/demos/diy-viewer) for an async approach with progress indicators.
 </Callout>
 
 ## Features
@@ -93,7 +97,7 @@ fields:
 
 ## API Integration
 
-The core integration is straightforward. Here's the TypeScript code that calls the Refyne API:
+The Recipe App uses direct `fetch()` calls to the Refyne API for synchronous extraction. This is the simplest way to integrate - no SDK required:
 
 ```typescript
 export async function extractRecipe(
@@ -101,6 +105,7 @@ export async function extractRecipe(
   apiUrl: string,
   apiKey: string
 ): Promise<RefyneResponse> {
+  // Direct POST to the extract endpoint
   const response = await fetch(`${apiUrl}/api/v1/extract`, {
     method: 'POST',
     headers: {
@@ -121,6 +126,7 @@ export async function extractRecipe(
     };
   }
 
+  // Response contains extracted data directly
   const data = await response.json();
   return {
     success: true,
@@ -128,6 +134,19 @@ export async function extractRecipe(
   };
 }
 ```
+
+### When to Use Sync vs Async
+
+| Sync Extract (this demo) | Async Crawler (DIY Viewer) |
+|--------------------------|---------------------------|
+| Simple, single API call | Start job, poll for results |
+| Best for quick pages | Best for complex pages |
+| Blocks until complete | Shows progress to users |
+| Simpler error handling | Better timeout handling |
+
+<Callout type="tip">
+  For most recipe sites, synchronous extraction completes in a few seconds. If you need to handle longer extractions or want to show progress, see the [DIY Viewer](/docs/demos/diy-viewer) for the async pattern using the SDK.
+</Callout>
 
 ## Response Example
 
