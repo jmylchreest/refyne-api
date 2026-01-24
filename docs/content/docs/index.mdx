@@ -3,9 +3,34 @@ title: Welcome to Refyne
 description: Welcome to the Refyne API documentation
 ---
 
-<Refyne /> is an LLM-powered API that transforms unstructured websites into clean, structured data. Define a schema, point at a URL, and get typed output in JSON, JSONL, or YAML.
+<Refyne /> is an LLM-powered API that transforms unstructured websites into clean, structured data. Just describe what you want in plain English, or define a precise schema - either way, you get typed JSON output.
 
 ## Quick Start
+
+Extract data from any webpage using natural language:
+
+```bash
+curl -X POST https://api.refyne.uk/api/v1/extract \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://demo.refyne.uk/products/5",
+    "schema": "Extract the product name, brand, price, and whether it is in stock"
+  }'
+```
+
+```json
+{
+  "data": {
+    "product_name": "Red Nail Polish",
+    "brand": "Nail Couture",
+    "price": 8.99,
+    "in_stock": true
+  }
+}
+```
+
+Need more control? Use a typed schema instead:
 
 ```bash
 curl -X POST https://api.refyne.uk/api/v1/extract \
@@ -23,9 +48,9 @@ curl -X POST https://api.refyne.uk/api/v1/extract \
 
 ## Features
 
+- **Natural Language or Schemas** - Describe what you want in plain English, or use typed schemas for precise control
 - **Single Page Extraction** - Extract structured data from any webpage
 - **Multi-Page Crawling** - Follow links and extract data at scale
-- **Schema-Driven** - Define exactly what you want, get consistent results
 - **Multiple Output Formats** - JSON, JSONL, or YAML to fit your workflow
 - **Multiple LLM Providers** - OpenRouter, Anthropic, OpenAI, or bring your own
 - **Site Analysis** - Automatically detect page structure and suggest schemas
