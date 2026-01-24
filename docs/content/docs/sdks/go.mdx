@@ -95,7 +95,7 @@ job, err := client.Crawl(ctx, refyne.CrawlRequest{
         "price": "number",
     },
     Options: &refyne.CrawlOptions{
-        FollowSelector: "a.product-link",
+        FollowPattern: "/products/[0-9]+",
         MaxPages:       20,
     },
 })

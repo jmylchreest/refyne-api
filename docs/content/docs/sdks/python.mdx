@@ -97,7 +97,7 @@ async def main():
             url="https://demo.refyne.uk/products",
             schema={"name": "string", "price": "number"},
             options={
-                "follow_selector": "a.product-link",
+                "follow_pattern": "/products/[0-9]+",
                 "max_pages": 20,
             }
         )

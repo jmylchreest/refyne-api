@@ -12,13 +12,13 @@ curl -X POST https://api.refyne.uk/api/v1/crawl \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "url": "https://demo.refyne.uk/recipes",
+    "url": "https://demo.refyne.uk/products",
     "schema": {
-      "title": "string",
-      "description": "string"
+      "name": "string",
+      "price": "number"
     },
     "options": {
-      "follow_selector": "a.recipe-link",
+      "follow_pattern": "/products/[0-9]+",
       "max_pages": 10
     }
   }'
@@ -45,7 +45,7 @@ Follow specific links on the page:
 ```json
 {
   "options": {
-    "follow_selector": "a.product-card",
+    "follow_selector": "a[href*='/products/']",
     "max_pages": 20
   }
 }

@@ -40,7 +40,7 @@ curl -X POST https://api.refyne.uk/api/v1/extract \
   -H "Content-Type: application/json" \
   -d '{
     "url": "https://demo.refyne.uk/products/5",
-    "prompt": "Extract the product name, brand, price, and whether it is in stock"
+    "schema": "Extract the product name, brand, price, and whether it is in stock"
   }'
 ```
 
@@ -51,15 +51,15 @@ curl -X POST https://api.refyne.uk/api/v1/extract \
 ```json
 {
   "data": {
-    "name": "Red Nail Polish",
+    "product_name": "Red Nail Polish",
     "brand": "Nail Couture",
     "price": 8.99,
     "in_stock": true
   },
   "url": "https://demo.refyne.uk/products/5",
   "usage": {
-    "input_tokens": 1523,
-    "output_tokens": 234
+    "input_tokens": 885,
+    "output_tokens": 40
   }
 }
 ```

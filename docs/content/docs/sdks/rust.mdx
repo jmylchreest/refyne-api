@@ -116,7 +116,7 @@ async fn main() -> Result<(), refyne::Error> {
             "price": "number",
         }),
         options: Some(CrawlOptions {
-            follow_selector: Some("a.product-link".into()),
+            follow_pattern: Some("/products/[0-9]+".into()),
             max_pages: Some(20),
             ..Default::default()
         }),

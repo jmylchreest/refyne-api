@@ -78,7 +78,7 @@ const job = await refyne.crawl({
   url: 'https://demo.refyne.uk/products',
   schema: { name: 'string', price: 'number' },
   options: {
-    followSelector: 'a.product-link',
+    followPattern: '/products/[0-9]+',
     maxPages: 20,
   },
 });
