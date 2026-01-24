@@ -63,6 +63,17 @@ func (s *ExtractionService) getStrictMode(ctx context.Context, provider, model s
 	return strictMode
 }
 
+// getMaxTokens returns the recommended max tokens for a model.
+// Delegates to the resolver which uses S3-backed or hardcoded defaults.
+func (s *ExtractionService) getMaxTokens(ctx context.Context, provider, model string, chainMaxTokens *int) int {
+	if s.resolver != nil {
+		return s.resolver.GetMaxTokens(ctx, provider, model, chainMaxTokens)
+	}
+	// Fall back to static defaults if resolver not set
+	_, maxTokens, _ := llm.GetModelSettings(provider, model, nil, chainMaxTokens, nil)
+	return maxTokens
+}
+
 // ExtractInput represents extraction input.
 type ExtractInput struct {
 	URL          string           `json:"url"`
@@ -78,6 +89,7 @@ type LLMConfigInput struct {
 	APIKey     string `json:"api_key,omitempty"`
 	BaseURL    string `json:"base_url,omitempty"`
 	Model      string `json:"model,omitempty"`
+	MaxTokens  int    `json:"max_tokens,omitempty"`  // Max output tokens for LLM responses
 	StrictMode bool   `json:"strict_mode,omitempty"` // Whether to use strict JSON schema mode
 }
 
@@ -228,6 +240,7 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 			"url", input.URL,
 			"provider", llmCfg.Provider,
 			"model", llmCfg.Model,
+			"max_tokens", llmCfg.MaxTokens,
 			"provider_idx", providerIdx+1,
 			"of_providers", len(llmConfigs),
 			"is_byok", isBYOK,
@@ -457,6 +470,7 @@ func (s *ExtractionService) resolveLLMConfigsWithFallback(ctx context.Context, u
 		config := &LLMConfigInput{
 			Provider:   injectedProvider,
 			Model:      injectedModel,
+			MaxTokens:  s.getMaxTokens(ctx, injectedProvider, injectedModel, nil),
 			StrictMode: s.getStrictMode(ctx, injectedProvider, injectedModel, nil),
 		}
 
@@ -525,6 +539,9 @@ func (s *ExtractionService) createRefyneInstance(llmCfg *LLMConfigInput, cleaner
 	if llmCfg.Model != "" {
 		opts = append(opts, refyne.WithModel(llmCfg.Model))
 	}
+	if llmCfg.MaxTokens > 0 {
+		opts = append(opts, refyne.WithMaxTokens(llmCfg.MaxTokens))
+	}
 
 	r, err := refyne.New(opts...)
 	if err != nil {
@@ -566,6 +583,7 @@ func (s *ExtractionService) getHardcodedDefaultChain(ctx context.Context) []*LLM
 	return []*LLMConfigInput{{
 		Provider:   "ollama",
 		Model:      "llama3.2",
+		MaxTokens:  s.getMaxTokens(ctx, "ollama", "llama3.2", nil),
 		StrictMode: s.getStrictMode(ctx, "ollama", "llama3.2", nil),
 	}}
 }

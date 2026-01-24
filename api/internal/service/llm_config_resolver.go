@@ -128,6 +128,14 @@ func (r *LLMConfigResolver) GetStrictMode(ctx context.Context, provider, model s
 	return strictMode
 }
 
+// GetMaxTokens returns the recommended max tokens for a model.
+// Uses model defaults from S3 or hardcoded fallbacks.
+// If chainMaxTokens is provided, it takes precedence.
+func (r *LLMConfigResolver) GetMaxTokens(ctx context.Context, provider, model string, chainMaxTokens *int) int {
+	_, maxTokens, _ := llm.GetModelSettings(provider, model, nil, chainMaxTokens, nil)
+	return maxTokens
+}
+
 // ResolveConfigs determines which LLM configurations to use based on the feature matrix.
 // Returns (configs, isBYOK) where isBYOK is true if using user's own keys.
 //
@@ -287,6 +295,7 @@ func (r *LLMConfigResolver) BuildUserFallbackChain(ctx context.Context, userID s
 			APIKey:     apiKey,
 			BaseURL:    baseURL,
 			Model:      entry.Model,
+			MaxTokens:  r.GetMaxTokens(ctx, entry.Provider, entry.Model, entry.MaxTokens),
 			StrictMode: r.GetStrictMode(ctx, entry.Provider, entry.Model, entry.StrictMode),
 		})
 	}
@@ -318,6 +327,7 @@ func (r *LLMConfigResolver) BuildUserChainWithSystemKeys(ctx context.Context, us
 		config := &LLMConfigInput{
 			Provider:   entry.Provider,
 			Model:      entry.Model,
+			MaxTokens:  r.GetMaxTokens(ctx, entry.Provider, entry.Model, entry.MaxTokens),
 			StrictMode: r.GetStrictMode(ctx, entry.Provider, entry.Model, entry.StrictMode),
 		}
 
@@ -396,6 +406,7 @@ func (r *LLMConfigResolver) buildBYOKOnlyConfigs(ctx context.Context, userID str
 					APIKey:     apiKey,
 					BaseURL:    userKey.BaseURL,
 					Model:      entry.Model,
+					MaxTokens:  r.GetMaxTokens(ctx, entry.Provider, entry.Model, entry.MaxTokens),
 					StrictMode: r.GetStrictMode(ctx, entry.Provider, entry.Model, entry.StrictMode),
 				})
 			}
@@ -427,6 +438,7 @@ func (r *LLMConfigResolver) GetDefaultConfigsForTier(ctx context.Context, tier s
 				config := &LLMConfigInput{
 					Provider:   entry.Provider,
 					Model:      entry.Model,
+					MaxTokens:  r.GetMaxTokens(ctx, entry.Provider, entry.Model, entry.MaxTokens),
 					StrictMode: r.GetStrictMode(ctx, entry.Provider, entry.Model, entry.StrictMode),
 				}
 
@@ -464,6 +476,7 @@ func (r *LLMConfigResolver) GetDefaultConfig(ctx context.Context, tier string) *
 	return &LLMConfigInput{
 		Provider:   llm.ProviderOllama,
 		Model:      "llama3.2",
+		MaxTokens:  r.GetMaxTokens(ctx, llm.ProviderOllama, "llama3.2", nil),
 		StrictMode: r.GetStrictMode(ctx, llm.ProviderOllama, "llama3.2", nil),
 	}
 }
@@ -481,6 +494,7 @@ func (r *LLMConfigResolver) getHardcodedDefaultChain(ctx context.Context) []*LLM
 			Provider:   llm.ProviderOpenRouter,
 			APIKey:     serviceKeys.OpenRouterKey,
 			Model:      "xiaomi/mimo-v2-flash:free",
+			MaxTokens:  r.GetMaxTokens(ctx, llm.ProviderOpenRouter, "xiaomi/mimo-v2-flash:free", nil),
 			StrictMode: r.GetStrictMode(ctx, llm.ProviderOpenRouter, "xiaomi/mimo-v2-flash:free", nil),
 		})
 
@@ -489,6 +503,7 @@ func (r *LLMConfigResolver) getHardcodedDefaultChain(ctx context.Context) []*LLM
 			Provider:   llm.ProviderOpenRouter,
 			APIKey:     serviceKeys.OpenRouterKey,
 			Model:      "openai/gpt-oss-120b:free",
+			MaxTokens:  r.GetMaxTokens(ctx, llm.ProviderOpenRouter, "openai/gpt-oss-120b:free", nil),
 			StrictMode: r.GetStrictMode(ctx, llm.ProviderOpenRouter, "openai/gpt-oss-120b:free", nil),
 		})
 
@@ -497,6 +512,7 @@ func (r *LLMConfigResolver) getHardcodedDefaultChain(ctx context.Context) []*LLM
 			Provider:   llm.ProviderOpenRouter,
 			APIKey:     serviceKeys.OpenRouterKey,
 			Model:      "google/gemma-3-27b-it:free",
+			MaxTokens:  r.GetMaxTokens(ctx, llm.ProviderOpenRouter, "google/gemma-3-27b-it:free", nil),
 			StrictMode: r.GetStrictMode(ctx, llm.ProviderOpenRouter, "google/gemma-3-27b-it:free", nil),
 		})
 	}
@@ -505,6 +521,7 @@ func (r *LLMConfigResolver) getHardcodedDefaultChain(ctx context.Context) []*LLM
 	configs = append(configs, &LLMConfigInput{
 		Provider:   llm.ProviderOllama,
 		Model:      "llama3.2",
+		MaxTokens:  r.GetMaxTokens(ctx, llm.ProviderOllama, "llama3.2", nil),
 		StrictMode: r.GetStrictMode(ctx, llm.ProviderOllama, "llama3.2", nil),
 	})
 
