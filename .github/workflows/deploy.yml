@@ -11,7 +11,9 @@ on:
       - "docs/**"
       - "demo/**"
       - "recipeapp/**"
+      - "recipeapp"        # Submodule pointer change
       - "diyviewer/**"
+      - "diyviewer"        # Submodule pointer change
       - ".github/workflows/deploy.yml"
   schedule:
     # Daily rebuild of demo site at 6 AM UTC for fresh data
@@ -132,14 +134,16 @@ jobs:
             echo "demo=false" >> $GITHUB_OUTPUT
           fi
 
-          if echo "$CHANGED" | grep -q "^recipeapp/"; then
+          # recipeapp: match both "recipeapp/" (direct changes) and "recipeapp" (submodule pointer)
+          if echo "$CHANGED" | grep -qE "^recipeapp(/|$)"; then
             echo "recipeapp=true" >> $GITHUB_OUTPUT
             echo "Recipe App changed"
           else
             echo "recipeapp=false" >> $GITHUB_OUTPUT
           fi
 
-          if echo "$CHANGED" | grep -q "^diyviewer/"; then
+          # diyviewer: match both "diyviewer/" (direct changes) and "diyviewer" (submodule pointer)
+          if echo "$CHANGED" | grep -qE "^diyviewer(/|$)"; then
             echo "diyviewer=true" >> $GITHUB_OUTPUT
             echo "DIY Viewer changed"
           else
