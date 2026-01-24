@@ -31,11 +31,6 @@ on:
         required: false
         default: false
         type: boolean
-      reset_demo_databases:
-        description: "Reset demo app databases (recipeapp & diyviewer)"
-        required: false
-        default: false
-        type: boolean
 
 # Cancel in-progress runs for the same ref
 concurrency:
@@ -629,14 +624,6 @@ jobs:
           command: pages deploy dist --project-name=refyne-recipeapp --branch=main
           workingDirectory: recipeapp/recipeapp
 
-      - name: Reset database (scheduled or manual)
-        if: github.event_name == 'schedule' || inputs.reset_demo_databases == true
-        working-directory: recipeapp/recipeapp
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: ./scripts/reset-db.sh ${{ vars.RECIPEAPP_D1_DATABASE }}
-
   # Deploy DIY Viewer to Cloudflare Pages with D1
   # Deploys on any push when diyviewer content changes
   deploy-diyviewer:
@@ -686,14 +673,6 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy dist --project-name=refyne-diyviewer --branch=main
           workingDirectory: diyviewer/diyviewer
-
-      - name: Reset database (scheduled or manual)
-        if: github.event_name == 'schedule' || inputs.reset_demo_databases == true
-        working-directory: diyviewer/diyviewer
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: ./scripts/reset-db.sh ${{ vars.DIYVIEWER_D1_DATABASE }}
 
   # Post-deployment notification
   notify:
