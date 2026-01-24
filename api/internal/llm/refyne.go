@@ -10,10 +10,11 @@ import (
 func ConvertModelInfo(provider string, rm refynellm.ModelInfo) ModelInfo {
 	settings := GetDefaultSettings(provider, rm.ID)
 	return ModelInfo{
-		ID:            rm.ID,
-		Name:          rm.Name,
-		Provider:      provider,
-		ContextWindow: rm.ContextLength,
+		ID:                  rm.ID,
+		Name:                rm.Name,
+		Provider:            provider,
+		ContextWindow:       rm.ContextLength,
+		MaxCompletionTokens: rm.MaxCompletionTokens, // From OpenRouter API
 		Capabilities: ModelCapabilities{
 			SupportsStructuredOutputs: rm.Capabilities.SupportsStructuredOutputs,
 			SupportsTools:             rm.Capabilities.SupportsTools,

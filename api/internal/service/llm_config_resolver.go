@@ -25,6 +25,7 @@ type LLMConfigResolver struct {
 	cfg       *config.Config
 	repos     *repository.Repositories
 	registry  *llm.Registry
+	pricing   *PricingService // For dynamic max_completion_tokens
 	encryptor *crypto.Encryptor
 	logger    *slog.Logger
 }
@@ -42,6 +43,11 @@ func NewLLMConfigResolver(cfg *config.Config, repos *repository.Repositories, en
 // SetRegistry sets the LLM provider registry for capability lookups.
 func (r *LLMConfigResolver) SetRegistry(registry *llm.Registry) {
 	r.registry = registry
+}
+
+// SetPricingService sets the pricing service for dynamic max_completion_tokens lookups.
+func (r *LLMConfigResolver) SetPricingService(pricing *PricingService) {
+	r.pricing = pricing
 }
 
 // GetServiceKeys retrieves service keys, preferring DB over env vars.
@@ -129,10 +135,28 @@ func (r *LLMConfigResolver) GetStrictMode(ctx context.Context, provider, model s
 }
 
 // GetMaxTokens returns the recommended max tokens for a model.
-// Uses model defaults from S3 or hardcoded fallbacks.
-// If chainMaxTokens is provided, it takes precedence.
+// Priority: 1) chain config override (S3), 2) OpenRouter API max_completion_tokens, 3) provider defaults
+// If chainMaxTokens is provided (from S3 fallback chain), it takes highest precedence.
 func (r *LLMConfigResolver) GetMaxTokens(ctx context.Context, provider, model string, chainMaxTokens *int) int {
-	_, maxTokens, _ := llm.GetModelSettings(provider, model, nil, chainMaxTokens, nil)
+	// If chain config explicitly sets MaxTokens, use that (highest priority)
+	if chainMaxTokens != nil && *chainMaxTokens > 0 {
+		return *chainMaxTokens
+	}
+
+	// For OpenRouter, check the cached max_completion_tokens from the API
+	// This provides dynamic, auto-updating token limits without S3 config
+	if provider == llm.ProviderOpenRouter && r.pricing != nil {
+		if apiMaxTokens := r.pricing.GetMaxCompletionTokens(provider, model); apiMaxTokens > 0 {
+			r.logger.Debug("using OpenRouter API max_completion_tokens",
+				"model", model,
+				"max_completion_tokens", apiMaxTokens,
+			)
+			return apiMaxTokens
+		}
+	}
+
+	// Fall back to S3/static model settings
+	_, maxTokens, _ := llm.GetModelSettings(provider, model, nil, nil, nil)
 	return maxTokens
 }
 

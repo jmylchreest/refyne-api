@@ -105,6 +105,8 @@ func main() {
 	services.Pricing.SetCapabilitiesCache(providerRegistry)
 	// LLMConfigResolver uses the registry for StrictMode determination (shared by ExtractionService and AnalyzerService)
 	services.LLMConfigResolver.SetRegistry(providerRegistry)
+	// LLMConfigResolver uses PricingService for dynamic max_completion_tokens from OpenRouter API
+	services.LLMConfigResolver.SetPricingService(services.Pricing)
 
 	// Initialize Clerk verifier for JWT validation (hosted mode)
 	var clerkVerifier *auth.ClerkVerifier

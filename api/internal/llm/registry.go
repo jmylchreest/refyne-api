@@ -36,13 +36,14 @@ type ProviderInfo struct {
 
 // ModelInfo contains metadata about an LLM model.
 type ModelInfo struct {
-	ID               string            `json:"id"`                       // Model identifier (e.g., "gpt-4o")
-	Name             string            `json:"name"`                     // Display name
-	Provider         string            `json:"provider"`                 // Parent provider
-	ContextWindow    int               `json:"context_window,omitempty"` // Context window size
-	Capabilities     ModelCapabilities `json:"capabilities"`             // What the model supports
-	DefaultTemp      float64           `json:"default_temperature"`      // Recommended temperature
-	DefaultMaxTokens int               `json:"default_max_tokens"`       // Recommended max tokens
+	ID                  string            `json:"id"`                          // Model identifier (e.g., "gpt-4o")
+	Name                string            `json:"name"`                        // Display name
+	Provider            string            `json:"provider"`                    // Parent provider
+	ContextWindow       int               `json:"context_window,omitempty"`    // Context window size
+	MaxCompletionTokens int               `json:"max_completion_tokens,omitempty"` // Max output tokens (from provider API, 0 = unknown)
+	Capabilities        ModelCapabilities `json:"capabilities"`                // What the model supports
+	DefaultTemp         float64           `json:"default_temperature"`         // Recommended temperature
+	DefaultMaxTokens    int               `json:"default_max_tokens"`          // Recommended max tokens
 }
 
 // ModelLister is a function that lists available models for a provider.

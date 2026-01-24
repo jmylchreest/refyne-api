@@ -14,13 +14,14 @@ import (
 
 // ModelPricing represents pricing and capabilities for a single model.
 type ModelPricing struct {
-	ID              string                `json:"id"`
-	Name            string                `json:"name"`
-	PromptPrice     float64               `json:"prompt_price"`     // Price per token (USD)
-	CompletionPrice float64               `json:"completion_price"` // Price per token (USD)
-	ContextLength   int                   `json:"context_length"`
-	IsFree          bool                  `json:"is_free"`
-	Capabilities    llm.ModelCapabilities `json:"capabilities"` // What features the model supports
+	ID                  string                `json:"id"`
+	Name                string                `json:"name"`
+	PromptPrice         float64               `json:"prompt_price"`          // Price per token (USD)
+	CompletionPrice     float64               `json:"completion_price"`      // Price per token (USD)
+	ContextLength       int                   `json:"context_length"`
+	MaxCompletionTokens int                   `json:"max_completion_tokens"` // Max output tokens (from provider API)
+	IsFree              bool                  `json:"is_free"`
+	Capabilities        llm.ModelCapabilities `json:"capabilities"`          // What features the model supports
 }
 
 // PricingService manages model pricing data from LLM providers.
@@ -161,13 +162,14 @@ func (s *PricingService) RefreshOpenRouterPricing(ctx context.Context) error {
 	prices := make(map[string]*ModelPricing, len(models))
 	for _, model := range models {
 		prices[model.ID] = &ModelPricing{
-			ID:              model.ID,
-			Name:            model.Name,
-			PromptPrice:     model.PromptPrice,
-			CompletionPrice: model.CompletionPrice,
-			ContextLength:   model.ContextLength,
-			IsFree:          model.IsFree,
-			Capabilities:    llm.ConvertCapabilities(model.Capabilities),
+			ID:                  model.ID,
+			Name:                model.Name,
+			PromptPrice:         model.PromptPrice,
+			CompletionPrice:     model.CompletionPrice,
+			ContextLength:       model.ContextLength,
+			MaxCompletionTokens: model.MaxCompletionTokens, // From OpenRouter API
+			IsFree:              model.IsFree,
+			Capabilities:        llm.ConvertCapabilities(model.Capabilities),
 		}
 	}
 
@@ -205,6 +207,17 @@ func (s *PricingService) GetModelPricing(provider, model string) *ModelPricing {
 		// For other providers, return nil (use estimation)
 		return nil
 	}
+}
+
+// GetMaxCompletionTokens returns the maximum output tokens for a model from cached provider data.
+// Returns 0 if the model is not found or provider doesn't support this.
+// This is used to determine dynamic max_tokens when S3 config doesn't specify one.
+func (s *PricingService) GetMaxCompletionTokens(provider, model string) int {
+	pricing := s.GetModelPricing(provider, model)
+	if pricing != nil {
+		return pricing.MaxCompletionTokens
+	}
+	return 0
 }
 
 // EstimateCost calculates estimated cost based on cached pricing.
