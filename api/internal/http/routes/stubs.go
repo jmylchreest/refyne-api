@@ -35,6 +35,7 @@ func StubHandlers() *Handlers {
 		Extraction:     &stubExtractionHandlers{},
 		Admin:          &stubAdminHandlers{},
 		AdminAnalytics: &stubAdminAnalyticsHandlers{},
+		Metrics:        &stubMetricsHandlers{},
 	}
 }
 
@@ -331,5 +332,13 @@ func (s *stubAdminAnalyticsHandlers) GetUsers(_ context.Context, _ *handlers.Ana
 }
 
 func (s *stubAdminAnalyticsHandlers) GetJobResults(_ context.Context, _ *handlers.AdminJobResultsInput) (*handlers.AdminJobResultsOutput, error) {
+	return nil, nil
+}
+
+// --- Metrics handlers stub ---
+
+type stubMetricsHandlers struct{}
+
+func (s *stubMetricsHandlers) GetMetrics(_ context.Context, _ *struct{}) (*handlers.GetMetricsOutput, error) {
 	return nil, nil
 }

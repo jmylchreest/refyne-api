@@ -228,7 +228,19 @@ func (r *SQLiteJobRepository) ClaimJob(ctx context.Context, id string) (*models.
 	return job, nil
 }
 
+// TierJobLimits maps tier names to their max concurrent job limits.
+// This is passed to ClaimPending to enable per-user job limits.
+type TierJobLimits map[string]int
+
 func (r *SQLiteJobRepository) ClaimPending(ctx context.Context) (*models.Job, error) {
+	// Use default tier limits from constants
+	return r.ClaimPendingWithLimits(ctx, nil)
+}
+
+// ClaimPendingWithLimits claims a pending job with priority scheduling and per-user limits.
+// Jobs are ordered by tier priority (pro > standard > free) then by creation time.
+// Users who have reached their tier's MaxConcurrentJobs are skipped.
+func (r *SQLiteJobRepository) ClaimPendingWithLimits(ctx context.Context, tierLimits TierJobLimits) (*models.Job, error) {
 	// Begin transaction (SQLite/libsql doesn't support custom isolation levels)
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -243,16 +255,60 @@ func (r *SQLiteJobRepository) ClaimPending(ctx context.Context) (*models.Job, er
 		}
 	}()
 
-	// Use UPDATE ... RETURNING to atomically claim and fetch in one statement
-	// This reduces lock contention compared to SELECT then UPDATE
+	// Priority scheduling with per-user job limits:
+	// 1. Filter pending jobs where user hasn't exceeded their tier's concurrent job limit
+	// 2. Order by tier priority (higher tier = higher priority), then by created_at
+	// 3. Claim the highest priority eligible job
+	//
+	// Tier priorities (higher = processed first):
+	//   selfhosted: 100, pro: 50, standard: 10, free: 2
+	// Tier max concurrent jobs:
+	//   selfhosted: unlimited (0), pro: 50, standard: 10, free: 2
 	now := time.Now().Format(time.RFC3339)
+
+	// Default tier limits if not provided
+	freeLim := 2
+	stdLim := 10
+	proLim := 50
+	selfHostedLim := 0 // 0 = unlimited
+	if tierLimits != nil {
+		if v, ok := tierLimits["free"]; ok {
+			freeLim = v
+		}
+		if v, ok := tierLimits["standard"]; ok {
+			stdLim = v
+		}
+		if v, ok := tierLimits["pro"]; ok {
+			proLim = v
+		}
+		if v, ok := tierLimits["selfhosted"]; ok {
+			selfHostedLim = v
+		}
+	}
+
 	query := `
 		UPDATE jobs
 		SET status = 'running', started_at = ?, updated_at = ?
 		WHERE id = (
-			SELECT id FROM jobs
-			WHERE status = 'pending'
-			ORDER BY created_at ASC
+			SELECT p.id FROM jobs p
+			WHERE p.status = 'pending'
+			-- Per-user concurrent job limit check
+			AND (
+				SELECT COUNT(*) FROM jobs r
+				WHERE r.user_id = p.user_id AND r.status = 'running'
+			) < CASE
+				WHEN p.tier = 'selfhosted' THEN CASE WHEN ? = 0 THEN 999999 ELSE ? END
+				WHEN p.tier = 'pro' THEN ?
+				WHEN p.tier = 'standard' THEN ?
+				ELSE ?
+			END
+			-- Priority ordering: tier priority DESC, then created_at ASC
+			ORDER BY CASE
+				WHEN p.tier = 'selfhosted' THEN 100
+				WHEN p.tier = 'pro' THEN 50
+				WHEN p.tier = 'standard' THEN 10
+				ELSE 2
+			END DESC, p.created_at ASC
 			LIMIT 1
 		)
 		RETURNING id, user_id, type, status, url, schema_json, crawl_options_json,
@@ -262,7 +318,8 @@ func (r *SQLiteJobRepository) ClaimPending(ctx context.Context) (*models.Job, er
 			webhook_attempts, started_at, completed_at, created_at, updated_at
 	`
 
-	job, err := r.scanJob(tx.QueryRowContext(ctx, query, now, now))
+	job, err := r.scanJob(tx.QueryRowContext(ctx, query, now, now,
+		selfHostedLim, selfHostedLim, proLim, stdLim, freeLim))
 	if err == sql.ErrNoRows || job == nil {
 		// No pending jobs - this is normal, not an error
 		return nil, nil

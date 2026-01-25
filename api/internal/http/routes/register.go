@@ -241,6 +241,15 @@ func Register(api huma.API, h *Handlers) {
 		mw.WithSuperadmin(),
 		mw.WithHidden())
 
+	// --- Internal Metrics (superadmin only, hidden) ---
+	mw.ProtectedGet(api, "/api/v1/internal/metrics", h.Metrics.GetMetrics,
+		mw.WithTags("Internal"),
+		mw.WithSummary("Get system metrics"),
+		mw.WithDescription("Returns job queue and rate limit statistics for monitoring"),
+		mw.WithOperationID("getSystemMetrics"),
+		mw.WithSuperadmin(),
+		mw.WithHidden())
+
 	// --- Schemas (read access for all authenticated users) ---
 	mw.ProtectedGet(api, "/api/v1/schemas", h.SchemaCatalog.ListSchemas,
 		mw.WithTags("Schemas"),

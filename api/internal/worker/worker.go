@@ -11,6 +11,7 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
+	"github.com/jmylchreest/refyne-api/internal/constants"
 	"github.com/jmylchreest/refyne-api/internal/models"
 	"github.com/jmylchreest/refyne-api/internal/repository"
 	"github.com/jmylchreest/refyne-api/internal/service"
@@ -155,14 +156,22 @@ func (w *Worker) runWorker(ctx context.Context, workerID int) {
 }
 
 func (w *Worker) processNextJob(ctx context.Context, workerID int) {
-	// Claim a pending job
-	job, err := w.jobRepo.ClaimPending(ctx)
+	// Build tier limits from constants for priority scheduling
+	tierLimits := repository.TierJobLimits{
+		constants.TierFree:       constants.GetTierLimits(constants.TierFree).MaxConcurrentJobs,
+		constants.TierStandard:   constants.GetTierLimits(constants.TierStandard).MaxConcurrentJobs,
+		constants.TierPro:        constants.GetTierLimits(constants.TierPro).MaxConcurrentJobs,
+		constants.TierSelfHosted: constants.GetTierLimits(constants.TierSelfHosted).MaxConcurrentJobs,
+	}
+
+	// Claim a pending job with priority scheduling and per-user limits
+	job, err := w.jobRepo.ClaimPendingWithLimits(ctx, tierLimits)
 	if err != nil {
 		w.logger.Error("failed to claim job", "worker_id", workerID, "error", err)
 		return
 	}
 	if job == nil {
-		return // No pending jobs
+		return // No pending jobs or all eligible users at limit
 	}
 
 	// Track active job

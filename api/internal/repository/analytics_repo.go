@@ -465,6 +465,91 @@ func (r *SQLiteAnalyticsRepository) GetTrends(ctx context.Context, startDate, en
 	return trends, nil
 }
 
+// JobQueueStats represents current job queue statistics for metrics.
+type JobQueueStats struct {
+	PendingTotal  int            `json:"pending_total"`
+	RunningTotal  int            `json:"running_total"`
+	PendingByTier map[string]int `json:"pending_by_tier"`
+	RunningByTier map[string]int `json:"running_by_tier"`
+	RunningByUser map[string]int `json:"running_by_user"`
+}
+
+// GetJobQueueStats returns current job queue statistics.
+func (r *SQLiteAnalyticsRepository) GetJobQueueStats(ctx context.Context) (*JobQueueStats, error) {
+	stats := &JobQueueStats{
+		PendingByTier: make(map[string]int),
+		RunningByTier: make(map[string]int),
+		RunningByUser: make(map[string]int),
+	}
+
+	// Get pending count by tier
+	pendingRows, err := r.db.QueryContext(ctx, `
+		SELECT COALESCE(tier, 'free') as tier, COUNT(*) as count
+		FROM jobs
+		WHERE status = 'pending'
+		GROUP BY COALESCE(tier, 'free')
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query pending jobs: %w", err)
+	}
+	defer func() { _ = pendingRows.Close() }()
+
+	for pendingRows.Next() {
+		var tier string
+		var count int
+		if err := pendingRows.Scan(&tier, &count); err != nil {
+			return nil, fmt.Errorf("failed to scan pending row: %w", err)
+		}
+		stats.PendingByTier[tier] = count
+		stats.PendingTotal += count
+	}
+
+	// Get running count by tier
+	runningTierRows, err := r.db.QueryContext(ctx, `
+		SELECT COALESCE(tier, 'free') as tier, COUNT(*) as count
+		FROM jobs
+		WHERE status = 'running'
+		GROUP BY COALESCE(tier, 'free')
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query running jobs by tier: %w", err)
+	}
+	defer func() { _ = runningTierRows.Close() }()
+
+	for runningTierRows.Next() {
+		var tier string
+		var count int
+		if err := runningTierRows.Scan(&tier, &count); err != nil {
+			return nil, fmt.Errorf("failed to scan running tier row: %w", err)
+		}
+		stats.RunningByTier[tier] = count
+		stats.RunningTotal += count
+	}
+
+	// Get running count by user
+	runningUserRows, err := r.db.QueryContext(ctx, `
+		SELECT user_id, COUNT(*) as count
+		FROM jobs
+		WHERE status = 'running'
+		GROUP BY user_id
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query running jobs by user: %w", err)
+	}
+	defer func() { _ = runningUserRows.Close() }()
+
+	for runningUserRows.Next() {
+		var userID string
+		var count int
+		if err := runningUserRows.Scan(&userID, &count); err != nil {
+			return nil, fmt.Errorf("failed to scan running user row: %w", err)
+		}
+		stats.RunningByUser[userID] = count
+	}
+
+	return stats, nil
+}
+
 // GetUsers returns a paginated list of user summaries for the given parameters.
 func (r *SQLiteAnalyticsRepository) GetUsers(ctx context.Context, params AnalyticsUsersParams) (*UserSummaryResult, error) {
 	// Get total count

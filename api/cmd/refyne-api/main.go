@@ -331,6 +331,7 @@ func main() {
 	userLLMHandler := handlers.NewUserLLMHandler(services.UserLLM, services.Admin, providerRegistry)
 	adminHandler := handlers.NewAdminHandler(services.Admin, services.TierSync)
 	adminAnalyticsHandler := handlers.NewAdminAnalyticsHandler(repos.Analytics, services.Storage)
+	metricsHandler := handlers.NewMetricsHandler(repos)
 	schemaCatalogHandler := handlers.NewSchemaCatalogHandler(repos.SchemaCatalog)
 	savedSitesHandler := handlers.NewSavedSitesHandler(repos.SavedSites)
 	var webhookEncryptor *crypto.Encryptor
@@ -360,6 +361,7 @@ func main() {
 		Extraction:     extractionHandler,
 		Admin:          adminHandler,
 		AdminAnalytics: adminAnalyticsHandler,
+		Metrics:        metricsHandler,
 	}
 
 	// Add API key handler in hosted mode

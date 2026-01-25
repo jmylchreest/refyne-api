@@ -30,6 +30,8 @@ type JobRepository interface {
 	ClaimJob(ctx context.Context, id string) (*models.Job, error)
 	// ClaimPending atomically claims the next pending job and returns it
 	ClaimPending(ctx context.Context) (*models.Job, error)
+	// ClaimPendingWithLimits claims a pending job with priority scheduling and per-user limits
+	ClaimPendingWithLimits(ctx context.Context, tierLimits TierJobLimits) (*models.Job, error)
 	// DeleteOlderThan deletes jobs older than the specified time and returns the deleted job IDs
 	DeleteOlderThan(ctx context.Context, before time.Time) ([]string, error)
 	// MarkStaleRunningJobsFailed marks jobs that have been running longer than maxAge as failed
@@ -264,6 +266,7 @@ type Repositories struct {
 	UserFallbackChain UserFallbackChainRepository
 	Webhook           WebhookRepository
 	WebhookDelivery   WebhookDeliveryRepository
+	RateLimit         RateLimitRepository
 	Analytics         *SQLiteAnalyticsRepository
 }
 
@@ -288,6 +291,7 @@ func NewRepositories(db *sql.DB) *Repositories {
 		UserFallbackChain: NewSQLiteUserFallbackChainRepository(db),
 		Webhook:           NewSQLiteWebhookRepository(db),
 		WebhookDelivery:   NewSQLiteWebhookDeliveryRepository(db),
+		RateLimit:         NewSQLiteRateLimitRepository(db),
 		Analytics:         NewSQLiteAnalyticsRepository(db),
 	}
 }

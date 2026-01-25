@@ -112,6 +112,11 @@ func (m *mockJobRepository) ClaimPending(ctx context.Context) (*models.Job, erro
 	return nil, nil
 }
 
+func (m *mockJobRepository) ClaimPendingWithLimits(ctx context.Context, tierLimits repository.TierJobLimits) (*models.Job, error) {
+	// For mock purposes, just delegate to ClaimPending
+	return m.ClaimPending(ctx)
+}
+
 func (m *mockJobRepository) DeleteOlderThan(ctx context.Context, before time.Time) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -118,6 +118,12 @@ type AdminAnalyticsHandlers interface {
 	GetJobResults(ctx context.Context, input *handlers.AdminJobResultsInput) (*handlers.AdminJobResultsOutput, error)
 }
 
+// MetricsHandlers defines the interface for internal metrics operations.
+// These endpoints are superadmin-only and hidden from public documentation.
+type MetricsHandlers interface {
+	GetMetrics(ctx context.Context, input *struct{}) (*handlers.GetMetricsOutput, error)
+}
+
 // Handlers aggregates all handler interfaces for route registration.
 // For the main server, pass real handler implementations.
 // For OpenAPI generation, pass stub implementations.
@@ -144,6 +150,7 @@ type Handlers struct {
 	Extraction     ExtractionHandlers
 	Admin          AdminHandlers
 	AdminAnalytics AdminAnalyticsHandlers
+	Metrics        MetricsHandlers
 }
 
 // IncludeAPIKeys returns true if API key endpoints should be registered.

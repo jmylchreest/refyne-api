@@ -690,8 +690,28 @@ func (s *ExtractionService) createRefyneInstance(llmCfg *LLMConfigInput, cleaner
 
 // handleLLMError wraps an LLM error with user-friendly messaging.
 // The isBYOK parameter indicates whether the user is using their own API key.
+// If the error is a rate limit (429), the API key is marked as suspended in the database.
 func (s *ExtractionService) handleLLMError(err error, llmCfg *LLMConfigInput, isBYOK bool) error {
 	llmErr := llm.WrapError(err, llmCfg.Provider, llmCfg.Model, isBYOK)
+
+	// If rate limited, mark the API key as temporarily suspended (in database)
+	if llmErr.StatusCode == 429 && llmCfg.APIKey != "" && s.repos != nil && s.repos.RateLimit != nil {
+		ctx := context.Background()
+		backoff, markErr := s.repos.RateLimit.MarkRateLimited(ctx, llmCfg.APIKey)
+		if markErr != nil {
+			s.logger.Error("failed to mark API key as rate limited",
+				"error", markErr,
+				"provider", llmCfg.Provider,
+			)
+		} else {
+			s.logger.Warn("API key rate limited, suspending",
+				"provider", llmCfg.Provider,
+				"model", llmCfg.Model,
+				"backoff", backoff,
+				"is_byok", isBYOK,
+			)
+		}
+	}
 
 	// Log the detailed error
 	s.logger.Error("LLM error",

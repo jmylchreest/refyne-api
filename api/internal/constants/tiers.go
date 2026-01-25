@@ -45,7 +45,11 @@ type TierLimits struct {
 	// MaxPagesPerCrawl is the max pages per crawl job (0 = unlimited)
 	MaxPagesPerCrawl int
 	// MaxConcurrentJobs is the max concurrent jobs (0 = unlimited)
+	// Also used as JobPriority for scheduling (higher = higher priority)
 	MaxConcurrentJobs int
+	// JobPriority controls scheduling priority (higher = processed first)
+	// Defaults to MaxConcurrentJobs if not set
+	JobPriority int
 	// RequestsPerMinute is the rate limit for API requests (0 = unlimited)
 	RequestsPerMinute int
 	// CreditAllocationUSD is the monthly USD credit for premium model calls (0 = none)
@@ -73,7 +77,8 @@ var Tiers = map[string]TierLimits{
 		Order:                0,         // First in list
 		MonthlyExtractions:   100,
 		MaxPagesPerCrawl:     10,
-		MaxConcurrentJobs:    1,
+		MaxConcurrentJobs:    2,
+		JobPriority:          2,  // Lower priority than paid tiers
 		RequestsPerMinute:    10,
 		CreditAllocationUSD:  0,
 		CreditRolloverMonths: 0,    // No rollover - expires at end of period
@@ -86,7 +91,8 @@ var Tiers = map[string]TierLimits{
 		Order:                1,          // Second in list
 		MonthlyExtractions:   1000,
 		MaxPagesPerCrawl:     50,
-		MaxConcurrentJobs:    3,
+		MaxConcurrentJobs:    10,
+		JobPriority:          10, // Medium priority
 		RequestsPerMinute:    60,
 		CreditAllocationUSD:  0,
 		CreditRolloverMonths: 0,    // No rollover - expires at end of period
@@ -99,7 +105,8 @@ var Tiers = map[string]TierLimits{
 		Order:                2,      // Third in list (when visible)
 		MonthlyExtractions:   0,      // Unlimited
 		MaxPagesPerCrawl:     500,
-		MaxConcurrentJobs:    10,
+		MaxConcurrentJobs:    50,
+		JobPriority:          50, // Highest priority
 		RequestsPerMinute:    60,
 		CreditAllocationUSD:  35.00, // $35 USD credit on $45 plan
 		CreditRolloverMonths: 0,     // No rollover - expires at end of period
@@ -112,7 +119,8 @@ var Tiers = map[string]TierLimits{
 		Order:                3,             // Last in list (when visible)
 		MonthlyExtractions:   0,             // Unlimited
 		MaxPagesPerCrawl:     0,             // Unlimited
-		MaxConcurrentJobs:    0,             // Unlimited
+		MaxConcurrentJobs:    0,             // Unlimited (0 = no limit)
+		JobPriority:          100,           // Highest priority for self-hosted
 		RequestsPerMinute:    0,             // Unlimited
 		CreditAllocationUSD:  0,             // Self-hosted uses own keys
 		CreditRolloverMonths: 0,

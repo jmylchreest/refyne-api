@@ -141,6 +141,7 @@ type JobResults struct {
 }
 
 // StoreJobResults stores all job results as a single JSON file.
+// It verifies the object is readable before returning to handle eventual consistency.
 func (s *StorageService) StoreJobResults(ctx context.Context, results *JobResults) error {
 	if !s.enabled {
 		return nil // Silently skip if storage is disabled
@@ -163,6 +164,30 @@ func (s *StorageService) StoreJobResults(ctx context.Context, results *JobResult
 	})
 	if err != nil {
 		return fmt.Errorf("failed to store job results: %w", err)
+	}
+
+	// Verify the object is readable (handles S3 eventual consistency)
+	// Retry up to 5 times with exponential backoff: 50ms, 100ms, 200ms, 400ms, 800ms
+	var verifyErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		_, verifyErr = s.client.HeadObject(ctx, &s3.HeadObjectInput{
+			Bucket: aws.String(s.bucket),
+			Key:    aws.String(key),
+		})
+		if verifyErr == nil {
+			break
+		}
+		if attempt < 4 {
+			time.Sleep(time.Duration(50<<attempt) * time.Millisecond)
+		}
+	}
+	if verifyErr != nil {
+		s.logger.Warn("stored job results but verification failed",
+			"job_id", results.JobID,
+			"key", key,
+			"error", verifyErr,
+		)
+		// Don't return error - the write succeeded, just verification failed
 	}
 
 	s.logger.Info("stored job results",
