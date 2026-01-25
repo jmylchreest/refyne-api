@@ -23,6 +23,7 @@ type TierLimitsJSON struct {
 	MonthlyExtractions   int     `json:"monthly_extractions"`
 	MaxPagesPerCrawl     int     `json:"max_pages_per_crawl"`
 	MaxConcurrentJobs    int     `json:"max_concurrent_jobs"`
+	JobPriority          int     `json:"job_priority,omitempty"` // Scheduling priority (higher = higher priority)
 	RequestsPerMinute    int     `json:"requests_per_minute"`
 	CreditAllocationUSD  float64 `json:"credit_allocation_usd,omitempty"`
 	CreditRolloverMonths int     `json:"credit_rollover_months,omitempty"`
@@ -110,6 +111,12 @@ func (t *TierSettingsLoader) refresh(ctx context.Context) {
 			visible = *limits.Visible
 		}
 
+		// Default JobPriority to MaxConcurrentJobs if not specified
+		jobPriority := limits.JobPriority
+		if jobPriority == 0 && limits.MaxConcurrentJobs > 0 {
+			jobPriority = limits.MaxConcurrentJobs
+		}
+
 		newTiers[name] = TierLimits{
 			DisplayName:          limits.DisplayName,
 			Visible:              visible,
@@ -117,6 +124,7 @@ func (t *TierSettingsLoader) refresh(ctx context.Context) {
 			MonthlyExtractions:   limits.MonthlyExtractions,
 			MaxPagesPerCrawl:     limits.MaxPagesPerCrawl,
 			MaxConcurrentJobs:    limits.MaxConcurrentJobs,
+			JobPriority:          jobPriority,
 			RequestsPerMinute:    limits.RequestsPerMinute,
 			CreditAllocationUSD:  limits.CreditAllocationUSD,
 			CreditRolloverMonths: limits.CreditRolloverMonths,
