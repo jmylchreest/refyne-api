@@ -85,6 +85,25 @@ func TestClerkClaims_GetTier(t *testing.T) {
 			},
 			"tier_v1_pro",
 		},
+		{
+			"tier_override takes precedence over plan",
+			"u:tier_v1_free",
+			map[string]interface{}{
+				"tier_override": "pro",
+			},
+			"pro",
+		},
+		{
+			"tier_override takes precedence over subscription",
+			"",
+			map[string]interface{}{
+				"tier_override": "enterprise",
+				"subscription": map[string]interface{}{
+					"tier": "should_not_use",
+				},
+			},
+			"enterprise",
+		},
 	}
 
 	for _, tt := range tests {
@@ -202,21 +221,52 @@ func TestClerkClaims_HasOrgFeature(t *testing.T) {
 
 func TestClerkClaims_HasFeature(t *testing.T) {
 	tests := []struct {
-		name     string
-		features string
-		feature  string
-		expected bool
+		name           string
+		features       string
+		publicMetadata map[string]interface{}
+		feature        string
+		expected       bool
 	}{
-		{"has user feature", "u:provider_byok", "provider_byok", true},
-		{"has org feature", "o:provider_byok", "provider_byok", true},
-		{"has both", "u:provider_byok,o:provider_byok", "provider_byok", true},
-		{"missing feature", "u:other_feature", "provider_byok", false},
-		{"empty features", "", "provider_byok", false},
+		{"has user feature", "u:provider_byok", nil, "provider_byok", true},
+		{"has org feature", "o:provider_byok", nil, "provider_byok", true},
+		{"has both", "u:provider_byok,o:provider_byok", nil, "provider_byok", true},
+		{"missing feature", "u:other_feature", nil, "provider_byok", false},
+		{"empty features", "", nil, "provider_byok", false},
+		{
+			"feature_override grants feature",
+			"",
+			map[string]interface{}{
+				"feature_overrides": []interface{}{"content_dynamic", "provider_byok"},
+			},
+			"content_dynamic",
+			true,
+		},
+		{
+			"feature_override not present",
+			"",
+			map[string]interface{}{
+				"feature_overrides": []interface{}{"other_feature"},
+			},
+			"content_dynamic",
+			false,
+		},
+		{
+			"feature_override combined with clerk features",
+			"u:provider_byok",
+			map[string]interface{}{
+				"feature_overrides": []interface{}{"content_dynamic"},
+			},
+			"content_dynamic",
+			true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			claims := &ClerkClaims{Features: tt.features}
+			claims := &ClerkClaims{
+				Features:       tt.features,
+				PublicMetadata: tt.publicMetadata,
+			}
 			got := claims.HasFeature(tt.feature)
 			if got != tt.expected {
 				t.Errorf("HasFeature(%q) = %v, want %v", tt.feature, got, tt.expected)

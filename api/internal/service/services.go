@@ -33,6 +33,7 @@ type Services struct {
 	Pricing           *PricingService
 	TierSync          *TierSyncService
 	LLMConfigResolver *LLMConfigResolver
+	Captcha           *CaptchaService // For dynamic content fetching with browser rendering
 	SubscriptionCache *auth.SubscriptionCache // For API key tier/feature hydration from Clerk
 }
 
@@ -104,6 +105,22 @@ func NewServices(cfg *config.Config, repos *repository.Repositories, logger *slo
 	// Create sitemap service for URL discovery
 	sitemapSvc := NewSitemapService(logger)
 
+	// Create captcha service for dynamic content fetching (browser rendering)
+	// Only initialized when CAPTCHA_SERVICE_URL is configured
+	var captchaSvc *CaptchaService
+	if cfg.CaptchaEnabled() {
+		captchaSvc = NewCaptchaService(CaptchaServiceConfig{
+			ServiceURL: cfg.CaptchaServiceURL,
+			Secret:     cfg.CaptchaSecret,
+			Logger:     logger,
+		})
+		// Wire captcha service to extraction service for dynamic fetch mode
+		extractionSvc.SetCaptchaService(captchaSvc)
+		logger.Info("captcha service enabled for dynamic content fetching",
+			"service_url", cfg.CaptchaServiceURL,
+		)
+	}
+
 	// Create Clerk-dependent services
 	var tierSyncSvc *TierSyncService
 	var subscriptionCache *auth.SubscriptionCache
@@ -145,6 +162,7 @@ func NewServices(cfg *config.Config, repos *repository.Repositories, logger *slo
 		Pricing:           pricingSvc,
 		TierSync:          tierSyncSvc,
 		LLMConfigResolver: llmResolver,
+		Captcha:           captchaSvc,
 		SubscriptionCache: subscriptionCache,
 	}, nil
 }

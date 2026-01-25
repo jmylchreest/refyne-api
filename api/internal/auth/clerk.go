@@ -64,10 +64,20 @@ func (c *ClerkClaims) GetOrgTier() string {
 }
 
 // GetTier returns the active subscription tier (user or org).
-// First checks Clerk Commerce's pla claim (e.g., "u:tier_v1_free" or "o:tier_v1_pro"),
-// then falls back to public_metadata.subscription.tier.
+// Priority order:
+// 1. public_metadata.tier_override (admin override for specific users)
+// 2. Clerk Commerce's pla claim (e.g., "u:tier_v1_free" or "o:tier_v1_pro")
+// 3. public_metadata.subscription.tier (legacy)
+// 4. Default "free"
 func (c *ClerkClaims) GetTier() string {
-	// Check Clerk Commerce plan claim first
+	// Check for admin tier override first (highest priority)
+	if c.PublicMetadata != nil {
+		if tierOverride, ok := c.PublicMetadata["tier_override"].(string); ok && tierOverride != "" {
+			return tierOverride
+		}
+	}
+
+	// Check Clerk Commerce plan claim
 	if c.Plan != "" {
 		tier := stripClerkPrefix(c.Plan)
 		if tier != "" {
@@ -109,9 +119,23 @@ func (c *ClerkClaims) HasOrgFeature(feature string) bool {
 	return c.hasFeatureWithPrefix(feature, "o:")
 }
 
-// HasFeature checks if the user has a specific feature from either user or org subscription.
-// This is a convenience method that checks both u: and o: prefixed features.
+// HasFeature checks if the user has a specific feature.
+// Priority order:
+// 1. public_metadata.feature_overrides (admin override for specific users)
+// 2. Clerk Commerce features (u: or o: prefixed)
 func (c *ClerkClaims) HasFeature(feature string) bool {
+	// Check for admin feature override first (highest priority)
+	if c.PublicMetadata != nil {
+		if overrides, ok := c.PublicMetadata["feature_overrides"].([]interface{}); ok {
+			for _, f := range overrides {
+				if fs, ok := f.(string); ok && fs == feature {
+					return true
+				}
+			}
+		}
+	}
+
+	// Check Clerk Commerce features
 	return c.HasUserFeature(feature) || c.HasOrgFeature(feature)
 }
 
@@ -130,19 +154,40 @@ func (c *ClerkClaims) hasFeatureWithPrefix(feature, prefix string) bool {
 	return false
 }
 
-// GetFeatures returns all features as a slice from Clerk Commerce (prefixes stripped).
+// GetFeatures returns all features as a slice.
+// Includes both admin overrides from public_metadata.feature_overrides
+// and Clerk Commerce features (prefixes stripped).
 func (c *ClerkClaims) GetFeatures() []string {
-	if c.Features == "" {
-		return nil
-	}
-	rawFeatures := strings.Split(c.Features, ",")
-	features := make([]string, 0, len(rawFeatures))
-	for _, f := range rawFeatures {
-		f = strings.TrimSpace(f)
-		f = stripClerkPrefix(f)
-		if f != "" {
-			features = append(features, f)
+	seen := make(map[string]bool)
+	features := make([]string, 0)
+
+	// Add admin feature overrides first (highest priority)
+	if c.PublicMetadata != nil {
+		if overrides, ok := c.PublicMetadata["feature_overrides"].([]interface{}); ok {
+			for _, f := range overrides {
+				if fs, ok := f.(string); ok && fs != "" && !seen[fs] {
+					features = append(features, fs)
+					seen[fs] = true
+				}
+			}
 		}
+	}
+
+	// Add Clerk Commerce features
+	if c.Features != "" {
+		rawFeatures := strings.Split(c.Features, ",")
+		for _, f := range rawFeatures {
+			f = strings.TrimSpace(f)
+			f = stripClerkPrefix(f)
+			if f != "" && !seen[f] {
+				features = append(features, f)
+				seen[f] = true
+			}
+		}
+	}
+
+	if len(features) == 0 {
+		return nil
 	}
 	return features
 }

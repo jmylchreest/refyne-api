@@ -170,13 +170,14 @@ func (h *ExtractionHandler) Extract(ctx context.Context, input *ExtractInput) (*
 
 	// Use ExtractWithContext to pass tier and feature eligibility information
 	ectx := &service.ExtractContext{
-		UserID:               uc.UserID,
-		Tier:                 uc.Tier,
-		BYOKAllowed:          uc.BYOKAllowed,
-		ModelsCustomAllowed:  uc.ModelsCustomAllowed,
-		ModelsPremiumAllowed: uc.ModelsPremiumAllowed,
-		LLMProvider:          uc.LLMProvider, // From S3 API key config (bypasses fallback chain)
-		LLMModel:             uc.LLMModel,    // From S3 API key config (bypasses fallback chain)
+		UserID:                uc.UserID,
+		Tier:                  uc.Tier,
+		BYOKAllowed:           uc.BYOKAllowed,
+		ModelsCustomAllowed:   uc.ModelsCustomAllowed,
+		ModelsPremiumAllowed:  uc.ModelsPremiumAllowed,
+		ContentDynamicAllowed: uc.ContentDynamicAllowed,
+		LLMProvider:           uc.LLMProvider, // From S3 API key config (bypasses fallback chain)
+		LLMModel:              uc.LLMModel,    // From S3 API key config (bypasses fallback chain)
 	}
 
 	// Convert cleaner chain from handler input to service input

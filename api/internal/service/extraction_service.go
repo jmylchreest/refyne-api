@@ -22,14 +22,23 @@ import (
 	"github.com/jmylchreest/refyne-api/internal/repository"
 )
 
+// ErrDynamicFetchNotAllowed is returned when dynamic fetch mode is requested
+// but the user doesn't have the content_dynamic feature enabled.
+var ErrDynamicFetchNotAllowed = errors.New("browser rendering requires the content_dynamic feature - upgrade your plan for JavaScript rendering and anti-bot capabilities")
+
+// ErrDynamicFetchNotConfigured is returned when dynamic fetch mode is requested
+// but the dynamic browser service is not configured on the server.
+var ErrDynamicFetchNotConfigured = errors.New("browser rendering is not available - dynamic browser service not configured")
+
 // ExtractionService handles synchronous single-page extraction.
 type ExtractionService struct {
-	cfg       *config.Config
-	repos     *repository.Repositories
-	billing   *BillingService
-	resolver  *LLMConfigResolver
-	logger    *slog.Logger
-	encryptor *crypto.Encryptor
+	cfg        *config.Config
+	repos      *repository.Repositories
+	billing    *BillingService
+	resolver   *LLMConfigResolver
+	logger     *slog.Logger
+	encryptor  *crypto.Encryptor
+	captchaSvc *CaptchaService // For dynamic content fetching with browser rendering
 }
 
 // NewExtractionService creates a new extraction service (legacy constructor).
@@ -47,6 +56,12 @@ func NewExtractionServiceWithBilling(cfg *config.Config, repos *repository.Repos
 		logger:    logger,
 		encryptor: encryptor,
 	}
+}
+
+// SetCaptchaService sets the captcha service for dynamic content fetching.
+// When configured, users with the content_dynamic feature can use browser rendering.
+func (s *ExtractionService) SetCaptchaService(captchaSvc *CaptchaService) {
+	s.captchaSvc = captchaSvc
 }
 
 // getStrictMode determines if a model supports strict JSON schema mode.
@@ -141,17 +156,18 @@ type BudgetSkip struct {
 	Reason        string  `json:"reason"`
 }
 
-// ExtractContext holds context for billing tracking.
+// ExtractContext holds context for billing tracking and feature access.
 type ExtractContext struct {
-	UserID              string
-	Tier                string // From JWT claims
-	SchemaID            string
-	IsBYOK              bool
-	BYOKAllowed         bool   // From JWT claims - whether user has the "provider_byok" feature
-	ModelsCustomAllowed bool   // From JWT claims - whether user has the "models_custom" feature
-	ModelsPremiumAllowed bool  // From JWT claims - whether user has the "models_premium" feature (budget-based fallback)
-	LLMProvider         string // For S3 API keys: forced LLM provider (bypasses fallback chain)
-	LLMModel            string // For S3 API keys: forced LLM model (bypasses fallback chain)
+	UserID               string
+	Tier                 string // From JWT claims
+	SchemaID             string
+	IsBYOK               bool
+	BYOKAllowed          bool   // From JWT claims - whether user has the "provider_byok" feature
+	ModelsCustomAllowed  bool   // From JWT claims - whether user has the "models_custom" feature
+	ModelsPremiumAllowed bool   // From JWT claims - whether user has the "models_premium" feature (budget-based fallback)
+	ContentDynamicAllowed bool  // From JWT claims - whether user has the "content_dynamic" feature (browser rendering)
+	LLMProvider          string // For S3 API keys: forced LLM provider (bypasses fallback chain)
+	LLMModel             string // For S3 API keys: forced LLM model (bypasses fallback chain)
 }
 
 // Extract performs a single-page extraction.
@@ -312,11 +328,34 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 			"provider_idx", providerIdx+1,
 			"of_providers", len(llmConfigs),
 			"is_byok", isBYOK,
+			"fetch_mode", input.FetchMode,
 		)
 
-		// Create refyne instance with configured cleaner
-		r, _, err := s.createRefyneInstance(llmCfg, input.CleanerChain)
+		// Determine effective fetch mode
+		// "auto" defaults to "static" (dynamic fetch via auto-detection is a future enhancement)
+		effectiveFetchMode := input.FetchMode
+		if effectiveFetchMode == "" || effectiveFetchMode == "auto" {
+			effectiveFetchMode = "static"
+		}
+
+		// Create refyne instance with configured cleaner and fetch mode
+		r, _, err := s.createRefyneInstanceWithFetchMode(llmCfg, input.CleanerChain, FetchModeConfig{
+			Mode:                  effectiveFetchMode,
+			ContentDynamicAllowed: ectx.ContentDynamicAllowed,
+			UserID:                userID,
+			Tier:                  ectx.Tier,
+			JobID:                 ectx.SchemaID, // Use schema ID as a form of job tracking
+		})
 		if err != nil {
+			// Check for permission/configuration errors that shouldn't be retried
+			if errors.Is(err, ErrDynamicFetchNotAllowed) || errors.Is(err, ErrDynamicFetchNotConfigured) {
+				s.logger.Warn("fetch mode configuration error",
+					"fetch_mode", effectiveFetchMode,
+					"error", err,
+				)
+				return nil, err // Return immediately - this is a user/config error, not retryable
+			}
+
 			s.logger.Warn("failed to create LLM instance",
 				"provider", llmCfg.Provider,
 				"model", llmCfg.Model,
@@ -643,10 +682,26 @@ func (s *ExtractionService) resolveLLMConfigsWithFallback(ctx context.Context, u
 // NOTE: Crawl and CrawlWithCallback methods are in extraction_crawl.go
 
 
+// FetchModeConfig holds fetch mode configuration for creating refyne instances.
+type FetchModeConfig struct {
+	Mode                  string // "auto", "static", or "dynamic"
+	ContentDynamicAllowed bool   // Whether user has content_dynamic feature
+	UserID                string // For creating dynamic fetcher context
+	Tier                  string // For creating dynamic fetcher context
+	JobID                 string // For tracking in dynamic fetcher
+}
+
 // createRefyneInstance creates a new refyne instance with the given LLM config.
 // Returns the refyne instance and the cleaner chain name for logging.
 // The cleanerChain parameter specifies which cleaners to use (empty uses default).
 func (s *ExtractionService) createRefyneInstance(llmCfg *LLMConfigInput, cleanerChain []CleanerConfig) (*refyne.Refyne, string, error) {
+	return s.createRefyneInstanceWithFetchMode(llmCfg, cleanerChain, FetchModeConfig{Mode: "static"})
+}
+
+// createRefyneInstanceWithFetchMode creates a new refyne instance with configurable fetch mode.
+// When fetchMode is "dynamic", uses browser rendering via the captcha service.
+// Returns the refyne instance and the cleaner chain name for logging.
+func (s *ExtractionService) createRefyneInstanceWithFetchMode(llmCfg *LLMConfigInput, cleanerChain []CleanerConfig, fetchCfg FetchModeConfig) (*refyne.Refyne, string, error) {
 	// Create cleaner chain from factory, using default if not specified
 	factory := NewCleanerFactory()
 	contentCleaner, err := factory.CreateChainWithDefault(cleanerChain, DefaultExtractionCleanerChain)
@@ -666,6 +721,33 @@ func (s *ExtractionService) createRefyneInstance(llmCfg *LLMConfigInput, cleaner
 		refyne.WithTimeout(llm.LLMTimeout), // 120s timeout for LLM requests
 		refyne.WithStrictMode(llmCfg.StrictMode),
 		refyne.WithLogger(s.logger), // Inject our logger into refyne
+	}
+
+	// Handle dynamic fetch mode - use browser rendering via captcha service
+	if fetchCfg.Mode == "dynamic" {
+		// Check if user has permission for dynamic content
+		if !fetchCfg.ContentDynamicAllowed {
+			return nil, "", ErrDynamicFetchNotAllowed
+		}
+		// Check if captcha service is configured
+		if s.captchaSvc == nil {
+			return nil, "", ErrDynamicFetchNotConfigured
+		}
+
+		// Create dynamic fetcher that uses browser rendering
+		dynamicFetcher := NewDynamicFetcher(DynamicFetcherConfig{
+			CaptchaSvc: s.captchaSvc,
+			UserID:     fetchCfg.UserID,
+			Tier:       fetchCfg.Tier,
+			JobID:      fetchCfg.JobID,
+			Logger:     s.logger,
+		})
+		opts = append(opts, refyne.WithFetcher(dynamicFetcher))
+
+		s.logger.Info("using browser rendering for extraction",
+			"user_id", fetchCfg.UserID,
+			"job_id", fetchCfg.JobID,
+		)
 	}
 
 	if llmCfg.APIKey != "" {
