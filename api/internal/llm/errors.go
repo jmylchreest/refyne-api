@@ -41,6 +41,9 @@ var (
 
 	// ErrInsufficientCredits indicates the user doesn't have enough credits for the operation.
 	ErrInsufficientCredits = errors.New("insufficient credits")
+
+	// ErrNoModelsConfigured indicates no valid LLM models are available in the user's configuration.
+	ErrNoModelsConfigured = errors.New("no models configured")
 )
 
 // LLMError represents an error from an LLM provider with user-friendly messaging.
@@ -505,4 +508,36 @@ func IsTierFeatureDisabled(err error) bool {
 		return errors.Is(llmErr.Err, ErrTierFeatureDisabled)
 	}
 	return errors.Is(err, ErrTierFeatureDisabled)
+}
+
+// NewNoModelsConfiguredError creates an error for when no valid LLM models are configured.
+// This can happen when:
+// - User has no models in their fallback chain
+// - User's API keys are missing or invalid for configured models
+// - System keys are not available for the tier
+func NewNoModelsConfiguredError(reason string) *LLMError {
+	msg := "No valid LLM models are configured."
+	if reason != "" {
+		msg = fmt.Sprintf("No valid LLM models are configured: %s", reason)
+	}
+	msg += " Please add models to your fallback chain or configure API keys in your account settings."
+
+	return &LLMError{
+		Err:            ErrNoModelsConfigured,
+		StatusCode:     http.StatusUnprocessableEntity, // 422 - request valid but cannot be processed
+		UserMessage:    msg,
+		Category:       "no_models",
+		Retryable:      false,
+		ShouldFallback: false, // No models to fall back to
+		SuggestUpgrade: true,  // BYOK or higher tier might help
+	}
+}
+
+// IsNoModelsConfigured checks if an error is a "no models configured" error.
+func IsNoModelsConfigured(err error) bool {
+	var llmErr *LLMError
+	if errors.As(err, &llmErr) {
+		return errors.Is(llmErr.Err, ErrNoModelsConfigured)
+	}
+	return errors.Is(err, ErrNoModelsConfigured)
 }

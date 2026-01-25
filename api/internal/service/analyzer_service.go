@@ -163,6 +163,16 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 	// Get LLM config for analysis early (needed for error recording)
 	s.logger.Debug("resolving LLM config", "request_id", requestID, "user_id", userID, "tier", tier, "byok_allowed", byokAllowed, "models_custom_allowed", modelsCustomAllowed)
 	llmConfig, isBYOK := s.resolveLLMConfig(ctx, userID, tier, requestID, byokAllowed, modelsCustomAllowed)
+	if llmConfig == nil {
+		s.logger.Error("no valid LLM models configured",
+			"request_id", requestID,
+			"user_id", userID,
+			"tier", tier,
+			"byok_allowed", byokAllowed,
+			"models_custom_allowed", modelsCustomAllowed,
+		)
+		return nil, llm.NewNoModelsConfiguredError("no models in fallback chain or missing API keys")
+	}
 	s.logger.Debug("LLM config resolved",
 		"request_id", requestID,
 		"user_id", userID,
@@ -983,15 +993,19 @@ func (s *AnalyzerService) resolveLLMConfig(ctx context.Context, userID, tier, re
 		if config != nil {
 			return config, isBYOK
 		}
+		// Resolver returned nil - no valid models configured
+		s.logger.Warn("resolver returned no valid models",
+			"user_id", userID,
+			"tier", tier,
+			"byok_allowed", byokAllowed,
+			"models_custom_allowed", modelsCustomAllowed,
+		)
+		return nil, false
 	}
 
-	// Fallback if resolver not set
-	s.logger.Warn("resolver not set, using hardcoded default")
-	return &LLMConfigInput{
-		Provider:   "ollama",
-		Model:      "llama3.2",
-		StrictMode: s.getStrictMode(ctx, "ollama", "llama3.2"),
-	}, false
+	// Resolver not set - this is a configuration error
+	s.logger.Error("LLM config resolver not set - this is a server configuration error")
+	return nil, false
 }
 
 // ExtractDomain extracts the domain from a URL.

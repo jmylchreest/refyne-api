@@ -389,7 +389,7 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 		return nil, llm.NewInsufficientCreditsError("all models exceed available budget", 0, int(availableBudget*100))
 	}
 
-	return nil, fmt.Errorf("extraction failed: no LLM providers configured")
+	return nil, llm.NewNoModelsConfiguredError("no models in fallback chain or missing API keys")
 }
 
 // recordFailedExtractionWithDetails records usage for a failed extraction with detailed error info.

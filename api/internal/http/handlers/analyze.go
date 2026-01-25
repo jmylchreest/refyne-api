@@ -126,12 +126,15 @@ func (h *AnalyzeHandler) Analyze(ctx context.Context, input *AnalyzeInput) (*Ana
 	}, uc.Tier, uc.BYOKAllowed, uc.ModelsCustomAllowed)
 
 	if err != nil {
+		// Extract error info using shared utilities
+		errInfo := ExtractErrorInfo(err, uc.BYOKAllowed)
+
 		// Update job with failure using shared utilities
 		_ = FailJobDirect(ctx, h.jobRepo, job, JobFailureInput{
-			ErrorMessage: err.Error(),
+			ErrorMessage: errInfo.UserMessage,
 		})
 
-		return nil, huma.Error500InternalServerError("analysis failed: " + err.Error())
+		return nil, NewJobError(err, uc.BYOKAllowed)
 	}
 
 	// Update job with success using shared utilities

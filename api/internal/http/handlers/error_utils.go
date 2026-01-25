@@ -57,6 +57,8 @@ func ExtractErrorInfo(err error, isBYOK bool) ErrorInfo {
 // CategorizeError returns an error category string based on the LLM error type.
 func CategorizeError(llmErr *llm.LLMError) string {
 	switch {
+	case errors.Is(llmErr.Err, llm.ErrNoModelsConfigured):
+		return "no_models_configured"
 	case errors.Is(llmErr.Err, llm.ErrInvalidAPIKey):
 		return "invalid_api_key"
 	case errors.Is(llmErr.Err, llm.ErrInsufficientCredits):
@@ -83,6 +85,8 @@ func CategorizeError(llmErr *llm.LLMError) string {
 // DetermineStatusCode maps LLM errors to appropriate HTTP status codes.
 func DetermineStatusCode(llmErr *llm.LLMError) int {
 	switch {
+	case errors.Is(llmErr.Err, llm.ErrNoModelsConfigured):
+		return http.StatusUnprocessableEntity // 422 - request valid but cannot be processed
 	case errors.Is(llmErr.Err, llm.ErrTierQuotaExceeded):
 		return http.StatusTooManyRequests
 	case errors.Is(llmErr.Err, llm.ErrTierFeatureDisabled):

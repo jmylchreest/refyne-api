@@ -31,7 +31,7 @@ func (s *ExtractionService) extractWithPrompt(ctx context.Context, userID string
 	ectx.IsBYOK = isBYOK
 
 	if len(llmConfigs) == 0 {
-		return nil, fmt.Errorf("no LLM providers configured")
+		return nil, llm.NewNoModelsConfiguredError("no models in fallback chain or missing API keys")
 	}
 
 	// For models_premium users, get available balance for per-model budget checking
@@ -223,7 +223,7 @@ func (s *ExtractionService) extractWithPrompt(ctx context.Context, userID string
 		return nil, llm.NewInsufficientCreditsError("all models exceed available budget", 0, int(availableBudget*100))
 	}
 
-	return nil, fmt.Errorf("prompt extraction failed: no LLM providers configured")
+	return nil, llm.NewNoModelsConfiguredError("no models in fallback chain or missing API keys")
 }
 
 // buildPromptExtractionPrompt constructs the LLM prompt for freeform extraction.
