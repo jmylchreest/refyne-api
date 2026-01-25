@@ -12,6 +12,7 @@ primary_region = "lhr"  # London - close to Turso aws-eu-west-1
   PORT = "8080"
   LOG_LEVEL = "debug"
   IDLE_TIMEOUT = "60s"  # Scale to zero after 60s idle (excludes health checks)
+  ENABLE_PPROF = "true" # Enable pprof profiler (access via: fly proxy 6060:6060)
   # Secrets set via: fly secrets set KEY=value --app refyne-api-staging
 
 [http_service]

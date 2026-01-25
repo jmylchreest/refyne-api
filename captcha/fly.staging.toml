@@ -20,6 +20,7 @@ primary_region = "lhr"  # London
   SESSION_MAX_IDLE = "5m"            # Shorter session timeout for staging
   CHALLENGE_TIMEOUT = "60s"
   DISABLE_STEALTH = "false"
+  ENABLE_PPROF = "true"              # Enable pprof profiler (access via: fly proxy 6060:6060)
   # Secrets set via: fly secrets set KEY=value --app refyne-captcha-staging
   # Required: REFYNE_API_SECRET (shared with refyne-api-staging for HMAC verification)
 

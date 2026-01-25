@@ -11,6 +11,7 @@ primary_region = "lhr"  # London - close to Turso aws-eu-west-1
 [env]
   PORT = "8080"
   LOG_LEVEL = "debug"
+  ENABLE_PPROF = "true"  # Enable pprof profiler (access via: fly proxy 6060:6060)
   # Secrets set via: fly secrets set KEY=value --app refyne-api
 
 [http_service]
