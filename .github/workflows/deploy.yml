@@ -7,6 +7,7 @@ on:
       - "v*"
     paths:
       - "api/**"
+      - "captcha/**"
       - "web/**"
       - "docs/**"
       - "demo/**"
@@ -50,6 +51,7 @@ jobs:
       environment: ${{ steps.env.outputs.environment }}
       # Change detection outputs
       api_changed: ${{ steps.changes.outputs.api }}
+      captcha_changed: ${{ steps.changes.outputs.captcha }}
       web_changed: ${{ steps.changes.outputs.web }}
       docs_changed: ${{ steps.changes.outputs.docs }}
       demo_changed: ${{ steps.changes.outputs.demo }}
@@ -66,6 +68,7 @@ jobs:
           # For scheduled runs, deploy demo apps (daily rebuild for fresh data)
           if [[ "${{ github.event_name }}" == "schedule" ]]; then
             echo "api=false" >> $GITHUB_OUTPUT
+            echo "captcha=false" >> $GITHUB_OUTPUT
             echo "web=false" >> $GITHUB_OUTPUT
             echo "docs=false" >> $GITHUB_OUTPUT
             echo "demo=true" >> $GITHUB_OUTPUT
@@ -78,6 +81,7 @@ jobs:
           # For tags or workflow_dispatch with deploy_all, deploy everything
           if [[ "${{ github.ref }}" == refs/tags/v* ]] || [[ "${{ inputs.deploy_all }}" == "true" ]]; then
             echo "api=true" >> $GITHUB_OUTPUT
+            echo "captcha=true" >> $GITHUB_OUTPUT
             echo "web=true" >> $GITHUB_OUTPUT
             echo "docs=true" >> $GITHUB_OUTPUT
             echo "demo=true" >> $GITHUB_OUTPUT
@@ -106,6 +110,13 @@ jobs:
             echo "API changed"
           else
             echo "api=false" >> $GITHUB_OUTPUT
+          fi
+
+          if echo "$CHANGED" | grep -q "^captcha/"; then
+            echo "captcha=true" >> $GITHUB_OUTPUT
+            echo "Captcha changed"
+          else
+            echo "captcha=false" >> $GITHUB_OUTPUT
           fi
 
           if echo "$CHANGED" | grep -q "^web/"; then
@@ -175,6 +186,25 @@ jobs:
         working-directory: api
         env:
           GOPRIVATE: github.com/jmylchreest/*
+
+  # Run Captcha tests (only if Captcha changed)
+  test-captcha:
+    name: Test Captcha
+    runs-on: ubuntu-latest
+    needs: prepare
+    if: needs.prepare.outputs.captcha_changed == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: captcha/go.sum
+
+      - name: Run Captcha tests
+        run: go test -timeout 120s ./...
+        working-directory: captcha
 
   # Run Web tests (only if Web changed)
   test-web:
@@ -397,6 +427,59 @@ jobs:
       - name: Output URL
         id: url
         run: echo "url=${{ vars.API_URL }}" >> $GITHUB_OUTPUT
+
+  # Deploy Captcha service to Fly.io
+  deploy-captcha:
+    name: Deploy Captcha (${{ needs.prepare.outputs.environment }})
+    runs-on: ubuntu-latest
+    needs: [prepare, test-captcha]
+    if: |
+      always() &&
+      needs.prepare.outputs.captcha_changed == 'true' &&
+      needs.test-captcha.result == 'success'
+    outputs:
+      url: ${{ steps.url.outputs.url }}
+    environment:
+      name: ${{ needs.prepare.outputs.environment }}
+    defaults:
+      run:
+        working-directory: captcha
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version
+        id: version
+        uses: jmylchreest/gha-extract-git-version@v1
+
+      - name: Set up Fly.io CLI
+        uses: superfly/flyctl-actions/setup-flyctl@1.5
+
+      - name: Deploy to Fly.io
+        run: |
+          flyctl deploy --remote-only \
+            --app ${{ vars.FLY_CAPTCHA_APP }} \
+            --config fly.${{ needs.prepare.outputs.environment }}.toml \
+            --build-arg VERSION=${{ steps.version.outputs.version }} \
+            --build-arg COMMIT=${{ steps.version.outputs.sha }} \
+            --build-arg DATE=${{ steps.version.outputs.date }} \
+            --build-arg DIRTY=${{ steps.version.outputs.dirty }}
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Verify deployment
+        run: |
+          echo "Waiting for deployment to stabilize..."
+          sleep 10
+          flyctl status --app ${{ vars.FLY_CAPTCHA_APP }}
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Output URL
+        id: url
+        run: echo "url=${{ vars.FLY_CAPTCHA_APP }}.internal:8191" >> $GITHUB_OUTPUT
 
   # Deploy Web to Cloudflare Pages (SSR via OpenNext)
   deploy-web:
@@ -673,7 +756,7 @@ jobs:
   notify:
     name: Notify
     runs-on: ubuntu-latest
-    needs: [prepare, deploy-api, deploy-web, deploy-docs, deploy-demo, deploy-recipeapp, deploy-diyviewer]
+    needs: [prepare, deploy-api, deploy-captcha, deploy-web, deploy-docs, deploy-demo, deploy-recipeapp, deploy-diyviewer]
     if: always()
     steps:
       - name: Deployment summary
@@ -687,6 +770,7 @@ jobs:
           echo "| Component | Changed | Result |" >> $GITHUB_STEP_SUMMARY
           echo "|-----------|---------|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| API | ${{ needs.prepare.outputs.api_changed }} | ${{ needs.deploy-api.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Captcha | ${{ needs.prepare.outputs.captcha_changed }} | ${{ needs.deploy-captcha.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Web | ${{ needs.prepare.outputs.web_changed }} | ${{ needs.deploy-web.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Docs | ${{ needs.prepare.outputs.docs_changed }} | ${{ needs.deploy-docs.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Demo | ${{ needs.prepare.outputs.demo_changed }} | ${{ needs.deploy-demo.result }} |" >> $GITHUB_STEP_SUMMARY
@@ -697,6 +781,9 @@ jobs:
           echo "### URLs" >> $GITHUB_STEP_SUMMARY
           if [[ -n "${{ needs.deploy-api.outputs.url }}" ]]; then
             echo "- **API:** ${{ needs.deploy-api.outputs.url }}" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [[ -n "${{ needs.deploy-captcha.outputs.url }}" ]]; then
+            echo "- **Captcha:** ${{ needs.deploy-captcha.outputs.url }} (internal)" >> $GITHUB_STEP_SUMMARY
           fi
           if [[ -n "${{ needs.deploy-web.outputs.url }}" ]]; then
             echo "- **Web:** ${{ needs.deploy-web.outputs.url }}" >> $GITHUB_STEP_SUMMARY
