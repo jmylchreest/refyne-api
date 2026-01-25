@@ -8,17 +8,17 @@ The official TypeScript SDK for <Refyne /> with full type support.
 ## Installation
 
 ```bash
-npm install @refyne/sdk
+npm install refyne-sdk
 # or
-yarn add @refyne/sdk
+yarn add refyne-sdk
 # or
-pnpm add @refyne/sdk
+pnpm add refyne-sdk
 ```
 
 ## Quick Start
 
 ```typescript
-import { Refyne } from '@refyne/sdk';
+import { Refyne } from 'refyne-sdk';
 
 // Using the builder pattern (recommended)
 const refyne = new Refyne.Builder()
@@ -127,7 +127,7 @@ const job = await refyne.crawl({
 ## Error Handling
 
 ```typescript
-import { RefyneError, RateLimitError, ValidationError } from '@refyne/sdk';
+import { RefyneError, RateLimitError, ValidationError } from 'refyne-sdk';
 
 try {
   const result = await refyne.extract({ ... });
