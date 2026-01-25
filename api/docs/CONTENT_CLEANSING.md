@@ -2,6 +2,15 @@
 
 This document outlines HTML content cleansing strategies for the Refyne API, particularly for the analyzer and extraction services.
 
+## Available Cleaners
+
+The API supports two cleaners:
+
+| Cleaner | Description |
+|---------|-------------|
+| `noop` | Pass-through cleaner that preserves raw HTML |
+| `refyne` | Configurable HTML cleaner with multiple output formats |
+
 ## API Configuration
 
 Cleaner chains are **configurable per-request** via the API. Clients can specify which cleaners to use and in what order.
@@ -22,29 +31,20 @@ Returns available cleaners with their options and default chains:
       "description": "Pass-through cleaner that preserves raw HTML"
     },
     {
-      "name": "markdown",
-      "description": "Converts HTML to Markdown format"
-    },
-    {
-      "name": "trafilatura",
-      "description": "Extracts main content using Trafilatura algorithm",
+      "name": "refyne",
+      "description": "Configurable HTML cleaner with heuristic-based cleaning",
       "options": [
-        {"name": "output", "type": "string", "default": "html", "description": "Output format: html or text"},
-        {"name": "tables", "type": "boolean", "default": true, "description": "Include tables"},
-        {"name": "links", "type": "boolean", "default": true, "description": "Include links"},
-        {"name": "images", "type": "boolean", "default": false, "description": "Include images"}
-      ]
-    },
-    {
-      "name": "readability",
-      "description": "Extracts main content using Mozilla Readability",
-      "options": [
-        {"name": "output", "type": "string", "default": "html", "description": "Output format: html or text"},
-        {"name": "base_url", "type": "string", "default": "", "description": "Base URL for resolving relative links"}
+        {"name": "output", "type": "string", "default": "html", "description": "Output format: html, text, or markdown"},
+        {"name": "preset", "type": "string", "default": "default", "description": "Preset: default, minimal, or aggressive"},
+        {"name": "include_frontmatter", "type": "boolean", "default": false, "description": "Include YAML frontmatter (markdown only)"},
+        {"name": "extract_images", "type": "boolean", "default": true, "description": "Extract images to frontmatter with placeholders"},
+        {"name": "extract_headings", "type": "boolean", "default": true, "description": "Include heading structure in frontmatter"},
+        {"name": "remove_selectors", "type": "array", "default": [], "description": "CSS selectors to remove"},
+        {"name": "keep_selectors", "type": "array", "default": [], "description": "CSS selectors to always keep"}
       ]
     }
   ],
-  "defaultExtractionChain": [{"name": "markdown"}],
+  "defaultExtractionChain": [{"name": "refyne", "options": {"output": "markdown", "include_frontmatter": true}}],
   "defaultAnalysisChain": [{"name": "noop"}]
 }
 ```
@@ -57,9 +57,15 @@ POST /api/v1/extract
 {
   "url": "https://example.com/product",
   "schema": {"name": "string", "price": "number"},
-  "cleanerChain": [
-    {"name": "trafilatura", "options": {"tables": true, "links": true}},
-    {"name": "markdown"}
+  "cleaner_chain": [
+    {
+      "name": "refyne",
+      "options": {
+        "output": "markdown",
+        "preset": "aggressive",
+        "keep_selectors": [".product-details", ".price"]
+      }
+    }
   ]
 }
 ```
@@ -70,9 +76,15 @@ POST /api/v1/crawl
 {
   "url": "https://example.com/products",
   "schema": {"name": "string", "price": "number"},
-  "cleanerChain": [
-    {"name": "readability", "options": {"output": "html"}},
-    {"name": "markdown"}
+  "cleaner_chain": [
+    {
+      "name": "refyne",
+      "options": {
+        "output": "markdown",
+        "include_frontmatter": true,
+        "extract_images": true
+      }
+    }
   ]
 }
 ```
@@ -88,223 +100,99 @@ const result = await refyne.extract({
   url: 'https://example.com/product',
   schema: { name: 'string', price: 'number' },
   cleanerChain: [
-    { name: 'trafilatura', options: { tables: true, links: true } },
-    { name: 'markdown' },
+    {
+      name: 'refyne',
+      options: {
+        output: 'markdown',
+        preset: 'aggressive',
+        keep_selectors: ['.product-details'],
+      },
+    },
   ],
 });
 ```
 
 ## Cleaner Chain Pattern
 
-The refinery library uses a **chain builder pattern** where multiple cleaners can be composed:
+The refyne library uses a **chain builder pattern** where multiple cleaners can be composed:
 
 ```go
-// Chain example: Trafilatura -> Markdown
+// Chain example (though single refyne cleaner usually suffices)
 cleanerChain := cleaner.NewChain(
-    cleaner.NewTrafilatura(&cleaner.TrafilaturaConfig{
-        Output: cleaner.OutputHTML,
-        Tables: cleaner.Include,
-        Links:  cleaner.Include,
+    refynecleaner.New(&refynecleaner.Config{
+        Output: refynecleaner.OutputMarkdown,
+        IncludeFrontmatter: true,
     }),
-    cleaner.NewMarkdown(),
+    cleaner.NewNoop(), // Additional processing if needed
 )
 ```
 
 Available cleaners:
 - `cleaner.NewNoop()` - Pass-through, no cleaning (raw HTML)
-- `cleaner.NewTrafilatura(config)` - Main content extraction (article-focused)
-- `cleaner.NewReadability(config)` - Mozilla Readability-based extraction
-- `cleaner.NewMarkdown()` - HTML to Markdown conversion
+- `refynecleaner.New(config)` - Configurable cleaner with html/text/markdown output
 - `cleaner.NewChain(cleaners...)` - Compose multiple cleaners
 
 ## Default Behavior
 
 ### Extraction Service
-Uses: `Markdown` cleaner by default (HTML to Markdown conversion)
-- Converts raw HTML to Markdown preserving structure
-- Links become `[text](url)`, images become `![alt](src)`
-- Tables preserved as Markdown tables
-- Override with `cleanerChain` parameter for different behavior
+Uses: `refyne` cleaner with markdown output by default
+- Converts HTML to LLM-optimized markdown
+- Includes YAML frontmatter with metadata
+- Images replaced with `{{IMG_001}}` placeholders
+- Links and structure preserved
+- Override with `cleaner_chain` parameter for different behavior
 
 ### Analyzer Service
-Uses: `Noop` cleaner by default (raw HTML)
+Uses: `noop` cleaner by default (raw HTML)
 - Preserves maximum detail for comprehensive analysis
 - Best for understanding page structure
 
-## Problem Statement
+## Refyne Cleaner Configuration
 
-Different use cases have conflicting requirements:
+### Output Formats
 
-| Use Case | Need | Risk |
-|----------|------|------|
-| **Analysis** | Maximum detail to understand page structure | Context length errors |
-| **Extraction** | Clean, focused content for accurate extraction | May lose relevant data |
-| **E-commerce/Listings** | Preserve tables, product grids, prices | Article extractors remove these |
+| Format | Use Case | Token Reduction |
+|--------|----------|-----------------|
+| `html` | Downstream HTML processing | 50-70% |
+| `text` | Maximum compression, raw text only | 70-85% |
+| `markdown` | LLM consumption with structure preserved | 60-80% |
 
-## Cleaner Comparison (Tested)
+### Presets
 
-| Cleaner | Token Usage | Extraction Quality | Notes |
-|---------|-------------|-------------------|-------|
-| **Noop (raw HTML)** | Very high (~32K/page) | Best | Too expensive for production |
-| **Markdown only** | High (~28-30K/page) | Good | ~10% reduction, still expensive |
-| **Trafilatura -> MD** | Low | Poor for e-commerce | Strips product grids, images |
-| **Readability -> MD** | Medium (TBD) | TBD | Worth testing as middle ground |
+| Preset | Description |
+|--------|-------------|
+| `default` | Safe for all content types, removes scripts/styles/hidden elements |
+| `minimal` | Only removes scripts and styles |
+| `aggressive` | Enables link density and short text heuristics |
 
-The challenge: article extractors (Trafilatura, Readability) are designed to find the "main content" and strip "boilerplate". For e-commerce sites, product grids ARE the main content but look like navigation to these algorithms.
+### Custom Selectors
 
-## Available In-Process Go Libraries
-
-### 1. go-trafilatura (Currently Used)
-**Repo:** https://github.com/markusmobius/go-trafilatura
-
-**Pros:**
-- Native Go port of Python trafilatura
-- Multiple output formats: HTML, text, JSON
-- Configurable table/link/image preservation
-- Fallback to readability/dom-distiller
-
-**Cons:**
-- Designed for article extraction
-- May discard product listings, non-article content
-- Text output loses all structure
-
-**Configuration Options:**
-```go
-// HTML output with tables preserved
-trafilatura.Extract(reader, trafilatura.Options{
-    Output:        trafilatura.OutputHTML,
-    IncludeTables: true,
-    IncludeLinks:  true,
-    IncludeImages: true,
-})
+```json
+{
+  "cleaner_chain": [
+    {
+      "name": "refyne",
+      "options": {
+        "output": "markdown",
+        "remove_selectors": [".sidebar", "nav", "footer", ".advertisement"],
+        "keep_selectors": [".product-details", "#main-content"]
+      }
+    }
+  ]
+}
 ```
 
-### 2. go-readability v2 (IMPLEMENTED)
-**Repo:** https://codeberg.org/readeck/go-readability
-**Package:** `codeberg.org/readeck/go-readability/v2`
+## Token Reduction Comparison
 
-**Pros:**
-- Mozilla Readability.js v0.6.0 compatible
-- Produces HTML and text output
-- Extracts metadata (title, author, published date, etc.)
-- Better content preservation than older versions
-- Preserves images, links, and tables in main content
-- Actively maintained
+Example results from a typical e-commerce product page (~500KB input):
 
-**Cons:**
-- Article-focused (like Trafilatura)
-- May strip product grids/listings on e-commerce sites
-
-**Configuration Options:**
-```go
-readabilityCleaner := cleaner.NewReadability(&cleaner.ReadabilityConfig{
-    Output:            cleaner.OutputHTML,  // or OutputText
-    MaxElemsToParse:   0,                   // 0 = no limit
-    NTopCandidates:    5,                   // candidates to analyze
-    CharThreshold:     500,                 // min chars for valid content
-    KeepClasses:       false,               // preserve CSS classes
-    ClassesToPreserve: []string{},          // specific classes to keep
-    BaseURL:           "https://example.com", // for resolving relative URLs
-})
-```
-
-**Usage in chain:**
-```go
-// Readability extracts main content, then Markdown converts to clean format
-cleanerChain := cleaner.NewChain(
-    cleaner.NewReadability(&cleaner.ReadabilityConfig{
-        Output: cleaner.OutputHTML,
-    }),
-    cleaner.NewMarkdown(),
-)
-```
-
-### 3. GoOse
-**Repo:** https://github.com/advancedlogic/GoOse
-
-**Pros:**
-- Article/content extraction
-- Metadata extraction
-
-**Cons:**
-- Article-focused
-- Less configurable than trafilatura
-
-## Out-of-Process Options (Future Consideration)
-
-### MinerU-HTML
-**Repo:** https://github.com/opendatalab/MinerU-HTML
-**Type:** Python with REST API
-
-**Why it's interesting:**
-- Uses 0.6B language model for semantic content understanding
-- 32% better accuracy than Trafilatura (81.8% vs 63.6% ROUGE-N F1)
-- Excellent structure preservation:
-  - 90.9% for code blocks
-  - 94.0% for tables/formulas
-- REST API via FastAPI
-
-**Integration approach:**
-- Deploy as sidecar container
-- Call `/extract` endpoint with HTML
-- Returns clean, LLM-ready content
-
-**Why not now:**
-- Adds deployment complexity
-- Python dependency
-- Latency overhead of HTTP call
-
-## Implemented Strategy
-
-### Cleaner Factory Pattern
-
-The API uses a factory pattern to create cleaners from configuration:
-
-```go
-// In cleaner_factory.go
-factory := NewCleanerFactory()
-chain, err := factory.CreateChainWithDefault(inputChain, DefaultExtractionCleanerChain)
-```
-
-**Default chains:**
-- `DefaultExtractionCleanerChain = [{name: "markdown"}]`
-- `DefaultAnalyzerCleanerChain = [{name: "noop"}]`
-
-### For Analyzer Service
-
-Uses `noop` cleaner by default to preserve maximum HTML detail for page structure analysis.
-
-### For Extraction Service
-
-Uses `markdown` cleaner by default for clean content extraction. This approach:
-- Converts raw HTML to Markdown preserving structure
-- Links become `[text](url)`, images become `![alt](src)`
-- Tables preserved as Markdown tables
-- Strikes a balance between token usage and content preservation
-
-### Custom Cleaner Chains
-
-Users can override defaults via the `cleanerChain` parameter. Common patterns:
-
-```go
-// For article content: extract main content then convert to markdown
-cleanerChain: [
-    {name: "trafilatura", options: {tables: true, links: true}},
-    {name: "markdown"}
-]
-
-// For maximum content preservation (high token usage)
-cleanerChain: [
-    {name: "noop"}
-]
-
-// For minimal token usage (may lose content)
-cleanerChain: [
-    {name: "trafilatura", options: {output: "text"}}
-]
-```
-
-**Note on Trafilatura:** While Trafilatura is effective for article extraction, it may strip product grids, form elements, and other non-article content. For e-commerce sites, the default `markdown` cleaner often works better.
+| Configuration | Input Tokens | Reduction |
+|---------------|--------------|-----------|
+| No cleaning (noop) | ~125,000 | 0% |
+| refyne (html output) | ~50,000 | 60% |
+| refyne (markdown output) | ~35,000 | 72% |
+| refyne (markdown + frontmatter) | ~30,000 | 76% |
+| refyne (aggressive + custom selectors) | ~15,000 | 88% |
 
 ## Error Detection
 
@@ -324,18 +212,23 @@ func isContextLengthError(err error) bool {
 }
 ```
 
-## Implementation Priority
+## Cleaner Factory Pattern
 
-1. **DONE:** API-configurable cleaner chains via `cleanerChain` parameter
-2. **DONE:** `/api/v1/cleaners` endpoint to list available cleaners
-3. **DONE:** Default cleaner chains (markdown for extraction, noop for analysis)
-4. **DONE:** Auto mini-crawl for better schema generation
-5. **Medium-term:** Evaluate MinerU-HTML for complex sites (out-of-process)
-6. **Long-term:** Page-type-aware cleaner selection
+The API uses a factory pattern to create cleaners from configuration:
+
+```go
+// In cleaner_factory.go
+factory := NewCleanerFactory()
+chain, err := factory.CreateChainWithDefault(inputChain, DefaultExtractionCleanerChain)
+```
+
+**Default chains:**
+- `DefaultExtractionCleanerChain = [{name: "refyne", options: {output: "markdown", include_frontmatter: true}}]`
+- `DefaultAnalyzerCleanerChain = [{name: "noop"}]`
 
 ## Analyzer Auto Mini-Crawl
 
-The analyzer now automatically fetches 1-2 sample detail pages to generate better combined schemas:
+The analyzer automatically fetches 1-2 sample detail pages to generate better combined schemas:
 
 1. **Smart link detection** - Identifies product/detail page links based on URL patterns:
    - `/product/`, `/products/`, `/item/`, `/p/`
@@ -355,7 +248,4 @@ The analyzer now automatically fetches 1-2 sample detail pages to generate bette
 
 ## References
 
-- [go-trafilatura](https://github.com/markusmobius/go-trafilatura)
-- [MinerU-HTML](https://github.com/opendatalab/MinerU-HTML)
-- [go-readability v2](https://codeberg.org/readeck/go-readability/v2)
-- [Trafilatura evaluation](https://trafilatura.readthedocs.io/en/latest/evaluation.html)
+- [Refyne Cleaner Documentation](https://github.com/jmylchreest/refyne/blob/main/pkg/cleaner/refyne/README.md)
