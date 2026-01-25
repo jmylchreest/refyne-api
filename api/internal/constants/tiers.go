@@ -25,6 +25,8 @@ const (
 	FeatureProviderBYOK   = "provider_byok"   // Controls BYOK (bring your own API keys)
 	FeatureProviderOllama = "provider_ollama" // Controls access to Ollama (local LLM provider)
 	FeatureModelsCustom   = "models_custom"   // Controls custom model/fallback chain configuration
+	FeatureModelsPremium  = "models_premium"  // Access to premium/charged models with budget-based fallback
+	FeatureContentDynamic = "content_dynamic" // JavaScript/real browser support for dynamic content
 )
 
 // TierLimits defines the numeric limits for a subscription tier.

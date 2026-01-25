@@ -16,21 +16,25 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /captcha-server ./cmd/captcha-server
 
 # Runtime stage
-FROM alpine:3.21
+FROM alpine:latest
 
-# Install Chrome/Chromium and dependencies
+# Install Chromium and dependencies
+# Using Alpine's chromium package for reliability
 RUN apk add --no-cache \
+    # Chromium browser
     chromium \
-    chromium-chromedriver \
+    # Required for Chrome to run
     nss \
     freetype \
     freetype-dev \
     harfbuzz \
     ca-certificates \
+    # Fonts for proper text rendering
     ttf-freefont \
     font-noto \
     font-noto-cjk \
     font-noto-emoji \
+    # Process management
     dumb-init \
     && rm -rf /var/cache/apk/*
 
@@ -38,8 +42,10 @@ RUN apk add --no-cache \
 RUN addgroup -g 1000 captcha && \
     adduser -u 1000 -G captcha -s /bin/sh -D captcha
 
-# Set Chrome path for go-rod
+# Set Chrome path for go-rod to use system Chromium
 ENV CHROME_PATH=/usr/bin/chromium-browser
+# Set HOME to /tmp for Chrome profile (no persistent storage needed)
+ENV HOME=/tmp
 
 # Copy binary from builder
 COPY --from=builder /captcha-server /usr/local/bin/captcha-server

@@ -30,6 +30,7 @@ import (
 	"github.com/jmylchreest/refyne-api/internal/logging"
 	"github.com/jmylchreest/refyne-api/internal/repository"
 	"github.com/jmylchreest/refyne-api/internal/service"
+	"github.com/jmylchreest/refyne-api/internal/shutdown"
 	"github.com/jmylchreest/refyne-api/internal/version"
 	"github.com/jmylchreest/refyne-api/internal/worker"
 )
@@ -126,8 +127,9 @@ func main() {
 		services.Storage,
 		services.Sitemap,
 		worker.Config{
-			PollInterval: 5 * time.Second,
-			Concurrency:  3,
+			PollInterval:        cfg.WorkerPollInterval,
+			Concurrency:         cfg.WorkerConcurrency,
+			ShutdownGracePeriod: cfg.WorkerShutdownGracePeriod,
 		},
 		logger,
 	)
@@ -150,6 +152,24 @@ func main() {
 		)
 	}
 
+	// Initialize idle monitor for scale-to-zero (must be created before router middleware)
+	// The background work checker prevents idle shutdown while the job worker is processing
+	idleMonitor := shutdown.NewIdleMonitor(shutdown.IdleMonitorConfig{
+		Timeout: cfg.IdleTimeout,
+		Logger:  logger,
+		ExcludePaths: []string{
+			"/healthz",
+			"/livez",
+			"/readyz",
+			"/api/v1/health",
+		},
+		BackgroundWorkCheck: func() bool {
+			return jobWorker.ActiveJobs() > 0
+		},
+	})
+	idleMonitor.Start()
+	defer idleMonitor.Stop()
+
 	// Create router
 	router := chi.NewRouter()
 
@@ -157,6 +177,7 @@ func main() {
 	router.Use(middleware.CleanPath) // Normalize double slashes (//api -> /api)
 	router.Use(middleware.RequestID)
 	router.Use(middleware.RealIP)
+	router.Use(idleMonitor.Middleware) // Track requests for scale-to-zero
 
 	// S3-backed configuration loaders
 	// All use the same bucket with different keys under config/
@@ -342,13 +363,29 @@ func main() {
 		IdleTimeout:  120 * time.Second,
 	}
 
-	// Graceful shutdown
+	// Graceful shutdown - triggered by signal OR idle timeout
 	go func() {
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT)
-		<-sigChan
 
-		logger.Info("shutting down server")
+		var idleShutdown bool
+		select {
+		case <-sigChan:
+			logger.Info("received shutdown signal")
+		case <-idleMonitor.ShutdownChan():
+			idleShutdown = true
+			logger.Info("idle shutdown triggered")
+		}
+
+		// Determine shutdown timeout:
+		// - Idle shutdown: fast exit (we know active requests = 0)
+		// - Signal shutdown: allow time for in-flight requests
+		shutdownTimeout := 30 * time.Second
+		if idleShutdown {
+			shutdownTimeout = 2 * time.Second
+		}
+
+		logger.Info("shutting down server", "timeout", shutdownTimeout, "idle_triggered", idleShutdown)
 
 		// Stop the worker first
 		cancel()
@@ -359,7 +396,7 @@ func main() {
 			logFiltersLoader.Stop()
 		}
 
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer shutdownCancel()
 
 		if err := server.Shutdown(shutdownCtx); err != nil {

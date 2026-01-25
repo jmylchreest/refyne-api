@@ -46,6 +46,7 @@ type SessionOptions struct {
 	WindowHeight int          `json:"windowHeight,omitempty"`
 	UserAgent    string       `json:"userAgent,omitempty"`
 	Proxy        *ProxyConfig `json:"proxy,omitempty"`
+	UserID       string       `json:"-"` // Set from auth context, not request body
 }
 
 // SolveRequest is a FlareSolverr-compatible request.

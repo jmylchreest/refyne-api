@@ -89,10 +89,12 @@ func TestGetEnvBool(t *testing.T) {
 		{"TRUE uppercase", "TRUE", true},
 		{"True mixed", "True", true},
 		{"1", "1", true},
+		{"yes lowercase", "yes", true},
+		{"YES uppercase", "YES", true},
 		{"false lowercase", "false", false},
 		{"FALSE uppercase", "FALSE", false},
 		{"0", "0", false},
-		{"random string", "yes", false},
+		{"random string", "maybe", false},
 		{"empty", "", false}, // Will use default
 	}
 

@@ -26,6 +26,7 @@ import (
 	"github.com/jmylchreest/refyne-api/captcha/internal/logging"
 	"github.com/jmylchreest/refyne-api/captcha/internal/models"
 	"github.com/jmylchreest/refyne-api/captcha/internal/session"
+	"github.com/jmylchreest/refyne-api/captcha/internal/shutdown"
 	"github.com/jmylchreest/refyne-api/captcha/internal/solver"
 	"github.com/jmylchreest/refyne-api/captcha/internal/version"
 )
@@ -57,7 +58,7 @@ func main() {
 	pool := browser.NewPool(cfg, logger)
 	defer pool.Close()
 
-	// Warmup: ensure Chromium is downloaded and pre-create one browser
+	// Warmup: ensure Chromium is ready and pre-create one browser
 	if err := pool.Warmup(ctx, 1); err != nil {
 		logger.Error("failed to warmup browser pool", "error", err)
 		os.Exit(1)
@@ -67,6 +68,14 @@ func main() {
 	sessions := session.NewManager(cfg, logger)
 	defer sessions.Close()
 	go sessions.StartCleanup(ctx)
+
+	// Initialize idle monitor for scale-to-zero
+	idleMonitor := shutdown.NewIdleMonitor(shutdown.IdleMonitorConfig{
+		Timeout: cfg.IdleTimeout,
+		Logger:  logger,
+	})
+	idleMonitor.Start()
+	defer idleMonitor.Stop()
 
 	// Initialize challenge detector
 	detector := challenge.NewDetector(logger)
@@ -116,6 +125,7 @@ func main() {
 	// Middleware
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
+	r.Use(idleMonitor.Middleware) // Track requests for scale-to-zero
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(cfg.ChallengeTimeout + 30*time.Second))
@@ -146,6 +156,18 @@ func main() {
 			"has_clerk_verifier", clerkVerifier != nil,
 			"required_feature", cfg.RequiredFeature,
 		)
+		// Apply auth middleware BEFORE routes are registered
+		r.Use(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				// Skip auth for health, OpenAPI docs
+				if req.URL.Path == "/health" || req.URL.Path == "/openapi.json" ||
+					req.URL.Path == "/openapi.yaml" || req.URL.Path == "/docs" {
+					next.ServeHTTP(w, req)
+					return
+				}
+				mw.Auth(authConfig)(next).ServeHTTP(w, req)
+			})
+		})
 	} else {
 		logger.Warn("no authentication configured - service is unprotected",
 			"hint", "set REFYNE_API_SECRET or CLERK_ISSUER for production, or ALLOW_UNAUTHENTICATED=true for local dev",
@@ -181,27 +203,6 @@ func main() {
 		return &handlers.HealthOutput{Body: *resp}, nil
 	})
 
-	// Auth middleware wrapper for protected endpoints
-	authMiddleware := func(ctx context.Context, next func(context.Context) error) error {
-		// Auth is handled at Chi router level, just pass through
-		return next(ctx)
-	}
-	if authEnabled && !cfg.AllowUnauthenticated {
-		// Apply auth middleware to protected routes via Chi
-		r.Use(func(next http.Handler) http.Handler {
-			return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-				// Skip auth for health, OpenAPI docs
-				if req.URL.Path == "/health" || req.URL.Path == "/openapi.json" ||
-					req.URL.Path == "/openapi.yaml" || req.URL.Path == "/docs" {
-					next.ServeHTTP(w, req)
-					return
-				}
-				mw.Auth(authConfig)(next).ServeHTTP(w, req)
-			})
-		})
-	}
-	_ = authMiddleware // Used conceptually above
-
 	// Register FlareSolverr-compatible endpoint
 	huma.Register(api, huma.Operation{
 		OperationID:   "solve",
@@ -235,18 +236,35 @@ func main() {
 		}
 	}()
 
-	// Wait for interrupt signal
+	// Wait for shutdown signal (SIGTERM or idle timeout)
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
 
-	logger.Info("shutting down server...")
+	var idleShutdown bool
+	select {
+	case <-quit:
+		logger.Info("received shutdown signal")
+	case <-idleMonitor.ShutdownChan():
+		idleShutdown = true
+		logger.Info("idle shutdown triggered")
+	}
 
 	// Cancel context to stop background tasks
 	cancel()
 
-	// Graceful shutdown with timeout
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Determine shutdown timeout:
+	// - Idle shutdown: fast exit (we know active requests = 0)
+	// - Signal shutdown: allow time for in-flight requests
+	shutdownTimeout := 30 * time.Second
+	if idleShutdown {
+		// Fast shutdown - idle monitor already confirmed 0 active requests
+		shutdownTimeout = 2 * time.Second
+	}
+
+	logger.Info("shutting down server...", "timeout", shutdownTimeout, "idle_triggered", idleShutdown)
+
+	// Graceful shutdown - immediately stops accepting new connections
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer shutdownCancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {

@@ -1,6 +1,7 @@
 package mw
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -142,27 +143,65 @@ func TestUserClaims_HasAnyFeature(t *testing.T) {
 	}
 }
 
+// signRequest creates a valid HMAC signature for testing.
+// Format: HMAC-SHA256(timestamp|userID|tier|features|jobID|bodyHash)
+func signRequest(secret, timestamp, userID, tier, features, jobID string, body []byte) string {
+	bodyHash := sha256.Sum256(body)
+	message := timestamp + "|" + userID + "|" + tier + "|" + features + "|" + jobID + "|" + hex.EncodeToString(bodyHash[:])
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(message))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
 func TestValidateSignedHeaders(t *testing.T) {
 	secret := "test-secret-key"
+	testBody := []byte(`{"cmd":"request.get","url":"https://example.com"}`)
 
 	tests := []struct {
 		name       string
-		setupReq   func(r *http.Request, ts int64)
+		body       []byte
+		setupReq   func(r *http.Request, ts int64, body []byte)
 		wantClaims *UserClaims
 		wantErr    bool
 	}{
 		{
-			name: "valid signature",
-			setupReq: func(r *http.Request, ts int64) {
+			name: "valid signature with body",
+			body: testBody,
+			setupReq: func(r *http.Request, ts int64, body []byte) {
 				timestamp := strconv.FormatInt(ts, 10)
 				userID := "user_123"
 				tier := "pro"
 				features := "captcha,api_access"
+				jobID := "job_456"
 
-				message := timestamp + ":" + userID + ":" + tier + ":" + features
-				mac := hmac.New(sha256.New, []byte(secret))
-				mac.Write([]byte(message))
-				signature := hex.EncodeToString(mac.Sum(nil))
+				signature := signRequest(secret, timestamp, userID, tier, features, jobID, body)
+
+				r.Header.Set("X-Refyne-Signature", signature)
+				r.Header.Set("X-Refyne-Timestamp", timestamp)
+				r.Header.Set("X-Refyne-User-ID", userID)
+				r.Header.Set("X-Refyne-Tier", tier)
+				r.Header.Set("X-Refyne-Features", features)
+				r.Header.Set("X-Refyne-Job-ID", jobID)
+			},
+			wantClaims: &UserClaims{
+				UserID:   "user_123",
+				Tier:     "pro",
+				Features: []string{"captcha", "api_access"},
+				JobID:    "job_456",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid signature without job ID",
+			body: testBody,
+			setupReq: func(r *http.Request, ts int64, body []byte) {
+				timestamp := strconv.FormatInt(ts, 10)
+				userID := "user_123"
+				tier := "pro"
+				features := "captcha"
+				jobID := "" // Empty job ID
+
+				signature := signRequest(secret, timestamp, userID, tier, features, jobID, body)
 
 				r.Header.Set("X-Refyne-Signature", signature)
 				r.Header.Set("X-Refyne-Timestamp", timestamp)
@@ -173,13 +212,14 @@ func TestValidateSignedHeaders(t *testing.T) {
 			wantClaims: &UserClaims{
 				UserID:   "user_123",
 				Tier:     "pro",
-				Features: []string{"captcha", "api_access"},
+				Features: []string{"captcha"},
 			},
 			wantErr: false,
 		},
 		{
 			name: "missing headers returns nil",
-			setupReq: func(r *http.Request, ts int64) {
+			body: nil,
+			setupReq: func(r *http.Request, ts int64, body []byte) {
 				// No headers set
 			},
 			wantClaims: nil,
@@ -187,16 +227,15 @@ func TestValidateSignedHeaders(t *testing.T) {
 		},
 		{
 			name: "expired timestamp",
-			setupReq: func(r *http.Request, ts int64) {
+			body: testBody,
+			setupReq: func(r *http.Request, ts int64, body []byte) {
 				timestamp := strconv.FormatInt(ts-400, 10) // 400 seconds ago (>5 min)
 				userID := "user_123"
 				tier := "pro"
 				features := "captcha"
+				jobID := ""
 
-				message := timestamp + ":" + userID + ":" + tier + ":" + features
-				mac := hmac.New(sha256.New, []byte(secret))
-				mac.Write([]byte(message))
-				signature := hex.EncodeToString(mac.Sum(nil))
+				signature := signRequest(secret, timestamp, userID, tier, features, jobID, body)
 
 				r.Header.Set("X-Refyne-Signature", signature)
 				r.Header.Set("X-Refyne-Timestamp", timestamp)
@@ -209,7 +248,8 @@ func TestValidateSignedHeaders(t *testing.T) {
 		},
 		{
 			name: "invalid signature",
-			setupReq: func(r *http.Request, ts int64) {
+			body: testBody,
+			setupReq: func(r *http.Request, ts int64, body []byte) {
 				timestamp := strconv.FormatInt(ts, 10)
 				r.Header.Set("X-Refyne-Signature", "invalid-signature")
 				r.Header.Set("X-Refyne-Timestamp", timestamp)
@@ -220,12 +260,74 @@ func TestValidateSignedHeaders(t *testing.T) {
 			wantClaims: nil,
 			wantErr:    true,
 		},
+		{
+			name: "tampered body fails",
+			body: testBody,
+			setupReq: func(r *http.Request, ts int64, body []byte) {
+				timestamp := strconv.FormatInt(ts, 10)
+				userID := "user_123"
+				tier := "pro"
+				features := "captcha"
+				jobID := ""
+
+				// Sign with original body
+				signature := signRequest(secret, timestamp, userID, tier, features, jobID, body)
+
+				r.Header.Set("X-Refyne-Signature", signature)
+				r.Header.Set("X-Refyne-Timestamp", timestamp)
+				r.Header.Set("X-Refyne-User-ID", userID)
+				r.Header.Set("X-Refyne-Tier", tier)
+				r.Header.Set("X-Refyne-Features", features)
+
+				// But the actual request body is different (simulated by modifying request)
+				// We'll handle this in the test by providing different body
+			},
+			wantClaims: nil,
+			wantErr:    true,
+		},
+		{
+			name: "tampered job ID fails",
+			body: testBody,
+			setupReq: func(r *http.Request, ts int64, body []byte) {
+				timestamp := strconv.FormatInt(ts, 10)
+				userID := "user_123"
+				tier := "pro"
+				features := "captcha"
+				originalJobID := "job_123"
+
+				// Sign with original job ID
+				signature := signRequest(secret, timestamp, userID, tier, features, originalJobID, body)
+
+				r.Header.Set("X-Refyne-Signature", signature)
+				r.Header.Set("X-Refyne-Timestamp", timestamp)
+				r.Header.Set("X-Refyne-User-ID", userID)
+				r.Header.Set("X-Refyne-Tier", tier)
+				r.Header.Set("X-Refyne-Features", features)
+				r.Header.Set("X-Refyne-Job-ID", "tampered_job_id") // Different job ID
+			},
+			wantClaims: nil,
+			wantErr:    true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "/v1", nil)
-			tt.setupReq(req, time.Now().Unix())
+			var body []byte
+			if tt.name == "tampered body fails" {
+				// For tampered body test, use different body in request
+				body = []byte(`{"cmd":"request.get","url":"https://evil.com"}`)
+			} else {
+				body = tt.body
+			}
+
+			var req *http.Request
+			if body != nil {
+				req = httptest.NewRequest(http.MethodPost, "/v1", bytes.NewReader(body))
+			} else {
+				req = httptest.NewRequest(http.MethodPost, "/v1", nil)
+			}
+
+			tt.setupReq(req, time.Now().Unix(), tt.body)
 
 			claims, err := validateSignedHeaders(req, secret)
 
@@ -255,7 +357,47 @@ func TestValidateSignedHeaders(t *testing.T) {
 			if len(claims.Features) != len(tt.wantClaims.Features) {
 				t.Errorf("claims.Features = %v, want %v", claims.Features, tt.wantClaims.Features)
 			}
+			if claims.JobID != tt.wantClaims.JobID {
+				t.Errorf("claims.JobID = %q, want %q", claims.JobID, tt.wantClaims.JobID)
+			}
 		})
+	}
+}
+
+func TestValidateSignedHeaders_BodyRestored(t *testing.T) {
+	secret := "test-secret-key"
+	testBody := []byte(`{"cmd":"request.get","url":"https://example.com"}`)
+
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	userID := "user_123"
+	tier := "pro"
+	features := "captcha"
+	jobID := ""
+
+	signature := signRequest(secret, timestamp, userID, tier, features, jobID, testBody)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1", bytes.NewReader(testBody))
+	req.Header.Set("X-Refyne-Signature", signature)
+	req.Header.Set("X-Refyne-Timestamp", timestamp)
+	req.Header.Set("X-Refyne-User-ID", userID)
+	req.Header.Set("X-Refyne-Tier", tier)
+	req.Header.Set("X-Refyne-Features", features)
+
+	// First call consumes body for signature verification
+	_, err := validateSignedHeaders(req, secret)
+	if err != nil {
+		t.Fatalf("validateSignedHeaders() unexpected error: %v", err)
+	}
+
+	// Body should still be readable after validation
+	buf := new(bytes.Buffer)
+	_, err = buf.ReadFrom(req.Body)
+	if err != nil {
+		t.Fatalf("failed to read body after validation: %v", err)
+	}
+
+	if !bytes.Equal(buf.Bytes(), testBody) {
+		t.Errorf("body not restored correctly: got %q, want %q", buf.String(), string(testBody))
 	}
 }
 

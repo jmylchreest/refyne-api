@@ -11,6 +11,7 @@ primary_region = "lhr"  # London - close to Turso aws-eu-west-1
 [env]
   PORT = "8080"
   LOG_LEVEL = "debug"
+  IDLE_TIMEOUT = "60s"  # Scale to zero after 60s idle (excludes health checks)
   # Secrets set via: fly secrets set KEY=value --app refyne-api-staging
 
 [http_service]

@@ -52,16 +52,31 @@ type Manager struct {
 	logger      *slog.Logger
 	maxSessions int
 	closed      bool
+	store       *SQLiteStore // Optional persistence layer
 }
 
 // NewManager creates a new session manager.
+// If cfg.SessionDBPath is set, sessions will be persisted to SQLite.
 func NewManager(cfg *config.Config, logger *slog.Logger) *Manager {
-	return &Manager{
+	m := &Manager{
 		sessions:    make(map[string]*Session),
 		cfg:         cfg,
 		logger:      logger,
 		maxSessions: cfg.BrowserPoolSize * 2, // Allow 2x pool size for sessions
 	}
+
+	// Initialize SQLite store if path is configured
+	if cfg.SessionDBPath != "" {
+		store, err := NewSQLiteStore(cfg.SessionDBPath, logger)
+		if err != nil {
+			logger.Error("failed to initialize session store, sessions will not persist", "error", err)
+		} else {
+			m.store = store
+			logger.Info("session persistence enabled", "path", cfg.SessionDBPath)
+		}
+	}
+
+	return m
 }
 
 // Create creates a new browser session.
@@ -184,6 +199,26 @@ func (m *Manager) Create(ctx context.Context, sessionID string, opts *models.Ses
 	m.sessions[id] = session
 	m.logger.Info("session created", "id", id, "proxy", proxyURL != "")
 
+	// Persist to store if available
+	if m.store != nil {
+		userID := ""
+		if opts != nil {
+			userID = opts.UserID
+		}
+		if err := m.store.Save(&PersistedSession{
+			ID:           session.ID,
+			UserID:       userID,
+			UserAgent:    session.UserAgent,
+			Proxy:        session.Proxy,
+			CreatedAt:    session.CreatedAt,
+			LastUsedAt:   session.LastUsedAt,
+			RequestCount: session.RequestCount,
+			Cookies:      session.Cookies,
+		}); err != nil {
+			m.logger.Error("failed to persist session", "id", id, "error", err)
+		}
+	}
+
 	return session, nil
 }
 
@@ -202,6 +237,8 @@ func (m *Manager) Get(id string) (*Session, error) {
 
 // Acquire acquires a session for use, waiting if the session is busy.
 // This blocks until the session is available or context is cancelled.
+// If the session is not in memory but exists in the persistence store,
+// it will be lazily restored with saved cookies.
 func (m *Manager) Acquire(ctx context.Context, id string) (*Session, error) {
 	m.logger.Debug("session acquire attempt",
 		"id", id,
@@ -211,6 +248,25 @@ func (m *Manager) Acquire(ctx context.Context, id string) (*Session, error) {
 	// Try to acquire immediately first
 	session, waitChan, err := m.tryAcquire(id)
 	if err != nil {
+		// Session not found in memory - try to restore from store
+		if err == ErrSessionNotFound && m.store != nil {
+			m.logger.Debug("session not in memory, checking store", "id", id)
+			restored, restoreErr := m.restoreFromStore(ctx, id)
+			if restoreErr != nil {
+				return nil, restoreErr
+			}
+			if restored != nil {
+				m.logger.Info("session restored from store", "id", id)
+				// Try to acquire again now that it's restored
+				session, _, err = m.tryAcquire(id)
+				if err != nil {
+					return nil, err
+				}
+				if session != nil {
+					return session, nil
+				}
+			}
+		}
 		return nil, err
 	}
 	if session != nil {
@@ -239,6 +295,127 @@ func (m *Manager) Acquire(ctx context.Context, id string) (*Session, error) {
 		m.removeWaiter(id, waitChan)
 		return nil, ctx.Err()
 	}
+}
+
+// restoreFromStore restores a session from the persistence store.
+// It creates a new browser instance and injects the saved cookies.
+func (m *Manager) restoreFromStore(ctx context.Context, id string) (*Session, error) {
+	persisted, err := m.store.Load(id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load session from store: %w", err)
+	}
+	if persisted == nil {
+		return nil, ErrSessionNotFound
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Check again in case another goroutine restored it
+	if _, exists := m.sessions[id]; exists {
+		return m.sessions[id], nil
+	}
+
+	if len(m.sessions) >= m.maxSessions {
+		return nil, ErrMaxSessionsReached
+	}
+
+	// Create new browser with saved settings
+	l := launcher.New()
+	if m.cfg.ChromePath != "" {
+		l = l.Bin(m.cfg.ChromePath)
+	}
+	l = l.
+		Headless(true).
+		Set("disable-blink-features", "AutomationControlled").
+		Set("disable-dev-shm-usage").
+		Set("disable-gpu").
+		Set("no-sandbox").
+		Set("disable-setuid-sandbox").
+		Set("disable-infobars").
+		Set("lang", "en-US,en").
+		Set("window-size", "1920,1080")
+
+	if persisted.Proxy != "" {
+		l = l.Proxy(persisted.Proxy)
+	}
+
+	u, err := l.Launch()
+	if err != nil {
+		return nil, fmt.Errorf("failed to launch browser: %w", err)
+	}
+
+	b := rod.New().ControlURL(u)
+	if err := b.Connect(); err != nil {
+		return nil, fmt.Errorf("failed to connect to browser: %w", err)
+	}
+
+	page, err := browser.CreatePage(b, m.cfg.DisableStealth)
+	if err != nil {
+		b.Close()
+		return nil, fmt.Errorf("failed to create page: %w", err)
+	}
+
+	// Restore user agent
+	if persisted.UserAgent != "" {
+		if err := page.SetUserAgent(&proto.NetworkSetUserAgentOverride{
+			UserAgent: persisted.UserAgent,
+		}); err != nil {
+			m.logger.Warn("failed to restore user agent", "id", id, "error", err)
+		}
+	}
+
+	// Restore cookies
+	if len(persisted.Cookies) > 0 {
+		var cookieParams []*proto.NetworkCookieParam
+		for _, c := range persisted.Cookies {
+			param := &proto.NetworkCookieParam{
+				Name:     c.Name,
+				Value:    c.Value,
+				Domain:   c.Domain,
+				Path:     c.Path,
+				Secure:   c.Secure,
+				HTTPOnly: c.HTTPOnly,
+			}
+			if c.Expires > 0 {
+				param.Expires = proto.TimeSinceEpoch(c.Expires)
+			}
+			switch c.SameSite {
+			case proto.NetworkCookieSameSiteStrict:
+				param.SameSite = proto.NetworkCookieSameSiteStrict
+			case proto.NetworkCookieSameSiteLax:
+				param.SameSite = proto.NetworkCookieSameSiteLax
+			case proto.NetworkCookieSameSiteNone:
+				param.SameSite = proto.NetworkCookieSameSiteNone
+			}
+			cookieParams = append(cookieParams, param)
+		}
+
+		setCookiesCmd := proto.NetworkSetCookies{Cookies: cookieParams}
+		if err := setCookiesCmd.Call(page); err != nil {
+			m.logger.Warn("failed to restore cookies", "id", id, "error", err)
+		} else {
+			m.logger.Info("restored cookies from store", "id", id, "count", len(cookieParams))
+		}
+	}
+
+	session := &Session{
+		ID:           id,
+		Browser:      b,
+		Page:         page,
+		UserAgent:    persisted.UserAgent,
+		Proxy:        persisted.Proxy,
+		CreatedAt:    persisted.CreatedAt,
+		LastUsedAt:   time.Now(),
+		RequestCount: persisted.RequestCount,
+		InUse:        false,
+		Cookies:      persisted.Cookies,
+	}
+
+	m.sessions[id] = session
+	m.logger.Info("session restored", "id", id, "cookies", len(persisted.Cookies))
+
+	return session, nil
 }
 
 // tryAcquire attempts to acquire a session without blocking.
@@ -322,6 +499,21 @@ func (m *Manager) Release(id string) {
 		}
 	}
 
+	// Persist updated state to store
+	if m.store != nil {
+		if err := m.store.Save(&PersistedSession{
+			ID:           session.ID,
+			UserAgent:    session.UserAgent,
+			Proxy:        session.Proxy,
+			CreatedAt:    session.CreatedAt,
+			LastUsedAt:   session.LastUsedAt,
+			RequestCount: session.RequestCount,
+			Cookies:      session.Cookies,
+		}); err != nil {
+			m.logger.Error("failed to persist session state", "id", id, "error", err)
+		}
+	}
+
 	// Notify one waiter if any
 	if m.waiters != nil && len(m.waiters[id]) > 0 {
 		waiter := m.waiters[id][0]
@@ -350,6 +542,14 @@ func (m *Manager) Destroy(id string) error {
 
 	m.closeSession(session)
 	delete(m.sessions, id)
+
+	// Remove from persistence store
+	if m.store != nil {
+		if err := m.store.Delete(id); err != nil {
+			m.logger.Error("failed to delete session from store", "id", id, "error", err)
+		}
+	}
+
 	m.logger.Info("session destroyed", "id", id)
 
 	return nil
@@ -396,6 +596,7 @@ func (m *Manager) GetInfo(id string) (*models.SessionInfo, error) {
 
 // Close closes all sessions and the manager.
 func (m *Manager) Close() {
+	m.logger.Info("closing session manager...")
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -404,10 +605,39 @@ func (m *Manager) Close() {
 	}
 	m.closed = true
 
+	sessionCount := len(m.sessions)
 	for _, session := range m.sessions {
 		m.closeSession(session)
 	}
 	m.sessions = make(map[string]*Session)
+
+	// Close the persistence store
+	if m.store != nil {
+		m.logger.Info("closing session persistence store...")
+		if err := m.store.Close(); err != nil {
+			m.logger.Error("failed to close session store", "error", err)
+		} else {
+			m.logger.Info("session store closed successfully")
+		}
+	}
+	m.logger.Info("session manager closed", "sessions_closed", sessionCount)
+}
+
+// GetPersistedSessions returns all persisted sessions from the store.
+// This is useful for listing sessions that may need to be restored.
+func (m *Manager) GetPersistedSessions() ([]*PersistedSession, error) {
+	if m.store == nil {
+		return nil, nil
+	}
+	return m.store.ListAll()
+}
+
+// GetPersistedSession returns a single persisted session by ID.
+func (m *Manager) GetPersistedSession(id string) (*PersistedSession, error) {
+	if m.store == nil {
+		return nil, nil
+	}
+	return m.store.Load(id)
 }
 
 // StartCleanup starts a background goroutine that cleans up idle sessions.
@@ -446,6 +676,21 @@ func (m *Manager) cleanupIdleSessions() {
 		m.logger.Info("cleaning up idle session", "id", id, "idle_time", time.Since(session.LastUsedAt))
 		m.closeSession(session)
 		delete(m.sessions, id)
+
+		// Remove from persistence store
+		if m.store != nil {
+			if err := m.store.Delete(id); err != nil {
+				m.logger.Error("failed to delete session from store", "id", id, "error", err)
+			}
+		}
+	}
+
+	// Also clean up old persisted sessions that might not be in memory
+	if m.store != nil {
+		threshold := time.Now().Add(-m.cfg.SessionMaxIdle)
+		if _, err := m.store.CleanupOlderThan(context.Background(), threshold); err != nil {
+			m.logger.Error("failed to cleanup old persisted sessions", "error", err)
+		}
 	}
 }
 

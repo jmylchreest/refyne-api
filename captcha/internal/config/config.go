@@ -4,6 +4,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -31,7 +32,7 @@ type Config struct {
 	// Authentication
 	RefyneAPISecret      string // HMAC secret for signed headers from refyne-api
 	ClerkIssuer          string // Clerk issuer URL for JWT validation
-	RequiredFeature      string // Feature required to use captcha (e.g., "captcha")
+	RequiredFeature      string // Feature required to use captcha (e.g., "content_dynamic")
 	AllowUnauthenticated bool   // Standalone/FlareSolverr mode - disables all auth (for local dev)
 
 	// Proxy settings
@@ -40,6 +41,10 @@ type Config struct {
 
 	// Session settings
 	SessionMaxIdle time.Duration
+	SessionDBPath  string // Path to SQLite database for session persistence
+
+	// Idle shutdown settings
+	IdleTimeout time.Duration // Time before shutting down when idle (0 = disabled)
 
 	// Debug settings
 	DisableStealth bool // Disable stealth mode for testing CAPTCHA solving
@@ -48,25 +53,27 @@ type Config struct {
 // Load creates a Config from environment variables with sensible defaults.
 func Load() *Config {
 	return &Config{
-		Port:               getEnvInt("PORT", 8191),
-		LogLevel:           getEnv("LOG_LEVEL", "info"),
-		BrowserPoolSize:    getEnvInt("BROWSER_POOL_SIZE", 5),
-		BrowserIdleTimeout: getEnvDuration("BROWSER_IDLE_TIMEOUT", 5*time.Minute),
-		BrowserMaxRequests: getEnvInt("BROWSER_MAX_REQUESTS", 100),
-		BrowserMaxAge:      getEnvDuration("BROWSER_MAX_AGE", 30*time.Minute),
-		ChromePath:         getEnv("CHROME_PATH", ""),
-		ChallengeTimeout:   getEnvDuration("CHALLENGE_TIMEOUT", 60*time.Second),
-		ChallengeWaitTime:  getEnvDuration("CHALLENGE_WAIT_TIME", 30*time.Second),
-		TwoCaptchaAPIKey:   getEnv("TWOCAPTCHA_API_KEY", ""),
-		CapSolverAPIKey:    getEnv("CAPSOLVER_API_KEY", ""),
+		Port:                 getEnvInt("PORT", 8191),
+		LogLevel:             getEnv("LOG_LEVEL", "info"),
+		BrowserPoolSize:      getEnvInt("BROWSER_POOL_SIZE", 5),
+		BrowserIdleTimeout:   getEnvDuration("BROWSER_IDLE_TIMEOUT", 5*time.Minute),
+		BrowserMaxRequests:   getEnvInt("BROWSER_MAX_REQUESTS", 100),
+		BrowserMaxAge:        getEnvDuration("BROWSER_MAX_AGE", 30*time.Minute),
+		ChromePath:           getEnv("CHROME_PATH", ""),
+		ChallengeTimeout:     getEnvDuration("CHALLENGE_TIMEOUT", 60*time.Second),
+		ChallengeWaitTime:    getEnvDuration("CHALLENGE_WAIT_TIME", 30*time.Second),
+		TwoCaptchaAPIKey:     getEnv("TWOCAPTCHA_API_KEY", ""),
+		CapSolverAPIKey:      getEnv("CAPSOLVER_API_KEY", ""),
 		RefyneAPISecret:      getEnv("REFYNE_API_SECRET", ""),
 		ClerkIssuer:          getEnv("CLERK_ISSUER", ""),
-		RequiredFeature:      getEnv("REQUIRED_FEATURE", "captcha"),
-		AllowUnauthenticated: getEnv("ALLOW_UNAUTHENTICATED", "false") == "true",
-		ProxyEnabled:         getEnv("PROXY_ENABLED", "false") == "true",
-		ProxyURL:           getEnv("PROXY_URL", ""),
-		SessionMaxIdle:     getEnvDuration("SESSION_MAX_IDLE", 10*time.Minute),
-		DisableStealth:     getEnv("DISABLE_STEALTH", "false") == "true",
+		RequiredFeature:      getEnv("REQUIRED_FEATURE", "content_dynamic"),
+		AllowUnauthenticated: getEnvBool("ALLOW_UNAUTHENTICATED", false),
+		ProxyEnabled:         getEnvBool("PROXY_ENABLED", false),
+		ProxyURL:             getEnv("PROXY_URL", ""),
+		SessionMaxIdle:       getEnvDuration("SESSION_MAX_IDLE", 10*time.Minute),
+		SessionDBPath:        getEnv("SESSION_DB_PATH", ""),
+		IdleTimeout:          getEnvDuration("IDLE_TIMEOUT", 0), // 0 = disabled
+		DisableStealth:       getEnvBool("DISABLE_STEALTH", false),
 	}
 }
 
@@ -86,6 +93,14 @@ func getEnvInt(key string, defaultVal int) int {
 	return defaultVal
 }
 
+func getEnvBool(key string, defaultVal bool) bool {
+	if val := os.Getenv(key); val != "" {
+		lower := strings.ToLower(val)
+		return lower == "true" || lower == "1" || lower == "yes"
+	}
+	return defaultVal
+}
+
 func getEnvDuration(key string, defaultVal time.Duration) time.Duration {
 	if val := os.Getenv(key); val != "" {
 		if d, err := time.ParseDuration(val); err == nil {
@@ -94,3 +109,4 @@ func getEnvDuration(key string, defaultVal time.Duration) time.Duration {
 	}
 	return defaultVal
 }
+
