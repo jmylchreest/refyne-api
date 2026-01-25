@@ -55,24 +55,6 @@ func NewCaptchaService(cfg CaptchaServiceConfig) *CaptchaService {
 	}
 }
 
-// CheckHealth checks the captcha service health and logs the version.
-// This is useful for verifying connectivity and version compatibility on startup.
-// Returns nil if the service is unavailable (scale-to-zero) - this is not an error.
-func (s *CaptchaService) CheckHealth(ctx context.Context) error {
-	health, err := s.client.Health(ctx)
-	if err != nil {
-		s.logger.Debug("captcha service health check failed (may be scaled to zero)", "error", err)
-		return nil // Not an error - service may be scaled to zero
-	}
-
-	s.logger.Info("captcha service connected",
-		"status", health.Status,
-		"captcha_version", health.Version,
-	)
-
-	return nil
-}
-
 // CaptchaSolveInput is the input for solving a captcha/fetching dynamic content.
 type CaptchaSolveInput struct {
 	URL        string
