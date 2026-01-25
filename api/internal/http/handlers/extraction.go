@@ -25,7 +25,7 @@ func NewExtractionHandler(extractionSvc *service.ExtractionService, jobSvc *serv
 
 // CleanerConfigInput represents a cleaner in the chain.
 type CleanerConfigInput struct {
-	Name    string                 `json:"name" minLength:"1" doc:"Cleaner name (noop, markdown, trafilatura, readability)"`
+	Name    string                 `json:"name" minLength:"1" doc:"Cleaner name (noop, refyne)"`
 	Options *CleanerOptionsInput   `json:"options,omitempty" doc:"Cleaner-specific options"`
 }
 

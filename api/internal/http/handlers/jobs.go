@@ -73,7 +73,7 @@ type CrawlInlineWebhookInput struct {
 
 // JobCleanerConfigInput represents a cleaner in the chain (duplicated to avoid import cycle).
 type JobCleanerConfigInput struct {
-	Name    string                  `json:"name" minLength:"1" doc:"Cleaner name (noop, markdown, trafilatura, readability)"`
+	Name    string                  `json:"name" minLength:"1" doc:"Cleaner name (noop, refyne)"`
 	Options *JobCleanerOptionsInput `json:"options,omitempty" doc:"Cleaner-specific options"`
 }
 

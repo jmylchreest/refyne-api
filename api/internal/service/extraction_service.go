@@ -80,7 +80,7 @@ type ExtractInput struct {
 	Schema       json.RawMessage  `json:"schema"`                  // Can be structured schema (YAML/JSON) or freeform prompt - auto-detected
 	FetchMode    string           `json:"fetch_mode,omitempty"`
 	LLMConfig    *LLMConfigInput  `json:"llm_config,omitempty"`
-	CleanerChain []CleanerConfig  `json:"cleaner_chain,omitempty"` // Content cleaner chain: [{name: "trafilatura", options: {...}}, {name: "markdown"}]
+	CleanerChain []CleanerConfig  `json:"cleaner_chain,omitempty"` // Content cleaner chain: [{name: "refyne", options: {...}}]
 }
 
 // LLMConfigInput represents user-provided LLM configuration.
