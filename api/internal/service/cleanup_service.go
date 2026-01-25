@@ -3,6 +3,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -110,7 +111,8 @@ func (s *CleanupService) CleanupOldJobs(ctx context.Context, maxAgeResults, maxA
 		"errors", len(result.Errors),
 	)
 
-	return result, nil
+	// Return combined error using errors.Join (nil if no errors)
+	return result, errors.Join(result.Errors...)
 }
 
 // RunScheduledCleanup runs the cleanup task as a background goroutine.
