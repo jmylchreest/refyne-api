@@ -96,7 +96,7 @@ func (w *Worker) Start(ctx context.Context) {
 	)
 
 	// Start concurrent workers
-	for i := 0; i < w.concurrency; i++ {
+	for i := range w.concurrency {
 		w.wg.Add(1)
 		go w.runWorker(ctx, i)
 	}

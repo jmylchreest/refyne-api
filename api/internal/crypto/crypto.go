@@ -106,7 +106,7 @@ func DeriveKeyFromSecret(secret string) []byte {
 	secretBytes := []byte(secret)
 
 	// Copy secret bytes into key, cycling if necessary
-	for i := 0; i < 32; i++ {
+	for i := range key {
 		if len(secretBytes) > 0 {
 			key[i] = secretBytes[i%len(secretBytes)]
 		}

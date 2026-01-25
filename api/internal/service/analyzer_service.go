@@ -259,11 +259,8 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 		)
 	} else if input.Depth > 0 && len(links) > 0 {
 		// Fallback: if no detail links identified but depth > 0, use first few links
-		maxSamples := 2
-		if len(links) < maxSamples {
-			maxSamples = len(links)
-		}
-		for i := 0; i < maxSamples; i++ {
+		maxSamples := min(2, len(links))
+		for i := range maxSamples {
 			content, _, _, err := s.fetchContent(ctx, links[i], string(fetchMode))
 			if err != nil {
 				s.logger.Warn("failed to fetch detail page",
@@ -798,7 +795,7 @@ func (s *AnalyzerService) buildAnalysisPrompt(mainContent string, detailContents
 	if len(links) > 0 {
 		sb.WriteString("\n### Links Found\n")
 		maxLinks := min(15, len(links))
-		for i := 0; i < maxLinks; i++ {
+		for i := range maxLinks {
 			sb.WriteString(fmt.Sprintf("- %s\n", links[i]))
 		}
 	}
@@ -1013,14 +1010,6 @@ func ExtractDomain(rawURL string) string {
 		return ""
 	}
 	return parsed.Host
-}
-
-// min returns the smaller of two integers.
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // isContextLengthError checks if an error is related to exceeding LLM context window limits.
