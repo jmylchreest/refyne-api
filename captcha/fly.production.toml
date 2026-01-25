@@ -25,6 +25,7 @@ primary_region = "lhr"  # London
 
 # Internal-only service - no public ports
 # Access via Fly private networking: http://refyne-captcha.internal:8191
+# Max machines set via: fly scale count --max 3 --app refyne-captcha
 [[services]]
   internal_port = 8191
   protocol = "tcp"

@@ -19,7 +19,8 @@ primary_region = "lhr"  # London - close to Turso aws-eu-west-1
   force_https = true
   auto_stop_machines = "stop"
   auto_start_machines = true
-  min_machines_running = 1  # Keep one machine warm for production
+  min_machines_running = 0  # Scale to zero when idle
+  # Max machines set via: fly scale count --max 5 --app refyne-api
   processes = ["app"]
 
   [http_service.concurrency]
