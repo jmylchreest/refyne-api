@@ -24,6 +24,12 @@ primary_region = "lhr"  # London - close to Turso aws-eu-west-1
   # Max machines: fly scale count --max-per-region 2 --app refyne-api-staging
   processes = ["app"]
 
+  [http_service.http_options]
+    # Enable HTTP/2 to backend for better long-running request handling
+    h2_backend = true
+    # Idle timeout for connections (default 60s, extend for LLM requests)
+    idle_timeout = 300
+
   [http_service.concurrency]
     type = "requests"
     hard_limit = 250

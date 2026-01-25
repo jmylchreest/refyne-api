@@ -144,10 +144,21 @@ func (m *IdleMonitor) run() {
 			idleTime := time.Since(m.lastActivity)
 			m.mu.RUnlock()
 
-			// Check if background work is in progress (e.g., job worker processing)
+			// Check if background work is in progress (e.g., job worker processing, pprof connections)
 			backgroundBusy := false
 			if m.backgroundWorkCheck != nil {
 				backgroundBusy = m.backgroundWorkCheck()
+			}
+
+			// If background work is in progress, reset the idle timer
+			// This gives a full grace period after work completes before shutdown,
+			// allowing pollers and other periodic tasks to work correctly
+			if active > 0 || backgroundBusy {
+				m.mu.Lock()
+				m.lastActivity = time.Now()
+				m.mu.Unlock()
+				// Re-read idle time after reset
+				idleTime = 0
 			}
 
 			// Only trigger shutdown if:

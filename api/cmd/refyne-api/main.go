@@ -10,6 +10,7 @@ import (
 	_ "net/http/pprof" // Register pprof handlers on DefaultServeMux
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -18,6 +19,8 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/go-chi/httprate"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 
 	"github.com/jmylchreest/refyne-api/internal/auth"
 	"github.com/jmylchreest/refyne-api/internal/config"
@@ -51,11 +54,20 @@ func main() {
 
 	// Start pprof server (access via: fly proxy 6060:6060)
 	// Binds to 0.0.0.0 so it's accessible via Fly.io internal networking
+	// Track active connections to suppress idle timeout while profiling
+	var pprofActiveConns int64
 	if os.Getenv("ENABLE_PPROF") == "true" {
 		go func() {
 			pprofAddr := "0.0.0.0:6060"
 			logger.Info("starting pprof server", "addr", pprofAddr)
-			if err := http.ListenAndServe(pprofAddr, nil); err != nil {
+			// Wrap DefaultServeMux with connection tracking
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				atomic.AddInt64(&pprofActiveConns, 1)
+				defer atomic.AddInt64(&pprofActiveConns, -1)
+				logger.Debug("pprof request", "path", r.URL.Path, "active_conns", atomic.LoadInt64(&pprofActiveConns))
+				http.DefaultServeMux.ServeHTTP(w, r)
+			})
+			if err := http.ListenAndServe(pprofAddr, handler); err != nil {
 				logger.Error("pprof server error", "error", err)
 			}
 		}()
@@ -166,7 +178,9 @@ func main() {
 	}
 
 	// Initialize idle monitor for scale-to-zero (must be created before router middleware)
-	// The background work checker prevents idle shutdown while the job worker is processing
+	// The background work checker prevents idle shutdown while:
+	// - The job worker is processing jobs
+	// - Someone is connected to pprof (profiling in progress)
 	idleMonitor := shutdown.NewIdleMonitor(shutdown.IdleMonitorConfig{
 		Timeout: cfg.IdleTimeout,
 		Logger:  logger,
@@ -177,7 +191,12 @@ func main() {
 			"/api/v1/health",
 		},
 		BackgroundWorkCheck: func() bool {
-			return jobWorker.ActiveJobs() > 0
+			activeJobs := jobWorker.ActiveJobs() > 0
+			pprofConns := atomic.LoadInt64(&pprofActiveConns) > 0
+			if pprofConns {
+				logger.Debug("idle suppressed: pprof connection active", "pprof_conns", atomic.LoadInt64(&pprofActiveConns))
+			}
+			return activeJobs || pprofConns
 		},
 	})
 	idleMonitor.Start()
@@ -367,13 +386,15 @@ func main() {
 	router.With(chiAuthMiddleware).Get("/api/v1/jobs/{id}/results", jobHandler.GetJobResultsRaw)
 	router.With(chiAuthMiddleware).Get("/api/v1/jobs/{id}/stream", jobHandler.StreamResults)
 
-	// Create server
+	// Create server with h2c (HTTP/2 cleartext) support for Fly.io proxy
+	// WriteTimeout must be long enough for LLM requests (can take 60-120s for complex pages)
+	h2s := &http2.Server{}
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
-		Handler:      router,
+		Handler:      h2c.NewHandler(router, h2s),
 		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 60 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		WriteTimeout: 300 * time.Second,
+		IdleTimeout:  300 * time.Second,
 	}
 
 	// Graceful shutdown - triggered by signal OR idle timeout

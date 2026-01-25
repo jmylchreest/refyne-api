@@ -20,6 +20,7 @@ require (
 	github.com/svix/svix-webhooks v1.84.1
 	github.com/tursodatabase/go-libsql v0.0.0-20251219133454-43644db490ff
 	golang.org/x/crypto v0.47.0
+	golang.org/x/net v0.49.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -93,7 +94,6 @@ require (
 	github.com/yosssi/gohtml v0.0.0-20201013000340-ee4748c638f4 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	golang.org/x/exp v0.0.0-20260112195511-716be5621a96 // indirect
-	golang.org/x/net v0.49.0 // indirect
 	golang.org/x/sys v0.40.0 // indirect
 	golang.org/x/text v0.33.0 // indirect
 	google.golang.org/appengine v1.6.8 // indirect
