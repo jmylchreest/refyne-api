@@ -1,12 +1,14 @@
 package service
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -655,13 +657,9 @@ func (s *AnalyzerService) identifyDetailLinks(baseURL string, links []string) []
 	}
 
 	// Sort by score (highest first) and return top candidates
-	for i := 0; i < len(scored)-1; i++ {
-		for j := i + 1; j < len(scored); j++ {
-			if scored[j].score > scored[i].score {
-				scored[i], scored[j] = scored[j], scored[i]
-			}
-		}
-	}
+	slices.SortFunc(scored, func(a, b scoredLink) int {
+		return cmp.Compare(b.score, a.score)
+	})
 
 	// Return top 2 unique patterns (avoid duplicates like /products/a and /products/b)
 	var result []string

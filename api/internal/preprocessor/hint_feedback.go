@@ -1,8 +1,10 @@
 package preprocessor
 
 import (
+	"cmp"
 	"encoding/json"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -131,13 +133,9 @@ func (h *HintFeedback) ProcessWithURL(content, url string) (*Hints, error) {
 		}
 
 		// Sort by count descending (types with counts first, then alphabetically)
-		for i := 0; i < len(hints.DetectedTypes)-1; i++ {
-			for j := i + 1; j < len(hints.DetectedTypes); j++ {
-				if hints.DetectedTypes[j].Count > hints.DetectedTypes[i].Count {
-					hints.DetectedTypes[i], hints.DetectedTypes[j] = hints.DetectedTypes[j], hints.DetectedTypes[i]
-				}
-			}
-		}
+		slices.SortFunc(hints.DetectedTypes, func(a, b DetectedContentType) int {
+			return cmp.Compare(b.Count, a.Count)
+		})
 
 		// Add feedback hints if we detected feedback types
 		if len(hints.DetectedTypes) > 0 {
@@ -520,13 +518,9 @@ func (h *HintFeedback) detectFeedbackTypes(content string) []DetectedContentType
 	}
 
 	// Sort by count descending
-	for i := 0; i < len(detected)-1; i++ {
-		for j := i + 1; j < len(detected); j++ {
-			if detected[j].Count > detected[i].Count {
-				detected[i], detected[j] = detected[j], detected[i]
-			}
-		}
-	}
+	slices.SortFunc(detected, func(a, b DetectedContentType) int {
+		return cmp.Compare(b.Count, a.Count)
+	})
 
 	return detected
 }

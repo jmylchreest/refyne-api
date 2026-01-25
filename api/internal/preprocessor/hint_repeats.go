@@ -1,7 +1,9 @@
 package preprocessor
 
 import (
+	"cmp"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -131,13 +133,9 @@ func (h *HintRepeats) detectAllRepeatedElements(content string) []DetectedConten
 	}
 
 	// Sort by count descending
-	for i := 0; i < len(detected)-1; i++ {
-		for j := i + 1; j < len(detected); j++ {
-			if detected[j].Count > detected[i].Count {
-				detected[i], detected[j] = detected[j], detected[i]
-			}
-		}
-	}
+	slices.SortFunc(detected, func(a, b DetectedContentType) int {
+		return cmp.Compare(b.Count, a.Count)
+	})
 
 	return detected
 }

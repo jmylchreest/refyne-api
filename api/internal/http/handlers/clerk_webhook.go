@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	svix "github.com/svix/svix-webhooks/go"
@@ -401,29 +402,16 @@ func (h *ClerkWebhookHandler) planToTier(planID, planName string) string {
 	// Map based on plan name or ID patterns
 	// Adjust these based on your actual Clerk plan configuration
 	switch {
-	case contains(planName, "pro") || contains(planID, "pro"):
+	case strings.Contains(planName, "pro") || strings.Contains(planID, "pro"):
 		return "pro"
-	case contains(planName, "starter") || contains(planID, "starter"):
+	case strings.Contains(planName, "starter") || strings.Contains(planID, "starter"):
 		return "starter"
-	case contains(planName, "free") || contains(planID, "free"):
+	case strings.Contains(planName, "free") || strings.Contains(planID, "free"):
 		return "free"
 	default:
 		// Default to starter if unrecognized
 		return "starter"
 	}
-}
-
-// contains checks if s contains substr (case-insensitive would be better but keeping simple).
-func contains(s, substr string) bool {
-	if len(substr) > len(s) {
-		return false
-	}
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 // handlePlanChanged triggers a tier sync when plans are created or updated in Clerk.
