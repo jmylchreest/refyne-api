@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	_ "net/http/pprof" // Register pprof handlers on DefaultServeMux
 	"os"
 	"os/signal"
 	"syscall"
@@ -43,6 +44,15 @@ func main() {
 		"port", cfg.Port,
 		"pool_size", cfg.BrowserPoolSize,
 	)
+
+	// Start pprof server on localhost only (access via: fly proxy 6060:6060)
+	go func() {
+		pprofAddr := "localhost:6060"
+		logger.Info("starting pprof server", "addr", pprofAddr)
+		if err := http.ListenAndServe(pprofAddr, nil); err != nil {
+			logger.Error("pprof server error", "error", err)
+		}
+	}()
 
 	if cfg.DisableStealth {
 		logger.Warn("stealth mode DISABLED - browser will be detected as automated (for testing only)")

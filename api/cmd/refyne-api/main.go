@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	_ "net/http/pprof" // Register pprof handlers on DefaultServeMux
 	"os"
 	"os/signal"
 	"syscall"
@@ -47,6 +48,15 @@ func main() {
 		"built", v.Date,
 		"go_version", v.GoVersion,
 	)
+
+	// Start pprof server on localhost only (access via: fly proxy 6060:6060)
+	go func() {
+		pprofAddr := "localhost:6060"
+		logger.Info("starting pprof server", "addr", pprofAddr)
+		if err := http.ListenAndServe(pprofAddr, nil); err != nil {
+			logger.Error("pprof server error", "error", err)
+		}
+	}()
 
 	// Load configuration
 	cfg, err := config.Load()
