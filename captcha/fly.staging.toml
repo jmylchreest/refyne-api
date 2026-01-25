@@ -1,0 +1,53 @@
+# fly.staging.toml - Fly.io configuration for refyne-captcha STAGING service
+# Deploy: fly deploy --config fly.staging.toml --app refyne-captcha-staging
+#
+# INTERNAL SERVICE ONLY - Not publicly accessible
+# Access via private networking: refyne-captcha-staging.internal:8191
+# Only accessible from apps in the same Fly.io organization
+
+app = "refyne-captcha-staging"
+primary_region = "lhr"  # London
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8191"
+  LOG_LEVEL = "debug"
+  BROWSER_POOL_SIZE = "1"            # Smaller pool for staging
+  SESSION_DB_PATH = ":memory:"       # In-memory SQLite (no persistence needed)
+  IDLE_TIMEOUT = "60s"               # Scale to zero after 60s idle
+  SESSION_MAX_IDLE = "5m"            # Shorter session timeout for staging
+  CHALLENGE_TIMEOUT = "60s"
+  DISABLE_STEALTH = "false"
+  # Secrets set via: fly secrets set KEY=value --app refyne-captcha-staging
+  # Required: REFYNE_API_SECRET (shared with refyne-api-staging for HMAC verification)
+
+# Internal-only service - no public ports
+# Access via Fly private networking: http://refyne-captcha-staging.internal:8191
+[[services]]
+  internal_port = 8191
+  protocol = "tcp"
+  auto_stop_machines = "stop"     # Stop after idle period
+  auto_start_machines = true      # Start on incoming request
+  min_machines_running = 0        # Scale to zero when idle
+
+  # Concurrency limits - smaller for staging
+  [services.concurrency]
+    type = "requests"
+    hard_limit = 10
+    soft_limit = 8
+
+  # Internal TCP health check
+  [[services.tcp_checks]]
+    grace_period = "30s"   # Allow time for Chrome to start
+    interval = "30s"
+    timeout = "10s"
+
+# No persistent volume - using in-memory SQLite for sessions
+# Each instance restart loses session state (acceptable for short-lived sessions)
+
+[[vm]]
+  memory = "2gb"         # Chrome needs memory for download/extraction
+  cpu_kind = "shared"
+  cpus = 2

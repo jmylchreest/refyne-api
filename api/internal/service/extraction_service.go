@@ -125,10 +125,20 @@ type UsageInfo struct {
 
 // ExtractMeta represents extraction metadata.
 type ExtractMeta struct {
-	FetchDurationMs   int    `json:"fetch_duration_ms"`
-	ExtractDurationMs int    `json:"extract_duration_ms"`
-	Model             string `json:"model"`
-	Provider          string `json:"provider"`
+	FetchDurationMs   int          `json:"fetch_duration_ms"`
+	ExtractDurationMs int          `json:"extract_duration_ms"`
+	Model             string       `json:"model"`
+	Provider          string       `json:"provider"`
+	BudgetSkips       []BudgetSkip `json:"budget_skips,omitempty"` // Models skipped due to budget constraints
+}
+
+// BudgetSkip represents a model that was skipped due to budget constraints.
+type BudgetSkip struct {
+	Provider      string  `json:"provider"`
+	Model         string  `json:"model"`
+	EstimatedCost float64 `json:"estimated_cost_usd"`
+	AvailableBudget float64 `json:"available_budget_usd"`
+	Reason        string  `json:"reason"`
 }
 
 // ExtractContext holds context for billing tracking.
@@ -139,6 +149,7 @@ type ExtractContext struct {
 	IsBYOK              bool
 	BYOKAllowed         bool   // From JWT claims - whether user has the "provider_byok" feature
 	ModelsCustomAllowed bool   // From JWT claims - whether user has the "models_custom" feature
+	ModelsPremiumAllowed bool  // From JWT claims - whether user has the "models_premium" feature (budget-based fallback)
 	LLMProvider         string // For S3 API keys: forced LLM provider (bypasses fallback chain)
 	LLMModel            string // For S3 API keys: forced LLM model (bypasses fallback chain)
 }
@@ -209,8 +220,30 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 		"is_byok", isBYOK,
 	)
 
-	// Estimate cost (triggers pricing cache refresh if needed) and check balance for non-BYOK
-	if s.billing != nil && len(llmConfigs) > 0 {
+	// For models_premium users, get available balance for per-model budget checking
+	// This enables budget-based fallback - skip expensive models if insufficient balance
+	var availableBudget float64
+	var budgetSkips []BudgetSkip
+	useBudgetFallback := !isBYOK && ectx.ModelsPremiumAllowed && s.billing != nil
+
+	if useBudgetFallback {
+		var err error
+		availableBudget, err = s.billing.GetAvailableBalance(ctx, userID)
+		if err != nil {
+			s.logger.Warn("failed to get available balance, disabling budget fallback",
+				"user_id", userID,
+				"error", err,
+			)
+			useBudgetFallback = false
+		} else {
+			s.logger.Debug("budget fallback enabled",
+				"user_id", userID,
+				"available_budget_usd", availableBudget,
+				"model_count", len(llmConfigs),
+			)
+		}
+	} else if s.billing != nil && len(llmConfigs) > 0 && !isBYOK {
+		// Standard pre-flight balance check for non-premium users
 		estimatedCost := s.billing.EstimateCost(1, llmConfigs[0].Model, llmConfigs[0].Provider)
 		s.logger.Debug("pre-flight cost estimate",
 			"user_id", userID,
@@ -219,11 +252,8 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 			"estimated_cost_usd", estimatedCost,
 			"is_byok", isBYOK,
 		)
-		// Only check balance for non-BYOK users
-		if !isBYOK {
-			if err := s.billing.CheckSufficientBalance(ctx, userID, estimatedCost); err != nil {
-				return nil, err
-			}
+		if err := s.billing.CheckSufficientBalance(ctx, userID, estimatedCost); err != nil {
+			return nil, err
 		}
 	}
 
@@ -231,9 +261,47 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 	var lastErr error
 	var lastLLMErr *llm.LLMError
 	var lastCfg *LLMConfigInput
+	modelsSkippedDueToBudget := 0
 
 	for providerIdx, llmCfg := range llmConfigs {
 		lastCfg = llmCfg
+
+		// Budget-based fallback: check if this model is affordable
+		if useBudgetFallback {
+			estimatedCost := s.billing.EstimateCost(1, llmCfg.Model, llmCfg.Provider)
+
+			if estimatedCost > availableBudget {
+				// Skip this model - too expensive for remaining budget
+				skip := BudgetSkip{
+					Provider:        llmCfg.Provider,
+					Model:           llmCfg.Model,
+					EstimatedCost:   estimatedCost,
+					AvailableBudget: availableBudget,
+					Reason:          "estimated_cost_exceeds_budget",
+				}
+				budgetSkips = append(budgetSkips, skip)
+				modelsSkippedDueToBudget++
+
+				s.logger.Info("skipping model due to budget constraint",
+					"user_id", userID,
+					"provider", llmCfg.Provider,
+					"model", llmCfg.Model,
+					"estimated_cost_usd", estimatedCost,
+					"available_budget_usd", availableBudget,
+					"provider_idx", providerIdx+1,
+					"of_providers", len(llmConfigs),
+				)
+				continue // Try next model in the fallback chain
+			}
+
+			s.logger.Debug("model within budget",
+				"user_id", userID,
+				"provider", llmCfg.Provider,
+				"model", llmCfg.Model,
+				"estimated_cost_usd", estimatedCost,
+				"available_budget_usd", availableBudget,
+			)
+		}
 
 		s.logger.Info("extraction attempt",
 			"user_id", userID,
@@ -266,7 +334,7 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 		// Check for success
 		if err == nil && result != nil && result.Error == nil {
 			// Success! Handle billing and return
-			return s.handleSuccessfulExtraction(ctx, userID, input, ectx, llmCfg, result, isBYOK, startTime)
+			return s.handleSuccessfulExtraction(ctx, userID, input, ectx, llmCfg, result, isBYOK, startTime, budgetSkips)
 		}
 
 		// Extraction failed - classify the error
@@ -305,8 +373,20 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 
 	// All attempts failed - record the failure with detailed error info
 	if lastErr != nil {
-		s.recordFailedExtractionWithDetails(ctx, userID, input, ectx, lastCfg, isBYOK, lastErr, lastLLMErr, len(llmConfigs), startTime)
+		s.recordFailedExtractionWithDetails(ctx, userID, input, ectx, lastCfg, isBYOK, lastErr, lastLLMErr, len(llmConfigs), startTime, budgetSkips)
 		return nil, s.handleLLMError(lastErr, lastCfg, isBYOK)
+	}
+
+	// Check if all models were skipped due to budget constraints
+	if modelsSkippedDueToBudget > 0 && modelsSkippedDueToBudget == len(llmConfigs) {
+		s.logger.Warn("all models skipped due to budget constraints",
+			"user_id", userID,
+			"models_skipped", modelsSkippedDueToBudget,
+			"available_budget_usd", availableBudget,
+		)
+		// Record the budget failure
+		s.recordBudgetExhaustedFailure(ctx, userID, input, ectx, startTime, budgetSkips)
+		return nil, llm.NewInsufficientCreditsError("all models exceed available budget", 0, int(availableBudget*100))
 	}
 
 	return nil, fmt.Errorf("extraction failed: no LLM providers configured")
@@ -324,6 +404,7 @@ func (s *ExtractionService) recordFailedExtractionWithDetails(
 	llmErr *llm.LLMError,
 	totalRetries int,
 	startTime time.Time,
+	budgetSkips []BudgetSkip,
 ) {
 	if s.billing == nil {
 		return
@@ -350,6 +431,11 @@ func (s *ExtractionService) recordFailedExtractionWithDetails(
 		errorMessage = err.Error()
 	}
 
+	// Add budget skip information to error message if any models were skipped
+	if len(budgetSkips) > 0 {
+		errorMessage = fmt.Sprintf("%s (budget skips: %d models)", errorMessage, len(budgetSkips))
+	}
+
 	usageRecord := &UsageRecord{
 		UserID:          userID,
 		JobType:         models.JobTypeExtract,
@@ -374,6 +460,48 @@ func (s *ExtractionService) recordFailedExtractionWithDetails(
 	}
 }
 
+// recordBudgetExhaustedFailure records usage when all models were skipped due to budget.
+func (s *ExtractionService) recordBudgetExhaustedFailure(
+	ctx context.Context,
+	userID string,
+	input ExtractInput,
+	ectx *ExtractContext,
+	startTime time.Time,
+	budgetSkips []BudgetSkip,
+) {
+	if s.billing == nil {
+		return
+	}
+
+	// Build detailed error message with all skipped models
+	var skipDetails []string
+	for _, skip := range budgetSkips {
+		skipDetails = append(skipDetails, fmt.Sprintf("%s/%s ($%.4f)", skip.Provider, skip.Model, skip.EstimatedCost))
+	}
+	errorMessage := fmt.Sprintf("all %d models skipped due to budget constraints: %s",
+		len(budgetSkips), strings.Join(skipDetails, ", "))
+
+	usageRecord := &UsageRecord{
+		UserID:          userID,
+		JobType:         models.JobTypeExtract,
+		Status:          "failed",
+		TotalChargedUSD: 0, // No charge - nothing was attempted
+		IsBYOK:          false,
+		TargetURL:       input.URL,
+		SchemaID:        ectx.SchemaID,
+		ErrorMessage:    errorMessage,
+		ErrorCode:       "budget_exhausted",
+		PagesAttempted:  0,
+		PagesSuccessful: 0,
+		TotalDurationMs: int(time.Since(startTime).Milliseconds()),
+	}
+
+	// Use detached context - we want to record usage even if request timed out
+	if recordErr := s.billing.RecordUsage(context.WithoutCancel(ctx), usageRecord); recordErr != nil {
+		s.logger.Warn("failed to record budget exhausted failure", "error", recordErr)
+	}
+}
+
 // handleSuccessfulExtraction processes a successful extraction result.
 func (s *ExtractionService) handleSuccessfulExtraction(
 	ctx context.Context,
@@ -384,6 +512,7 @@ func (s *ExtractionService) handleSuccessfulExtraction(
 	result *refyne.Result,
 	isBYOK bool,
 	startTime time.Time,
+	budgetSkips []BudgetSkip,
 ) (*ExtractOutput, error) {
 	// Handle billing (charge and record usage)
 	var billingResult *ChargeForUsageResult
@@ -435,6 +564,14 @@ func (s *ExtractionService) handleSuccessfulExtraction(
 	// Apply shared post-extraction processing (URL resolution, etc.)
 	processedData := s.processExtractionResult(result.Data, result.URL)
 
+	// Log budget skips if any
+	if len(budgetSkips) > 0 {
+		s.logger.Info("extraction completed with budget skips",
+			"user_id", userID,
+			"models_skipped", len(budgetSkips),
+		)
+	}
+
 	return &ExtractOutput{
 		Data:        processedData,
 		URL:         result.URL,
@@ -447,6 +584,7 @@ func (s *ExtractionService) handleSuccessfulExtraction(
 			ExtractDurationMs: int(result.ExtractDuration.Milliseconds()),
 			Model:             result.Model,
 			Provider:          result.Provider,
+			BudgetSkips:       budgetSkips,
 		},
 	}, nil
 }

@@ -82,6 +82,19 @@ type Config struct {
 	CleanupMaxAgeResults time.Duration // Max age of job results to keep (default 30 days)
 	CleanupMaxAgeDebug   time.Duration // Max age of debug captures to keep (default 7 days)
 	CleanupInterval      time.Duration // How often to run cleanup (default 24 hours)
+
+	// Worker
+	WorkerPollInterval      time.Duration // How often to poll for new jobs (default 5s)
+	WorkerConcurrency       int           // Number of concurrent workers (default 3)
+	WorkerShutdownGracePeriod time.Duration // Max time to wait for running jobs during shutdown (default 5m)
+
+	// Captcha/Dynamic Content Service (internal)
+	CaptchaServiceURL     string // Internal URL of captcha service (use .internal for Fly private networking)
+	CaptchaSecret         string // HMAC secret for signing requests to captcha service
+	CaptchaExternalAPIKey string // API key for external captcha services (2captcha, etc.) when native solving fails
+
+	// Idle shutdown settings (for scale-to-zero on Fly.io)
+	IdleTimeout time.Duration // Time before shutting down when idle (0 = disabled)
 }
 
 // Load reads configuration from environment variables.
@@ -94,11 +107,11 @@ func Load() (*Config, error) {
 		JWTExpiry:         getEnvDuration("JWT_EXPIRY", 15*time.Minute),
 		RefreshExpiry:     getEnvDuration("REFRESH_EXPIRY", 720*time.Hour),
 
-		OAuthGoogleClientID:       getEnv("OAUTH_GOOGLE_CLIENT_ID", ""),
-		OAuthGoogleClientSecret:   getEnv("OAUTH_GOOGLE_CLIENT_SECRET", ""),
-		OAuthGitHubClientID:       getEnv("OAUTH_GITHUB_CLIENT_ID", ""),
-		OAuthGitHubClientSecret:   getEnv("OAUTH_GITHUB_CLIENT_SECRET", ""),
-		OAuthMicrosoftClientID:    getEnv("OAUTH_MICROSOFT_CLIENT_ID", ""),
+		OAuthGoogleClientID:        getEnv("OAUTH_GOOGLE_CLIENT_ID", ""),
+		OAuthGoogleClientSecret:    getEnv("OAUTH_GOOGLE_CLIENT_SECRET", ""),
+		OAuthGitHubClientID:        getEnv("OAUTH_GITHUB_CLIENT_ID", ""),
+		OAuthGitHubClientSecret:    getEnv("OAUTH_GITHUB_CLIENT_SECRET", ""),
+		OAuthMicrosoftClientID:     getEnv("OAUTH_MICROSOFT_CLIENT_ID", ""),
 		OAuthMicrosoftClientSecret: getEnv("OAUTH_MICROSOFT_CLIENT_SECRET", ""),
 
 		StripeSecretKey:     getEnv("STRIPE_SECRET_KEY", ""),
@@ -142,6 +155,19 @@ func Load() (*Config, error) {
 	cfg.CleanupMaxAgeResults = getEnvDuration("CLEANUP_MAX_AGE_RESULTS", 30*24*time.Hour) // 30 days default
 	cfg.CleanupMaxAgeDebug = getEnvDuration("CLEANUP_MAX_AGE_DEBUG", 7*24*time.Hour)     // 7 days default
 	cfg.CleanupInterval = getEnvDuration("CLEANUP_INTERVAL", 24*time.Hour)               // Daily default
+
+	// Worker configuration
+	cfg.WorkerPollInterval = getEnvDuration("WORKER_POLL_INTERVAL", 5*time.Second)
+	cfg.WorkerConcurrency = getEnvInt("WORKER_CONCURRENCY", 3)
+	cfg.WorkerShutdownGracePeriod = getEnvDuration("WORKER_SHUTDOWN_GRACE_PERIOD", 5*time.Minute)
+
+	// Captcha/dynamic content service configuration (internal service)
+	cfg.CaptchaServiceURL = getEnv("CAPTCHA_SERVICE_URL", "")
+	cfg.CaptchaSecret = getEnv("CAPTCHA_SECRET", "")
+	cfg.CaptchaExternalAPIKey = getEnv("CAPTCHA_EXTERNAL_API_KEY", "")
+
+	// Idle shutdown configuration (for Fly.io scale-to-zero)
+	cfg.IdleTimeout = getEnvDuration("IDLE_TIMEOUT", 0) // 0 = disabled
 
 	// Validate required fields for hosted mode
 	if cfg.DeploymentMode == "hosted" {
@@ -187,6 +213,11 @@ func (c *Config) HasPersistence() bool {
 	return c.DataDir != ""
 }
 
+// CaptchaEnabled returns true if captcha service is configured.
+func (c *Config) CaptchaEnabled() bool {
+	return c.CaptchaServiceURL != "" && c.CaptchaSecret != ""
+}
+
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
@@ -205,7 +236,8 @@ func getEnvInt(key string, defaultValue int) int {
 
 func getEnvBool(key string, defaultValue bool) bool {
 	if value := os.Getenv(key); value != "" {
-		return strings.ToLower(value) == "true" || value == "1"
+		lower := strings.ToLower(value)
+		return lower == "true" || lower == "1" || lower == "yes"
 	}
 	return defaultValue
 }

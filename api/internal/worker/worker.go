@@ -18,23 +18,27 @@ import (
 
 // Worker processes background jobs.
 type Worker struct {
-	jobRepo       repository.JobRepository
-	jobResultRepo repository.JobResultRepository
-	extractionSvc *service.ExtractionService
-	webhookSvc    *service.WebhookService
-	storageSvc    *service.StorageService
-	sitemapSvc    *service.SitemapService
-	pollInterval  time.Duration
-	concurrency   int
-	stop          chan struct{}
-	wg            sync.WaitGroup
-	logger        *slog.Logger
+	jobRepo             repository.JobRepository
+	jobResultRepo       repository.JobResultRepository
+	extractionSvc       *service.ExtractionService
+	webhookSvc          *service.WebhookService
+	storageSvc          *service.StorageService
+	sitemapSvc          *service.SitemapService
+	pollInterval        time.Duration
+	concurrency         int
+	shutdownGracePeriod time.Duration
+	stop                chan struct{}
+	wg                  sync.WaitGroup
+	activeJobs          int64 // Number of jobs currently being processed
+	activeJobsMu        sync.Mutex
+	logger              *slog.Logger
 }
 
 // Config holds worker configuration.
 type Config struct {
-	PollInterval time.Duration
-	Concurrency  int
+	PollInterval        time.Duration
+	Concurrency         int
+	ShutdownGracePeriod time.Duration // Max time to wait for running jobs during shutdown
 }
 
 // New creates a new worker.
@@ -54,26 +58,34 @@ func New(
 	if cfg.Concurrency == 0 {
 		cfg.Concurrency = 3
 	}
+	if cfg.ShutdownGracePeriod == 0 {
+		cfg.ShutdownGracePeriod = 5 * time.Minute
+	}
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Worker{
-		jobRepo:       jobRepo,
-		jobResultRepo: jobResultRepo,
-		extractionSvc: extractionSvc,
-		webhookSvc:    webhookSvc,
-		storageSvc:    storageSvc,
-		sitemapSvc:    sitemapSvc,
-		pollInterval:  cfg.PollInterval,
-		concurrency:   cfg.Concurrency,
-		stop:          make(chan struct{}),
-		logger:        logger.With("component", "worker"),
+		jobRepo:             jobRepo,
+		jobResultRepo:       jobResultRepo,
+		extractionSvc:       extractionSvc,
+		webhookSvc:          webhookSvc,
+		storageSvc:          storageSvc,
+		sitemapSvc:          sitemapSvc,
+		pollInterval:        cfg.PollInterval,
+		concurrency:         cfg.Concurrency,
+		shutdownGracePeriod: cfg.ShutdownGracePeriod,
+		stop:                make(chan struct{}),
+		logger:              logger.With("component", "worker"),
 	}
 }
 
 // Start begins processing jobs.
 func (w *Worker) Start(ctx context.Context) {
-	w.logger.Info("starting", "concurrency", w.concurrency)
+	w.logger.Info("starting",
+		"concurrency", w.concurrency,
+		"poll_interval", w.pollInterval,
+		"shutdown_grace_period", w.shutdownGracePeriod,
+	)
 
 	// Start concurrent workers
 	for i := 0; i < w.concurrency; i++ {
@@ -82,10 +94,44 @@ func (w *Worker) Start(ctx context.Context) {
 	}
 }
 
-// Stop gracefully stops the worker.
+// ActiveJobs returns the number of jobs currently being processed.
+func (w *Worker) ActiveJobs() int64 {
+	w.activeJobsMu.Lock()
+	defer w.activeJobsMu.Unlock()
+	return w.activeJobs
+}
+
+// Stop gracefully stops the worker, waiting for active jobs to complete.
 func (w *Worker) Stop() {
-	w.logger.Info("stopping")
+	w.logger.Info("stopping, waiting for active jobs to complete", "grace_period", w.shutdownGracePeriod)
 	close(w.stop)
+
+	// Wait for active jobs to complete (up to grace period)
+	deadline := time.Now().Add(w.shutdownGracePeriod)
+	pollInterval := 500 * time.Millisecond
+
+	for time.Now().Before(deadline) {
+		w.activeJobsMu.Lock()
+		active := w.activeJobs
+		w.activeJobsMu.Unlock()
+
+		if active == 0 {
+			w.logger.Info("all active jobs completed")
+			break
+		}
+
+		w.logger.Info("waiting for active jobs", "active_jobs", active, "remaining", time.Until(deadline).Round(time.Second))
+		time.Sleep(pollInterval)
+	}
+
+	// Final check - warn if jobs still running after grace period
+	w.activeJobsMu.Lock()
+	remaining := w.activeJobs
+	w.activeJobsMu.Unlock()
+	if remaining > 0 {
+		w.logger.Warn("shutdown grace period exceeded, some jobs may be interrupted", "remaining_jobs", remaining)
+	}
+
 	w.wg.Wait()
 	w.logger.Info("stopped")
 }
@@ -118,6 +164,16 @@ func (w *Worker) processNextJob(ctx context.Context, workerID int) {
 	if job == nil {
 		return // No pending jobs
 	}
+
+	// Track active job
+	w.activeJobsMu.Lock()
+	w.activeJobs++
+	w.activeJobsMu.Unlock()
+	defer func() {
+		w.activeJobsMu.Lock()
+		w.activeJobs--
+		w.activeJobsMu.Unlock()
+	}()
 
 	w.logger.Info("processing job", "worker_id", workerID, "job_id", job.ID, "type", job.Type)
 

@@ -2,11 +2,13 @@
 package mw
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -31,6 +33,7 @@ type UserClaims struct {
 	Name     string
 	Tier     string   // From Clerk public_metadata.subscription.tier
 	Features []string // From Clerk Commerce "fea" claim
+	JobID    string   // Job ID from refyne-api (for tracking/logging)
 }
 
 // HasFeature checks if the user has a specific feature.
@@ -187,6 +190,9 @@ func Auth(cfg AuthConfig) func(http.Handler) http.Handler {
 //   - X-Refyne-User-ID: User ID
 //   - X-Refyne-Tier: User tier
 //   - X-Refyne-Features: Comma-separated features
+//   - X-Refyne-Job-ID: Job ID (included in signature for integrity)
+//
+// Signature format: HMAC-SHA256(timestamp|userID|tier|features|jobID|bodyHash)
 func validateSignedHeaders(r *http.Request, secret string) (*UserClaims, error) {
 	signature := r.Header.Get("X-Refyne-Signature")
 	timestamp := r.Header.Get("X-Refyne-Timestamp")
@@ -205,12 +211,27 @@ func validateSignedHeaders(r *http.Request, secret string) (*UserClaims, error) 
 		return nil, ErrTimestampExpired
 	}
 
-	// Build message to verify
+	// Read and restore the request body for signature verification
+	var body []byte
+	if r.Body != nil {
+		body, err = io.ReadAll(r.Body)
+		if err != nil {
+			return nil, ErrBodyReadFailed
+		}
+		// Restore the body for downstream handlers
+		r.Body = io.NopCloser(bytes.NewReader(body))
+	}
+
+	// Get header values
 	tier := r.Header.Get("X-Refyne-Tier")
 	features := r.Header.Get("X-Refyne-Features")
 	email := r.Header.Get("X-Refyne-Email")
+	jobID := r.Header.Get("X-Refyne-Job-ID")
 
-	message := timestamp + ":" + userID + ":" + tier + ":" + features
+	// Build message to verify: timestamp|userID|tier|features|jobID|bodyHash
+	// This matches the format used by the client signer
+	bodyHash := sha256.Sum256(body)
+	message := timestamp + "|" + userID + "|" + tier + "|" + features + "|" + jobID + "|" + hex.EncodeToString(bodyHash[:])
 
 	// Verify HMAC signature
 	mac := hmac.New(sha256.New, []byte(secret))
@@ -235,6 +256,7 @@ func validateSignedHeaders(r *http.Request, secret string) (*UserClaims, error) 
 		Email:    email,
 		Tier:     tier,
 		Features: featureList,
+		JobID:    jobID,
 	}, nil
 }
 
@@ -295,6 +317,7 @@ func RequireFeature(feature string) func(http.Handler) http.Handler {
 var (
 	ErrTimestampExpired = &AuthError{Message: "timestamp expired"}
 	ErrInvalidSignature = &AuthError{Message: "invalid signature"}
+	ErrBodyReadFailed   = &AuthError{Message: "failed to read request body"}
 )
 
 // AuthError represents an authentication error.

@@ -66,8 +66,8 @@ func TestLoad(t *testing.T) {
 		if cfg.SessionMaxIdle != 10*time.Minute {
 			t.Errorf("SessionMaxIdle = %v, want 10m", cfg.SessionMaxIdle)
 		}
-		if cfg.RequiredFeature != "captcha" {
-			t.Errorf("RequiredFeature = %q, want %q", cfg.RequiredFeature, "captcha")
+		if cfg.RequiredFeature != "content_dynamic" {
+			t.Errorf("RequiredFeature = %q, want %q", cfg.RequiredFeature, "content_dynamic")
 		}
 		if cfg.AllowUnauthenticated != false {
 			t.Errorf("AllowUnauthenticated = %v, want false", cfg.AllowUnauthenticated)

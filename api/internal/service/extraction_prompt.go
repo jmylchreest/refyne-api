@@ -34,8 +34,23 @@ func (s *ExtractionService) extractWithPrompt(ctx context.Context, userID string
 		return nil, fmt.Errorf("no LLM providers configured")
 	}
 
-	// Estimate cost and check balance for non-BYOK
-	if s.billing != nil && len(llmConfigs) > 0 && !isBYOK {
+	// For models_premium users, get available balance for per-model budget checking
+	var availableBudget float64
+	var budgetSkips []BudgetSkip
+	useBudgetFallback := !isBYOK && ectx.ModelsPremiumAllowed && s.billing != nil
+
+	if useBudgetFallback {
+		var err error
+		availableBudget, err = s.billing.GetAvailableBalance(ctx, userID)
+		if err != nil {
+			s.logger.Warn("failed to get available balance, disabling budget fallback",
+				"user_id", userID,
+				"error", err,
+			)
+			useBudgetFallback = false
+		}
+	} else if s.billing != nil && len(llmConfigs) > 0 && !isBYOK {
+		// Standard pre-flight balance check for non-premium users
 		estimatedCost := s.billing.EstimateCost(1, llmConfigs[0].Model, llmConfigs[0].Provider)
 		if err := s.billing.CheckSufficientBalance(ctx, userID, estimatedCost); err != nil {
 			return nil, err
@@ -63,9 +78,37 @@ func (s *ExtractionService) extractWithPrompt(ctx context.Context, userID string
 	var lastErr error
 	var lastLLMErr *llm.LLMError
 	var lastCfg *LLMConfigInput
+	modelsSkippedDueToBudget := 0
 
 	for providerIdx, llmCfg := range llmConfigs {
 		lastCfg = llmCfg
+
+		// Budget-based fallback: check if this model is affordable
+		if useBudgetFallback {
+			estimatedCost := s.billing.EstimateCost(1, llmCfg.Model, llmCfg.Provider)
+
+			if estimatedCost > availableBudget {
+				// Skip this model - too expensive for remaining budget
+				skip := BudgetSkip{
+					Provider:        llmCfg.Provider,
+					Model:           llmCfg.Model,
+					EstimatedCost:   estimatedCost,
+					AvailableBudget: availableBudget,
+					Reason:          "estimated_cost_exceeds_budget",
+				}
+				budgetSkips = append(budgetSkips, skip)
+				modelsSkippedDueToBudget++
+
+				s.logger.Info("skipping model due to budget constraint",
+					"user_id", userID,
+					"provider", llmCfg.Provider,
+					"model", llmCfg.Model,
+					"estimated_cost_usd", estimatedCost,
+					"available_budget_usd", availableBudget,
+				)
+				continue
+			}
+		}
 
 		s.logger.Info("prompt extraction attempt",
 			"user_id", userID,
@@ -141,6 +184,7 @@ func (s *ExtractionService) extractWithPrompt(ctx context.Context, userID string
 					ExtractDurationMs: int(extractDuration.Milliseconds()),
 					Model:             llmCfg.Model,
 					Provider:          llmCfg.Provider,
+					BudgetSkips:       budgetSkips,
 				},
 				RawContent: pageContent,
 			}, nil
@@ -166,6 +210,17 @@ func (s *ExtractionService) extractWithPrompt(ctx context.Context, userID string
 	// All attempts failed
 	if lastErr != nil {
 		return nil, s.handleLLMError(lastErr, lastCfg, isBYOK)
+	}
+
+	// Check if all models were skipped due to budget constraints
+	if modelsSkippedDueToBudget > 0 && modelsSkippedDueToBudget == len(llmConfigs) {
+		s.logger.Warn("all models skipped due to budget constraints",
+			"user_id", userID,
+			"models_skipped", modelsSkippedDueToBudget,
+			"available_budget_usd", availableBudget,
+		)
+		s.recordBudgetExhaustedFailure(ctx, userID, input, ectx, startTime, budgetSkips)
+		return nil, llm.NewInsufficientCreditsError("all models exceed available budget", 0, int(availableBudget*100))
 	}
 
 	return nil, fmt.Errorf("prompt extraction failed: no LLM providers configured")
