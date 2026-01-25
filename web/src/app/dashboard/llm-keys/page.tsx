@@ -26,7 +26,10 @@ export default function LLMKeysPage() {
   const [isLoading, setIsLoading] = useState(true);
 
   // Check if BYOK feature is enabled for this user
-  const features = parseClerkFeatures(sessionClaims?.fea as string | undefined);
+  const features = parseClerkFeatures(
+    sessionClaims?.fea as string | undefined,
+    sessionClaims?.public_metadata as Record<string, unknown> | undefined
+  );
   const byokEnabled = features.includes('provider_byok');
 
   // Dynamic providers from API

@@ -24,7 +24,10 @@ export default function LLMModelsPage() {
   const [isLoading, setIsLoading] = useState(true);
 
   // Check features enabled for this user
-  const features = parseClerkFeatures(sessionClaims?.fea as string | undefined);
+  const features = parseClerkFeatures(
+    sessionClaims?.fea as string | undefined,
+    sessionClaims?.public_metadata as Record<string, unknown> | undefined
+  );
   const modelsCustomEnabled = features.includes('models_custom');
   const byokEnabled = features.includes('provider_byok');
 

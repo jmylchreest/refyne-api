@@ -16,7 +16,7 @@ import {
 } from '@/lib/api';
 import { useCrawlStream, useCatalog, type CatalogCrawlOptions } from '@/lib/hooks';
 import { toast } from 'sonner';
-import { parseClerkFeatures, normalizeUrl, getErrorMessage } from '@/lib/utils';
+import { parseClerkFeatures, parseClerkTier, normalizeUrl, getErrorMessage } from '@/lib/utils';
 
 // Components
 import { ProgressAvatarDialog, defaultStages, AvatarStage } from '@/components/ui/progress-avatar';
@@ -58,13 +58,19 @@ fields:
 export default function DashboardPage() {
   const { sessionClaims, getToken } = useAuth();
   const searchParams = useSearchParams();
-  const features = parseClerkFeatures(sessionClaims?.fea as string | undefined);
+  const features = parseClerkFeatures(
+    sessionClaims?.fea as string | undefined,
+    sessionClaims?.public_metadata as Record<string, unknown> | undefined
+  );
   const canCrawl = features.includes('extraction_crawled');
   const canDynamic = features.includes('content_dynamic');
 
   // Tier limits for enforcing max pages
   const [tierLimits, setTierLimits] = useState<TierLimits[]>([]);
-  const userTier = (sessionClaims?.tier as string) || 'free';
+  const userTier = parseClerkTier(
+    sessionClaims?.pla as string | undefined,
+    sessionClaims?.public_metadata as Record<string, unknown> | undefined
+  );
   const currentTierLimits = tierLimits.find(t => t.name === userTier);
   const maxPagesLimit = currentTierLimits?.max_pages_per_crawl || 0;
 

@@ -139,23 +139,56 @@ export function getErrorMessage(error: ApiError | { error?: string }): string {
 }
 
 /**
- * Parse Clerk Commerce features from the JWT "fea" claim.
- * The claim format is comma-separated features with optional prefixes:
+ * Parse Clerk Commerce features from the JWT claims.
+ *
+ * Features are collected from two sources (in priority order):
+ * 1. public_metadata.feature_overrides (admin overrides - highest priority)
+ * 2. "fea" claim from Clerk Commerce (comma-separated with u:/o: prefixes)
+ *
+ * The fea claim format is comma-separated features with optional prefixes:
  * - "u:" prefix = user-level feature
  * - "o:" prefix = org-level feature
  * - no prefix = direct feature name
  *
  * @param feaClaim - The raw "fea" claim from Clerk session claims
- * @returns Array of feature names (prefixes stripped)
+ * @param publicMetadata - Optional public_metadata from session claims
+ * @returns Array of feature names (prefixes stripped, deduped)
  */
-export function parseClerkFeatures(feaClaim: string | undefined): string[] {
-  if (!feaClaim) return [];
-  return feaClaim.split(',').map(f => {
-    const trimmed = f.trim();
-    if (trimmed.startsWith('u:')) return trimmed.slice(2);
-    if (trimmed.startsWith('o:')) return trimmed.slice(2);
-    return trimmed;
-  }).filter(Boolean);
+export function parseClerkFeatures(
+  feaClaim: string | undefined,
+  publicMetadata?: Record<string, unknown>
+): string[] {
+  const seen = new Set<string>();
+  const features: string[] = [];
+
+  // Add admin feature overrides first (highest priority)
+  if (publicMetadata?.feature_overrides) {
+    const overrides = publicMetadata.feature_overrides;
+    if (Array.isArray(overrides)) {
+      for (const f of overrides) {
+        if (typeof f === 'string' && f && !seen.has(f)) {
+          features.push(f);
+          seen.add(f);
+        }
+      }
+    }
+  }
+
+  // Add Clerk Commerce features (strip prefixes)
+  if (feaClaim) {
+    for (const f of feaClaim.split(',')) {
+      let feature = f.trim();
+      if (feature.startsWith('u:')) feature = feature.slice(2);
+      else if (feature.startsWith('o:')) feature = feature.slice(2);
+
+      if (feature && !seen.has(feature)) {
+        features.push(feature);
+        seen.add(feature);
+      }
+    }
+  }
+
+  return features;
 }
 
 /**
@@ -163,8 +196,60 @@ export function parseClerkFeatures(feaClaim: string | undefined): string[] {
  *
  * @param feaClaim - The raw "fea" claim from Clerk session claims
  * @param feature - The feature name to check for
+ * @param publicMetadata - Optional public_metadata from session claims
  * @returns true if the feature is enabled
  */
-export function hasClerkFeature(feaClaim: string | undefined, feature: string): boolean {
-  return parseClerkFeatures(feaClaim).includes(feature);
+export function hasClerkFeature(
+  feaClaim: string | undefined,
+  feature: string,
+  publicMetadata?: Record<string, unknown>
+): boolean {
+  return parseClerkFeatures(feaClaim, publicMetadata).includes(feature);
+}
+
+/**
+ * Parse Clerk tier from the JWT claims.
+ *
+ * Tier is determined from (in priority order):
+ * 1. public_metadata.tier_override (admin override for specific users)
+ * 2. "pla" claim from Clerk Commerce (e.g., "u:tier_v1_free" or "o:tier_v1_pro")
+ * 3. public_metadata.subscription.tier (legacy)
+ * 4. Default "free"
+ *
+ * @param plaClaim - The raw "pla" (plan) claim from Clerk session claims
+ * @param publicMetadata - Optional public_metadata from session claims
+ * @returns The tier name (prefixes stripped)
+ */
+export function parseClerkTier(
+  plaClaim: string | undefined,
+  publicMetadata?: Record<string, unknown>
+): string {
+  // Check for admin tier override first (highest priority)
+  if (publicMetadata?.tier_override) {
+    const override = publicMetadata.tier_override;
+    if (typeof override === 'string' && override) {
+      return override;
+    }
+  }
+
+  // Check Clerk Commerce plan claim (strip u: or o: prefix)
+  if (plaClaim) {
+    let tier = plaClaim.trim();
+    if (tier.startsWith('u:')) tier = tier.slice(2);
+    else if (tier.startsWith('o:')) tier = tier.slice(2);
+    if (tier) return tier;
+  }
+
+  // Fall back to public_metadata.subscription.tier (legacy)
+  if (publicMetadata?.subscription) {
+    const sub = publicMetadata.subscription;
+    if (typeof sub === 'object' && sub !== null) {
+      const tier = (sub as Record<string, unknown>).tier;
+      if (typeof tier === 'string' && tier) {
+        return tier;
+      }
+    }
+  }
+
+  return 'free';
 }
