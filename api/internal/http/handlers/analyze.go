@@ -123,7 +123,7 @@ func (h *AnalyzeHandler) Analyze(ctx context.Context, input *AnalyzeInput) (*Ana
 		URL:       input.Body.URL,
 		Depth:     depth,
 		FetchMode: input.Body.FetchMode,
-	}, uc.Tier, uc.BYOKAllowed, uc.ModelsCustomAllowed)
+	}, uc.Tier, uc.BYOKAllowed, uc.ModelsCustomAllowed, uc.ContentDynamicAllowed)
 
 	if err != nil {
 		// Extract error info using shared utilities

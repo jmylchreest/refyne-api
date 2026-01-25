@@ -114,8 +114,9 @@ func NewServices(cfg *config.Config, repos *repository.Repositories, logger *slo
 			Secret:     cfg.CaptchaSecret,
 			Logger:     logger,
 		})
-		// Wire captcha service to extraction service for dynamic fetch mode
+		// Wire captcha service to extraction and analyzer services for dynamic fetch mode
 		extractionSvc.SetCaptchaService(captchaSvc)
+		analyzerSvc.SetCaptchaService(captchaSvc)
 		logger.Info("captcha service enabled for dynamic content fetching",
 			"service_url", cfg.CaptchaServiceURL,
 		)

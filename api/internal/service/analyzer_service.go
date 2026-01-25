@@ -35,6 +35,7 @@ type AnalyzerService struct {
 	cleaner         cleaner.Cleaner
 	fallbackCleaner cleaner.Cleaner       // Used when content is too large for context window
 	preprocessor    *preprocessor.Chain   // Preprocessor chain for generating LLM hints
+	captchaSvc      *CaptchaService       // For dynamic content fetching with browser rendering
 }
 
 // getStrictMode determines if a model supports strict JSON schema mode.
@@ -98,6 +99,12 @@ func NewAnalyzerServiceWithBilling(cfg *config.Config, repos *repository.Reposit
 	}
 }
 
+// SetCaptchaService sets the captcha service for dynamic content fetching.
+// When configured, users with the content_dynamic feature can use browser rendering.
+func (s *AnalyzerService) SetCaptchaService(captchaSvc *CaptchaService) {
+	s.captchaSvc = captchaSvc
+}
+
 // AnalyzeInput represents input for the analyze operation.
 type AnalyzeInput struct {
 	URL       string `json:"url"`
@@ -144,7 +151,8 @@ type AnalyzeDebugCapture struct {
 // Analyze fetches and analyzes a URL to generate schema suggestions.
 // The byokAllowed parameter comes from JWT claims and indicates if user has the "provider_byok" feature.
 // The modelsCustomAllowed parameter comes from JWT claims and indicates if user has the "models_custom" feature.
-func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input AnalyzeInput, tier string, byokAllowed bool, modelsCustomAllowed bool) (*AnalyzeOutput, error) {
+// The contentDynamicAllowed parameter comes from JWT claims and indicates if user has the "content_dynamic" feature.
+func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input AnalyzeInput, tier string, byokAllowed bool, modelsCustomAllowed bool, contentDynamicAllowed bool) (*AnalyzeOutput, error) {
 	startTime := time.Now()
 	requestID := ulid.Make().String()
 
@@ -205,8 +213,8 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 
 	// Fetch main page content
 	fetchStart := time.Now()
-	s.logger.Debug("fetching main page content", "request_id", requestID, "user_id", userID, "url", targetURL)
-	mainContent, links, fetchMode, err := s.fetchContent(ctx, targetURL, input.FetchMode)
+	s.logger.Debug("fetching main page content", "request_id", requestID, "user_id", userID, "url", targetURL, "fetch_mode", input.FetchMode)
+	mainContent, links, fetchMode, err := s.fetchContent(ctx, targetURL, input.FetchMode, userID, tier, contentDynamicAllowed)
 	if err != nil {
 		s.logger.Error("failed to fetch page content", "request_id", requestID, "user_id", userID, "url", targetURL, "error", err)
 		s.recordAnalyzeUsage(ctx, userID, tier, targetURL, llmConfig, isBYOK, 0, 0,
@@ -238,7 +246,7 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 		)
 
 		for _, detailURL := range detailLinks {
-			content, _, _, err := s.fetchContent(ctx, detailURL, string(fetchMode))
+			content, _, _, err := s.fetchContent(ctx, detailURL, string(fetchMode), userID, tier, contentDynamicAllowed)
 			if err != nil {
 				s.logger.Warn("failed to fetch detail page for mini-crawl",
 					"request_id", requestID,
@@ -261,7 +269,7 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 		// Fallback: if no detail links identified but depth > 0, use first few links
 		maxSamples := min(2, len(links))
 		for i := range maxSamples {
-			content, _, _, err := s.fetchContent(ctx, links[i], string(fetchMode))
+			content, _, _, err := s.fetchContent(ctx, links[i], string(fetchMode), userID, tier, contentDynamicAllowed)
 			if err != nil {
 				s.logger.Warn("failed to fetch detail page",
 					"request_id", requestID,
@@ -467,10 +475,55 @@ func (s *AnalyzerService) recordAnalyzeUsage(
 }
 
 // fetchContent fetches page content and extracts links.
-func (s *AnalyzerService) fetchContent(ctx context.Context, targetURL string, fetchMode string) (string, []string, models.FetchMode, error) {
-	// For now, use static fetching with Colly
-	// Dynamic fetching (headless Chrome) would be added later for JS-heavy sites
+// Supports both static (Colly) and dynamic (browser rendering) fetch modes.
+func (s *AnalyzerService) fetchContent(ctx context.Context, targetURL string, fetchMode string, userID string, tier string, contentDynamicAllowed bool) (string, []string, models.FetchMode, error) {
+	// Determine effective fetch mode
+	effectiveFetchMode := fetchMode
+	if effectiveFetchMode == "" || effectiveFetchMode == "auto" {
+		effectiveFetchMode = "static"
+	}
 
+	// Handle dynamic fetch mode
+	if effectiveFetchMode == "dynamic" {
+		// Check if user has permission for dynamic content
+		if !contentDynamicAllowed {
+			return "", nil, models.FetchModeStatic, ErrDynamicFetchNotAllowed
+		}
+		// Check if captcha service is configured
+		if s.captchaSvc == nil {
+			return "", nil, models.FetchModeStatic, ErrDynamicFetchNotConfigured
+		}
+
+		s.logger.Info("using browser rendering for analysis",
+			"url", targetURL,
+			"user_id", userID,
+		)
+
+		// Use captcha service for dynamic fetching
+		result, err := s.captchaSvc.FetchDynamicContent(ctx, userID, tier, CaptchaSolveInput{
+			URL:        targetURL,
+			MaxTimeout: 60000,
+		})
+		if err != nil {
+			return "", nil, models.FetchModeDynamic, fmt.Errorf("browser rendering failed: %w", err)
+		}
+		if result.Status != "ok" || result.Solution == nil {
+			return "", nil, models.FetchModeDynamic, fmt.Errorf("browser rendering returned non-ok status: %s", result.Message)
+		}
+
+		content := result.Solution.Response
+		links := s.extractLinksFromHTML(targetURL, content)
+
+		// Apply cleaner to content
+		cleanedContent, err := s.cleaner.Clean(content)
+		if err != nil {
+			return "", nil, models.FetchModeDynamic, fmt.Errorf("failed to clean content: %w", err)
+		}
+
+		return cleanedContent, links, models.FetchModeDynamic, nil
+	}
+
+	// Static fetching with Colly
 	var content string
 	var links []string
 	recommendedMode := models.FetchModeStatic
@@ -532,6 +585,42 @@ func (s *AnalyzerService) fetchContent(ctx context.Context, targetURL string, fe
 	links = s.filterLinks(targetURL, links)
 
 	return cleanedContent, links, recommendedMode, nil
+}
+
+// extractLinksFromHTML parses HTML content and extracts links.
+// Used for dynamic fetch mode where we don't have Colly's built-in link extraction.
+func (s *AnalyzerService) extractLinksFromHTML(baseURL string, htmlContent string) []string {
+	var links []string
+
+	// Simple regex-based link extraction
+	// This is a fallback when Colly isn't available (dynamic mode)
+	linkRegex := regexp.MustCompile(`href=["']([^"']+)["']`)
+	matches := linkRegex.FindAllStringSubmatch(htmlContent, -1)
+
+	parsedBase, err := url.Parse(baseURL)
+	if err != nil {
+		return links
+	}
+
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		href := match[1]
+		if href == "" || strings.HasPrefix(href, "#") || strings.HasPrefix(href, "javascript:") {
+			continue
+		}
+
+		// Resolve relative URLs
+		parsedHref, err := url.Parse(href)
+		if err != nil {
+			continue
+		}
+		absURL := parsedBase.ResolveReference(parsedHref).String()
+		links = append(links, absURL)
+	}
+
+	return s.filterLinks(baseURL, links)
 }
 
 // filterLinks deduplicates and filters links to the same domain.
