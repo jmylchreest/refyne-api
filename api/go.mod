@@ -13,7 +13,7 @@ require (
 	github.com/go-chi/httprate v0.15.0
 	github.com/gocolly/colly/v2 v2.3.0
 	github.com/golang-jwt/jwt/v5 v5.3.0
-	github.com/jmylchreest/refyne v0.1.5
+	github.com/jmylchreest/refyne v0.1.6
 	github.com/jmylchreest/slog-logfilter v0.0.1
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/stripe/stripe-go/v78 v78.12.0
@@ -78,6 +78,3 @@ require (
 	google.golang.org/appengine v1.6.8 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
-
-// Local development: use local refyne library
-replace github.com/jmylchreest/refyne => ../../refyne
