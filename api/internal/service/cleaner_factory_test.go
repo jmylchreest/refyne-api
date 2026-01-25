@@ -15,7 +15,7 @@ func TestEnrichCleanerChainWithCrawlSelectors(t *testing.T) {
 	}{
 		{
 			name:           "no selectors returns unchanged chain",
-			chain:          []CleanerConfig{{Name: "markdown"}},
+			chain:          []CleanerConfig{{Name: "noop"}},
 			followSelector: "",
 			nextSelector:   "",
 			expectChange:   false,
@@ -59,7 +59,7 @@ func TestEnrichCleanerChainWithCrawlSelectors(t *testing.T) {
 		},
 		{
 			name:           "non-refyne cleaner unchanged",
-			chain:          []CleanerConfig{{Name: "markdown"}, {Name: "trafilatura"}},
+			chain:          []CleanerConfig{{Name: "noop"}},
 			followSelector: "a.link",
 			nextSelector:   "",
 			expectChange:   false,
@@ -68,7 +68,7 @@ func TestEnrichCleanerChainWithCrawlSelectors(t *testing.T) {
 			name: "mixed chain only enriches refyne",
 			chain: []CleanerConfig{
 				{Name: "refyne"},
-				{Name: "markdown"},
+				{Name: "noop"},
 			},
 			followSelector: "a.link",
 			nextSelector:   "",
@@ -137,35 +137,8 @@ func TestCleanerFactoryCreate(t *testing.T) {
 		expectError bool
 	}{
 		{"noop cleaner", CleanerConfig{Name: "noop"}, false},
-		{"markdown cleaner", CleanerConfig{Name: "markdown"}, false},
-		{"trafilatura cleaner", CleanerConfig{Name: "trafilatura"}, false},
-		{"readability cleaner", CleanerConfig{Name: "readability"}, false},
 		{"refyne cleaner", CleanerConfig{Name: "refyne"}, false},
 		{"unknown cleaner", CleanerConfig{Name: "unknown"}, true},
-		{
-			"trafilatura with options",
-			CleanerConfig{
-				Name: "trafilatura",
-				Options: &CleanerOptions{
-					Output: "text",
-					Tables: false,
-					Links:  true,
-					Images: false,
-				},
-			},
-			false,
-		},
-		{
-			"readability with options",
-			CleanerConfig{
-				Name: "readability",
-				Options: &CleanerOptions{
-					Output:  "text",
-					BaseURL: "https://example.com",
-				},
-			},
-			false,
-		},
 		{
 			"refyne with preset",
 			CleanerConfig{
@@ -183,6 +156,18 @@ func TestCleanerFactoryCreate(t *testing.T) {
 				Options: &CleanerOptions{
 					RemoveSelectors: []string{".ad", "nav"},
 					KeepSelectors:   []string{".main"},
+				},
+			},
+			false,
+		},
+		{
+			"refyne with markdown output",
+			CleanerConfig{
+				Name: "refyne",
+				Options: &CleanerOptions{
+					Output:             "markdown",
+					IncludeFrontmatter: true,
+					ExtractImages:      true,
 				},
 			},
 			false,
@@ -227,12 +212,12 @@ func TestCleanerFactoryCreateChain(t *testing.T) {
 		},
 		{
 			"single cleaner",
-			[]CleanerConfig{{Name: "markdown"}},
+			[]CleanerConfig{{Name: "refyne"}},
 			false,
 		},
 		{
 			"chain of two",
-			[]CleanerConfig{{Name: "refyne"}, {Name: "markdown"}},
+			[]CleanerConfig{{Name: "refyne"}, {Name: "noop"}},
 			false,
 		},
 		{
@@ -266,8 +251,8 @@ func TestCleanerFactoryCreateChain(t *testing.T) {
 }
 
 func TestIsValidCleanerType(t *testing.T) {
-	valid := []string{"noop", "markdown", "trafilatura", "readability", "refyne"}
-	invalid := []string{"invalid", "unknown", "html", ""}
+	valid := []string{"noop", "refyne"}
+	invalid := []string{"invalid", "unknown", "html", "", "markdown", "trafilatura", "readability"}
 
 	for _, v := range valid {
 		if !IsValidCleanerType(v) {
@@ -285,12 +270,12 @@ func TestIsValidCleanerType(t *testing.T) {
 func TestGetAvailableCleaners(t *testing.T) {
 	cleaners := GetAvailableCleaners()
 
-	if len(cleaners) == 0 {
-		t.Error("expected non-empty list of cleaners")
+	if len(cleaners) != 2 {
+		t.Errorf("expected 2 cleaners, got %d", len(cleaners))
 	}
 
 	// Check that all expected cleaners are present
-	expectedNames := []string{"noop", "markdown", "trafilatura", "readability", "refyne"}
+	expectedNames := []string{"noop", "refyne"}
 	cleanerMap := make(map[string]CleanerInfo)
 	for _, c := range cleaners {
 		cleanerMap[c.Name] = c
@@ -322,6 +307,12 @@ func TestGetAvailableCleaners(t *testing.T) {
 		if !optionNames["keep_selectors"] {
 			t.Error("expected refyne to have keep_selectors option")
 		}
+		if !optionNames["output"] {
+			t.Error("expected refyne to have output option")
+		}
+		if !optionNames["include_frontmatter"] {
+			t.Error("expected refyne to have include_frontmatter option")
+		}
 	}
 }
 
@@ -332,9 +323,8 @@ func TestGetChainName(t *testing.T) {
 	}{
 		{nil, "default"},
 		{[]CleanerConfig{}, "default"},
-		{[]CleanerConfig{{Name: "markdown"}}, "markdown"},
-		{[]CleanerConfig{{Name: "refyne"}, {Name: "markdown"}}, "refyne->markdown"},
-		{[]CleanerConfig{{Name: "trafilatura"}, {Name: "markdown"}}, "trafilatura->markdown"},
+		{[]CleanerConfig{{Name: "refyne"}}, "refyne"},
+		{[]CleanerConfig{{Name: "refyne"}, {Name: "noop"}}, "refyne->noop"},
 	}
 
 	for _, tt := range tests {

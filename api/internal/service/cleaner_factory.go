@@ -16,15 +16,6 @@ const (
 	// CleanerNoop passes content through unchanged (raw HTML).
 	CleanerNoop CleanerType = "noop"
 
-	// CleanerMarkdown converts HTML to Markdown, preserving structure.
-	CleanerMarkdown CleanerType = "markdown"
-
-	// CleanerTrafilatura extracts main content using Trafilatura algorithm.
-	CleanerTrafilatura CleanerType = "trafilatura"
-
-	// CleanerReadability extracts main content using Mozilla Readability algorithm.
-	CleanerReadability CleanerType = "readability"
-
 	// CleanerRefyne is our custom configurable cleaner with heuristic-based cleaning.
 	CleanerRefyne CleanerType = "refyne"
 )
@@ -60,21 +51,11 @@ var AnalyzerFallbackCleanerChain = []CleanerConfig{{
 }}
 
 // CleanerOptions contains configuration options for cleaners.
-// Not all options apply to all cleaners.
 type CleanerOptions struct {
-	// Output format: "html", "text", or "markdown" (trafilatura, readability, refyne)
+	// Output format: "html", "text", or "markdown" (refyne)
 	Output string `json:"output,omitempty"`
 
-	// Tables: include tables in output (trafilatura, readability)
-	Tables bool `json:"tables,omitempty"`
-
-	// Links: include links in output (trafilatura, readability)
-	Links bool `json:"links,omitempty"`
-
-	// Images: include images in output (trafilatura)
-	Images bool `json:"images,omitempty"`
-
-	// BaseURL: base URL for resolving relative links (readability, refyne)
+	// BaseURL: base URL for resolving relative links (refyne)
 	BaseURL string `json:"base_url,omitempty"`
 
 	// Preset: refyne preset name ("default", "minimal", "aggressive")
@@ -113,9 +94,6 @@ type CleanerConfig struct {
 func ValidCleanerTypes() []CleanerType {
 	return []CleanerType{
 		CleanerNoop,
-		CleanerMarkdown,
-		CleanerTrafilatura,
-		CleanerReadability,
 		CleanerRefyne,
 	}
 }
@@ -146,81 +124,12 @@ func (f *CleanerFactory) Create(config CleanerConfig) (cleaner.Cleaner, error) {
 	case CleanerNoop:
 		return cleaner.NewNoop(), nil
 
-	case CleanerMarkdown:
-		return cleaner.NewMarkdown(), nil
-
-	case CleanerTrafilatura:
-		return f.createTrafilatura(config.Options), nil
-
-	case CleanerReadability:
-		return f.createReadability(config.Options), nil
-
 	case CleanerRefyne:
 		return f.createRefyne(config.Options), nil
 
 	default:
-		return nil, fmt.Errorf("unknown cleaner type: %s", config.Name)
+		return nil, fmt.Errorf("unknown cleaner type: %s (valid types: noop, refyne)", config.Name)
 	}
-}
-
-// createTrafilatura creates a Trafilatura cleaner with optional config.
-// If trafilatura is not compiled in (build without -tags trafilatura),
-// it falls back to the refyne cleaner which provides similar functionality.
-func (f *CleanerFactory) createTrafilatura(opts *CleanerOptions) cleaner.Cleaner {
-	// Check if trafilatura is available (compiled with -tags trafilatura)
-	testCleaner := cleaner.NewTrafilatura(nil)
-	if !testCleaner.IsAvailable() {
-		// Fall back to refyne cleaner with similar settings
-		refyneOpts := &CleanerOptions{
-			Output: "html",
-		}
-		if opts != nil {
-			refyneOpts.Output = opts.Output
-		}
-		return f.createRefyne(refyneOpts)
-	}
-
-	cfg := &cleaner.TrafilaturaConfig{
-		Output: cleaner.OutputHTML, // Default to HTML
-		Tables: cleaner.Include,
-		Links:  cleaner.Include,
-		Images: cleaner.Include,
-	}
-
-	if opts != nil {
-		if opts.Output == "text" {
-			cfg.Output = cleaner.OutputText
-		}
-		if !opts.Tables {
-			cfg.Tables = cleaner.Exclude
-		}
-		if !opts.Links {
-			cfg.Links = cleaner.Exclude
-		}
-		if !opts.Images {
-			cfg.Images = cleaner.Exclude
-		}
-	}
-
-	return cleaner.NewTrafilatura(cfg)
-}
-
-// createReadability creates a Readability cleaner with optional config.
-func (f *CleanerFactory) createReadability(opts *CleanerOptions) cleaner.Cleaner {
-	cfg := &cleaner.ReadabilityConfig{
-		Output: cleaner.OutputHTML, // Default to HTML
-	}
-
-	if opts != nil {
-		if opts.Output == "text" {
-			cfg.Output = cleaner.OutputText
-		}
-		if opts.BaseURL != "" {
-			cfg.BaseURL = opts.BaseURL
-		}
-	}
-
-	return cleaner.NewReadability(cfg)
 }
 
 // createRefyne creates a Refyne cleaner with optional config.
@@ -365,29 +274,6 @@ func GetAvailableCleaners() []CleanerInfo {
 			Name:        "noop",
 			Description: "Pass-through cleaner that returns content unchanged. Use for maximum detail when token usage is not a concern.",
 			Options:     nil,
-		},
-		{
-			Name:        "markdown",
-			Description: "Converts HTML to Markdown, preserving structure (tables, links, images). Reduces tokens while keeping all content.",
-			Options:     nil,
-		},
-		{
-			Name:        "trafilatura",
-			Description: "Extracts main content using the Trafilatura algorithm. Good for articles but may strip non-article content like forms.",
-			Options: []CleanerOptionInfo{
-				{Name: "output", Type: "string", Default: "html", Description: "Output format: 'html' preserves structure, 'text' strips all tags"},
-				{Name: "tables", Type: "boolean", Default: true, Description: "Include tables in output"},
-				{Name: "links", Type: "boolean", Default: true, Description: "Include links in output"},
-				{Name: "images", Type: "boolean", Default: true, Description: "Include images in output"},
-			},
-		},
-		{
-			Name:        "readability",
-			Description: "Extracts main content using Mozilla Readability algorithm. Similar to Trafilatura but uses different heuristics.",
-			Options: []CleanerOptionInfo{
-				{Name: "output", Type: "string", Default: "html", Description: "Output format: 'html' preserves structure, 'text' strips all tags"},
-				{Name: "base_url", Type: "string", Default: "", Description: "Base URL for resolving relative links"},
-			},
 		},
 		{
 			Name:        "refyne",
