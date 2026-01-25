@@ -4,11 +4,18 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 export interface ApiError {
   error: string;
   status: number;
-  error_category?: string;  // Error classification (rate_limited, invalid_api_key, provider_error, etc.)
+  error_category?: string;  // Error classification (rate_limited, invalid_api_key, provider_error, bot_protection_detected, etc.)
   error_details?: string;   // Full error details (only for BYOK users)
   is_byok?: boolean;        // Whether user's own API key was used
   provider?: string;        // LLM provider (only for BYOK users)
   model?: string;           // LLM model (only for BYOK users)
+  protection_type?: string;      // Type of bot protection detected (cloudflare_challenge, captcha, etc.)
+  suggested_fetch_mode?: string; // Suggested fetch mode to bypass protection (usually 'dynamic')
+}
+
+// Helper to check if an error is a bot protection error that can be resolved with browser rendering
+export function isBotProtectionError(error: ApiError): boolean {
+  return error.error_category === 'bot_protection_detected';
 }
 
 // Token getter function - will be set by the auth hook
@@ -66,7 +73,8 @@ async function request<T>(
 
 // Extraction with client-side timeout
 // Schema can be an object (structured schema) or string (freeform prompt)
-export async function extract(url: string, schema: object | string, llmConfig?: LLMConfigInput) {
+// fetchMode: 'auto' (default) | 'static' | 'dynamic'
+export async function extract(url: string, schema: object | string, llmConfig?: LLMConfigInput, fetchMode = 'auto') {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute client timeout
 
@@ -85,7 +93,7 @@ export async function extract(url: string, schema: object | string, llmConfig?: 
     const response = await fetch(`${API_BASE_URL}/api/v1/extract`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ url, schema, llm_config: llmConfig }),
+      body: JSON.stringify({ url, schema, llm_config: llmConfig, fetch_mode: fetchMode }),
       signal: controller.signal,
     });
 
@@ -246,6 +254,7 @@ export interface ExtractResult {
   url: string;
   fetched_at: string;
   input_format: 'schema' | 'prompt';  // How the input was interpreted by the server
+  fetch_mode: 'static' | 'dynamic';  // Actual fetch mode used (resolved from 'auto')
   usage: {
     input_tokens: number;
     output_tokens: number;
@@ -317,6 +326,7 @@ export interface CreateCrawlJobInput {
     same_domain_only?: boolean;
     extract_from_seeds?: boolean;
     use_sitemap?: boolean;
+    fetch_mode?: 'auto' | 'static' | 'dynamic';  // Browser rendering mode
   };
   webhook_url?: string;
 }

@@ -25,6 +25,7 @@ import {
   ApiError,
   OutputFormat,
   TierLimits,
+  isBotProtectionError,
 } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -122,6 +123,7 @@ export default function DashboardPage() {
   const searchParams = useSearchParams();
   const features = parseClerkFeatures(sessionClaims?.fea as string | undefined);
   const canCrawl = features.includes('extraction_crawled');
+  const canDynamic = features.includes('content_dynamic');
 
   // Tier limits for enforcing max pages
   const [tierLimits, setTierLimits] = useState<TierLimits[]>([]);
@@ -136,6 +138,9 @@ export default function DashboardPage() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [result, setResult] = useState<ExtractResult | null>(null);
   const [analysisResult, setAnalysisResult] = useState<AnalyzeResult | null>(null);
+
+  // Fetch mode: 'auto' detects protection and retries with dynamic if needed
+  const [fetchMode, setFetchMode] = useState<'auto' | 'static' | 'dynamic'>('auto');
 
   // Extraction mode state
   const [extractionMode, setExtractionMode] = useState<ExtractionMode>('single');
@@ -311,6 +316,11 @@ export default function DashboardPage() {
           }
           setAnalysisResult(site.analysis_result || null);
           setSelectedSiteId(site.id);
+          // Set fetch mode from saved site
+          if (site.fetch_mode) {
+            const mode = site.fetch_mode as 'auto' | 'static' | 'dynamic';
+            setFetchMode(mode);
+          }
           if (site.crawl_options) {
             setCrawlOptions({
               followSelector: site.crawl_options.follow_selector || '',
@@ -402,7 +412,7 @@ export default function DashboardPage() {
 
     try {
       const progressPromise = stageProgression();
-      const resultPromise = analyze(normalizedUrl, 0);
+      const resultPromise = analyze(normalizedUrl, 0, fetchMode);
 
       await progressPromise;
       setProgressStage('generating');
@@ -412,6 +422,12 @@ export default function DashboardPage() {
 
       if (result.suggested_schema) {
         setSchema(result.suggested_schema);
+      }
+
+      // Set recommended fetch mode from analysis
+      if (result.recommended_fetch_mode) {
+        const mode = result.recommended_fetch_mode as 'auto' | 'static' | 'dynamic';
+        setFetchMode(mode);
       }
 
       setProgressComplete(true);
@@ -497,6 +513,7 @@ export default function DashboardPage() {
             same_domain_only: true,
             extract_from_seeds: true,
             use_sitemap: isSitemapMode,
+            fetch_mode: fetchMode,
           },
         });
 
@@ -623,7 +640,7 @@ export default function DashboardPage() {
       }
 
       const progressPromise = stageProgression();
-      const resultPromise = extract(normalizedUrl, parsedSchema);
+      const resultPromise = extract(normalizedUrl, parsedSchema, undefined, fetchMode);
 
       await progressPromise;
       setProgressStage('generating');
@@ -634,12 +651,43 @@ export default function DashboardPage() {
       toast.success('Extraction completed');
     } catch (err) {
       const error = err as ApiError | { error?: string };
-      const errorMessage = getErrorMessage(error);
-      setProgressError(true);
-      setProgressErrorMessage(errorMessage);
+
+      // Special handling for bot protection errors
+      if (isBotProtectionError(error as ApiError)) {
+        const apiError = error as ApiError;
+        const protectionType = apiError.protection_type || 'unknown';
+        const suggestedMode = apiError.suggested_fetch_mode || 'dynamic';
+
+        if (!canDynamic) {
+          // User doesn't have the feature - show upgrade prompt
+          setProgressError(true);
+          setProgressErrorMessage(
+            `This site uses ${protectionType} protection. Browser rendering is required to access this content. ` +
+            'Upgrade to a plan with browser rendering to extract from protected sites.'
+          );
+          toast.error('Browser rendering required - upgrade to access protected sites');
+        } else if (fetchMode === 'static') {
+          // User has feature but chose static mode - suggest retry with auto/dynamic
+          setProgressError(true);
+          setProgressErrorMessage(
+            `This site uses ${protectionType} protection. Retry with "${suggestedMode}" mode to bypass protection.`
+          );
+          toast.error(`Protection detected - retry with ${suggestedMode} mode`);
+        } else {
+          // Auto mode failed to bypass - something went wrong
+          setProgressError(true);
+          setProgressErrorMessage(getErrorMessage(error));
+          toast.error(getErrorMessage(error));
+        }
+      } else {
+        const errorMessage = getErrorMessage(error);
+        setProgressError(true);
+        setProgressErrorMessage(errorMessage);
+        toast.error(errorMessage);
+      }
+
       setIsCrawling(false);
       setCrawlProgress(prev => ({ ...prev, status: 'failed' }));
-      toast.error(errorMessage);
     } finally {
       setIsLoading(false);
     }
@@ -662,6 +710,11 @@ export default function DashboardPage() {
         setSchema(selected.analysis_result.suggested_schema);
       }
       setAnalysisResult(selected.analysis_result || null);
+      // Set fetch mode from saved site
+      if (selected.fetch_mode) {
+        const mode = selected.fetch_mode as 'auto' | 'static' | 'dynamic';
+        setFetchMode(mode);
+      }
       if (selected.crawl_options) {
         setCrawlOptions({
           followSelector: selected.crawl_options.follow_selector || '',
@@ -998,9 +1051,36 @@ export default function DashboardPage() {
                   <span className="text-sm font-medium truncate">
                     {analysisResult.page_type} page
                   </span>
-                  <Badge variant="outline" className="text-xs shrink-0">
-                    {analysisResult.recommended_fetch_mode}
-                  </Badge>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div>
+                        <Select
+                          value={fetchMode}
+                          onValueChange={(v) => setFetchMode(v as 'auto' | 'static' | 'dynamic')}
+                        >
+                          <SelectTrigger className="h-6 w-[90px] text-[10px] px-2">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="auto">auto</SelectItem>
+                            <SelectItem value="static">static</SelectItem>
+                            <SelectItem value="dynamic" disabled={!canDynamic}>
+                              dynamic {!canDynamic && '(Pro)'}
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" className="max-w-xs text-xs">
+                      <p className="font-medium mb-1">Fetch Mode</p>
+                      <p><strong>auto:</strong> Try static first, retry with browser if protected</p>
+                      <p><strong>static:</strong> Fast HTTP fetch (most sites)</p>
+                      <p><strong>dynamic:</strong> Browser rendering (anti-bot protection)</p>
+                      {analysisResult.recommended_fetch_mode !== fetchMode && (
+                        <p className="mt-1 text-amber-400">Recommended: {analysisResult.recommended_fetch_mode}</p>
+                      )}
+                    </TooltipContent>
+                  </Tooltip>
                   <span className="text-xs text-zinc-500 shrink-0">
                     {analysisResult.detected_elements.length} fields detected
                   </span>
