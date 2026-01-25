@@ -45,10 +45,11 @@ func main() {
 		"pool_size", cfg.BrowserPoolSize,
 	)
 
-	// Start pprof server on localhost only (access via: fly proxy 6060:6060)
+	// Start pprof server (access via: fly proxy 6060:6060)
+	// Binds to 0.0.0.0 so it's accessible via Fly.io internal networking
 	if os.Getenv("ENABLE_PPROF") == "true" {
 		go func() {
-			pprofAddr := "localhost:6060"
+			pprofAddr := "0.0.0.0:6060"
 			logger.Info("starting pprof server", "addr", pprofAddr)
 			if err := http.ListenAndServe(pprofAddr, nil); err != nil {
 				logger.Error("pprof server error", "error", err)
