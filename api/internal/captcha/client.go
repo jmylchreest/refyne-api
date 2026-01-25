@@ -114,6 +114,37 @@ type UserContext struct {
 	JobID    string // Optional job ID for tracking
 }
 
+// HealthResponse is the response from the captcha service health endpoint.
+type HealthResponse struct {
+	Status  string `json:"status"`
+	Version string `json:"version"`
+}
+
+// Health checks the captcha service health and returns version info.
+func (c *Client) Health(ctx context.Context) (*HealthResponse, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/health", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("health check failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("health check returned status %d", resp.StatusCode)
+	}
+
+	var health HealthResponse
+	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
+		return nil, fmt.Errorf("failed to decode health response: %w", err)
+	}
+
+	return &health, nil
+}
+
 // Solve sends a solve request to the captcha service.
 func (c *Client) Solve(ctx context.Context, user UserContext, req SolveRequest, instanceID string) (*SolveResponse, error) {
 	return c.request(ctx, user, req, instanceID)
@@ -239,6 +270,7 @@ func (c *Client) request(ctx context.Context, user UserContext, req SolveRequest
 		"challenge_type", solveResp.ChallengeType,
 		"solver_used", solveResp.SolverUsed,
 		"instance_id", respInstanceID,
+		"captcha_version", solveResp.Version,
 		"duration_ms", durationMs,
 	)
 
