@@ -1,6 +1,12 @@
 # Build stage
 FROM golang:1.23-alpine AS builder
 
+# Version info (set via --build-arg)
+ARG VERSION=0.0.0-dev
+ARG COMMIT=unknown
+ARG DATE=unknown
+ARG DIRTY=false
+
 RUN apk add --no-cache git ca-certificates tzdata
 
 WORKDIR /app
@@ -12,8 +18,14 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the binary
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /captcha-server ./cmd/captcha-server
+# Build the binary with version info
+RUN echo "Building version: ${VERSION} (commit: ${COMMIT}, date: ${DATE}, dirty: ${DIRTY})" && \
+    CGO_ENABLED=0 GOOS=linux go build \
+        -ldflags "-s -w \
+            -X github.com/jmylchreest/refyne-api/captcha/internal/version.Version=${VERSION} \
+            -X github.com/jmylchreest/refyne-api/captcha/internal/version.Commit=${COMMIT} \
+            -X github.com/jmylchreest/refyne-api/captcha/internal/version.Date=${DATE}" \
+        -o /captcha-server ./cmd/captcha-server
 
 # Runtime stage
 FROM alpine:latest
