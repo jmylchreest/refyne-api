@@ -33,6 +33,11 @@ primary_region = "lhr"  # London
   auto_start_machines = true    # Start on incoming request (via private network)
   min_machines_running = 0      # Scale to zero when idle
 
+  # Internal port for private networking
+  [[services.ports]]
+    port = 8191
+    handlers = ["http"]
+
   # Concurrency limits - browser instances are heavy
   [services.concurrency]
     type = "requests"
