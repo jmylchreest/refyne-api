@@ -109,8 +109,14 @@ func (s *ExtractionService) Crawl(ctx context.Context, userID string, input Craw
 		input.Options.NextSelector,
 	)
 
-	// Create refyne instance with configured cleaner
-	r, cleanerName, err := s.createRefyneInstance(llmCfg, enrichedCleanerChain)
+	// Create refyne instance with configured cleaner and fetch mode
+	r, cleanerName, err := s.createRefyneInstanceWithFetchMode(llmCfg, enrichedCleanerChain, FetchModeConfig{
+		Mode:                  input.Options.FetchMode,
+		ContentDynamicAllowed: input.Options.ContentDynamicAllowed,
+		UserID:                userID,
+		Tier:                  input.Tier,
+		JobID:                 input.JobID,
+	})
 	if err != nil {
 		return nil, s.handleLLMError(err, llmCfg, isBYOK)
 	}
@@ -356,8 +362,14 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 		input.Options.NextSelector,
 	)
 
-	// Create refyne instance with configured cleaner
-	r, cleanerName, err := s.createRefyneInstance(llmCfg, enrichedCleanerChain)
+	// Create refyne instance with configured cleaner and fetch mode
+	r, cleanerName, err := s.createRefyneInstanceWithFetchMode(llmCfg, enrichedCleanerChain, FetchModeConfig{
+		Mode:                  input.Options.FetchMode,
+		ContentDynamicAllowed: input.Options.ContentDynamicAllowed,
+		UserID:                userID,
+		Tier:                  input.Tier,
+		JobID:                 input.JobID,
+	})
 	if err != nil {
 		return nil, s.handleLLMError(err, llmCfg, isBYOK)
 	}

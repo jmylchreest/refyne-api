@@ -129,6 +129,7 @@ type CrawlOptions struct {
 	SameDomainOnly   bool   `json:"same_domain_only,omitempty" default:"true" doc:"Only follow links on the same domain as seed URL"`
 	ExtractFromSeeds bool   `json:"extract_from_seeds,omitempty" example:"true" doc:"Extract data from the seed URL (not just discovered pages)"`
 	UseSitemap       bool   `json:"use_sitemap,omitempty" doc:"Discover URLs from sitemap.xml instead of CSS selectors"`
+	FetchMode        string `json:"fetch_mode,omitempty" enum:"auto,static,dynamic" default:"auto" doc:"Page fetching mode: auto (detect and retry with browser if needed), static (fast, Colly-based), dynamic (browser rendering for JS-heavy sites, requires content_dynamic feature)"`
 }
 
 // TokenUsage represents LLM token consumption for a job.
@@ -218,17 +219,19 @@ func (h *JobHandler) CreateCrawlJob(ctx context.Context, input *CreateCrawlJobIn
 		URL:    input.Body.URL,
 		Schema: input.Body.Schema,
 		Options: service.CrawlOptions{
-			FollowSelector:   input.Body.Options.FollowSelector,
-			FollowPattern:    input.Body.Options.FollowPattern,
-			MaxDepth:         input.Body.Options.MaxDepth,
-			NextSelector:     input.Body.Options.NextSelector,
-			MaxPages:         input.Body.Options.MaxPages,
-			MaxURLs:          input.Body.Options.MaxURLs,
-			Delay:            input.Body.Options.Delay,
-			Concurrency:      input.Body.Options.Concurrency,
-			SameDomainOnly:   input.Body.Options.SameDomainOnly,
-			ExtractFromSeeds: input.Body.Options.ExtractFromSeeds,
-			UseSitemap:       input.Body.Options.UseSitemap,
+			FollowSelector:        input.Body.Options.FollowSelector,
+			FollowPattern:         input.Body.Options.FollowPattern,
+			MaxDepth:              input.Body.Options.MaxDepth,
+			NextSelector:          input.Body.Options.NextSelector,
+			MaxPages:              input.Body.Options.MaxPages,
+			MaxURLs:               input.Body.Options.MaxURLs,
+			Delay:                 input.Body.Options.Delay,
+			Concurrency:           input.Body.Options.Concurrency,
+			SameDomainOnly:        input.Body.Options.SameDomainOnly,
+			ExtractFromSeeds:      input.Body.Options.ExtractFromSeeds,
+			UseSitemap:            input.Body.Options.UseSitemap,
+			FetchMode:             input.Body.Options.FetchMode,
+			ContentDynamicAllowed: uc.ContentDynamicAllowed,
 		},
 		CleanerChain: cleanerChain,
 		WebhookURL:   input.Body.WebhookURL,

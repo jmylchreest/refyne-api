@@ -19,6 +19,7 @@ import (
 	"github.com/jmylchreest/refyne-api/internal/crypto"
 	"github.com/jmylchreest/refyne-api/internal/llm"
 	"github.com/jmylchreest/refyne-api/internal/models"
+	"github.com/jmylchreest/refyne-api/internal/protection"
 	"github.com/jmylchreest/refyne-api/internal/repository"
 )
 
@@ -30,15 +31,38 @@ var ErrDynamicFetchNotAllowed = errors.New("browser rendering requires the conte
 // but the dynamic browser service is not configured on the server.
 var ErrDynamicFetchNotConfigured = errors.New("browser rendering is not available - dynamic browser service not configured")
 
+// ErrBotProtectionDetected is returned when bot protection is detected during static fetch
+// and the user doesn't have the content_dynamic feature to bypass it.
+// This error includes context about the protection type detected.
+type ErrBotProtectionDetected struct {
+	Message            string
+	ProtectionType     string
+	SuggestedFetchMode string
+}
+
+func (e *ErrBotProtectionDetected) Error() string {
+	return e.Message
+}
+
+// NewErrBotProtectionDetected creates a new bot protection error with context.
+func NewErrBotProtectionDetected(protectionType, message string) *ErrBotProtectionDetected {
+	return &ErrBotProtectionDetected{
+		Message:            message,
+		ProtectionType:     protectionType,
+		SuggestedFetchMode: "dynamic",
+	}
+}
+
 // ExtractionService handles synchronous single-page extraction.
 type ExtractionService struct {
-	cfg        *config.Config
-	repos      *repository.Repositories
-	billing    *BillingService
-	resolver   *LLMConfigResolver
-	logger     *slog.Logger
-	encryptor  *crypto.Encryptor
-	captchaSvc *CaptchaService // For dynamic content fetching with browser rendering
+	cfg                *config.Config
+	repos              *repository.Repositories
+	billing            *BillingService
+	resolver           *LLMConfigResolver
+	logger             *slog.Logger
+	encryptor          *crypto.Encryptor
+	captchaSvc         *CaptchaService        // For dynamic content fetching with browser rendering
+	protectionDetector *protection.Detector   // Detects bot protection signals in responses
 }
 
 // NewExtractionService creates a new extraction service (legacy constructor).
@@ -49,12 +73,13 @@ func NewExtractionService(cfg *config.Config, repos *repository.Repositories, re
 // NewExtractionServiceWithBilling creates an extraction service with billing integration.
 func NewExtractionServiceWithBilling(cfg *config.Config, repos *repository.Repositories, billing *BillingService, resolver *LLMConfigResolver, encryptor *crypto.Encryptor, logger *slog.Logger) *ExtractionService {
 	return &ExtractionService{
-		cfg:       cfg,
-		repos:     repos,
-		billing:   billing,
-		resolver:  resolver,
-		logger:    logger,
-		encryptor: encryptor,
+		cfg:                cfg,
+		repos:              repos,
+		billing:            billing,
+		resolver:           resolver,
+		logger:             logger,
+		encryptor:          encryptor,
+		protectionDetector: protection.NewDetector(),
 	}
 }
 
@@ -331,13 +356,16 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 			"fetch_mode", input.FetchMode,
 		)
 
-		// Determine effective fetch mode
-		// "auto" defaults to "static" (dynamic fetch via auto-detection is a future enhancement)
+		// Determine effective fetch mode - keep "auto" to enable protection detection
 		effectiveFetchMode := input.FetchMode
-		if effectiveFetchMode == "" || effectiveFetchMode == "auto" {
-			effectiveFetchMode = "static"
+		if effectiveFetchMode == "" {
+			effectiveFetchMode = "auto"
 		}
 
+		// Track if we're on a dynamic retry (to avoid infinite loops)
+		dynamicRetryAttempted := false
+
+	extractAttempt:
 		// Create refyne instance with configured cleaner and fetch mode
 		r, _, err := s.createRefyneInstanceWithFetchMode(llmCfg, input.CleanerChain, FetchModeConfig{
 			Mode:                  effectiveFetchMode,
@@ -381,6 +409,30 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 			lastErr = err
 		} else if result != nil && result.Error != nil {
 			lastErr = result.Error
+		}
+
+		// Check if this is a bot protection error that we can retry with dynamic mode
+		var protectionErr *ErrBotProtectionDetected
+		if errors.As(lastErr, &protectionErr) {
+			s.logger.Info("bot protection detected during extraction",
+				"url", input.URL,
+				"protection_type", protectionErr.ProtectionType,
+				"fetch_mode", effectiveFetchMode,
+			)
+
+			// If we haven't tried dynamic yet and user has the feature, retry with dynamic
+			if !dynamicRetryAttempted && ectx.ContentDynamicAllowed && s.captchaSvc != nil {
+				s.logger.Info("auto-retrying extraction with browser rendering",
+					"url", input.URL,
+					"provider", llmCfg.Provider,
+				)
+				effectiveFetchMode = "dynamic"
+				dynamicRetryAttempted = true
+				goto extractAttempt
+			}
+
+			// Can't retry with dynamic - return the protection error as-is
+			return nil, protectionErr
 		}
 
 		lastLLMErr = llm.WrapError(lastErr, llmCfg.Provider, llmCfg.Model, isBYOK)
@@ -723,18 +775,17 @@ func (s *ExtractionService) createRefyneInstanceWithFetchMode(llmCfg *LLMConfigI
 		refyne.WithLogger(s.logger), // Inject our logger into refyne
 	}
 
-	// Handle dynamic fetch mode - use browser rendering via captcha service
-	if fetchCfg.Mode == "dynamic" {
-		// Check if user has permission for dynamic content
+	// Handle fetch modes
+	switch fetchCfg.Mode {
+	case "dynamic":
+		// Explicit dynamic mode - use browser rendering via captcha service
 		if !fetchCfg.ContentDynamicAllowed {
 			return nil, "", ErrDynamicFetchNotAllowed
 		}
-		// Check if captcha service is configured
 		if s.captchaSvc == nil {
 			return nil, "", ErrDynamicFetchNotConfigured
 		}
 
-		// Create dynamic fetcher that uses browser rendering
 		dynamicFetcher := NewDynamicFetcher(DynamicFetcherConfig{
 			CaptchaSvc: s.captchaSvc,
 			UserID:     fetchCfg.UserID,
@@ -745,6 +796,26 @@ func (s *ExtractionService) createRefyneInstanceWithFetchMode(llmCfg *LLMConfigI
 		opts = append(opts, refyne.WithFetcher(dynamicFetcher))
 
 		s.logger.Info("using browser rendering for extraction",
+			"user_id", fetchCfg.UserID,
+			"job_id", fetchCfg.JobID,
+		)
+
+	case "auto", "":
+		// Auto mode - use protection-aware fetcher that detects bot protection
+		// The caller should catch ErrBotProtectionDetected and retry with dynamic if allowed
+		protectionFetcher := NewProtectionAwareFetcher(ProtectionAwareFetcherConfig{
+			Logger: s.logger,
+		})
+		opts = append(opts, refyne.WithFetcher(protectionFetcher))
+
+		s.logger.Debug("using protection-aware fetcher for extraction",
+			"user_id", fetchCfg.UserID,
+			"job_id", fetchCfg.JobID,
+		)
+
+	case "static":
+		// Explicit static mode - use default Colly fetcher (no custom fetcher needed)
+		s.logger.Debug("using static fetcher for extraction",
 			"user_id", fetchCfg.UserID,
 			"job_id", fetchCfg.JobID,
 		)

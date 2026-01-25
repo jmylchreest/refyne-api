@@ -21,21 +21,23 @@ import (
 	"github.com/jmylchreest/refyne-api/internal/llm"
 	"github.com/jmylchreest/refyne-api/internal/models"
 	"github.com/jmylchreest/refyne-api/internal/preprocessor"
+	"github.com/jmylchreest/refyne-api/internal/protection"
 	"github.com/jmylchreest/refyne-api/internal/repository"
 )
 
 // AnalyzerService handles URL analysis and schema generation.
 type AnalyzerService struct {
-	cfg             *config.Config
-	repos           *repository.Repositories
-	billing         *BillingService
-	resolver        *LLMConfigResolver             // Shared LLM config resolver
-	logger          *slog.Logger
-	encryptor       *crypto.Encryptor
-	cleaner         cleaner.Cleaner
-	fallbackCleaner cleaner.Cleaner       // Used when content is too large for context window
-	preprocessor    *preprocessor.Chain   // Preprocessor chain for generating LLM hints
-	captchaSvc      *CaptchaService       // For dynamic content fetching with browser rendering
+	cfg                 *config.Config
+	repos               *repository.Repositories
+	billing             *BillingService
+	resolver            *LLMConfigResolver             // Shared LLM config resolver
+	logger              *slog.Logger
+	encryptor           *crypto.Encryptor
+	cleaner             cleaner.Cleaner
+	fallbackCleaner     cleaner.Cleaner                // Used when content is too large for context window
+	preprocessor        *preprocessor.Chain            // Preprocessor chain for generating LLM hints
+	captchaSvc          *CaptchaService                // For dynamic content fetching with browser rendering
+	protectionDetector  *protection.Detector           // Detects bot protection signals in responses
 }
 
 // getStrictMode determines if a model supports strict JSON schema mode.
@@ -87,15 +89,16 @@ func NewAnalyzerServiceWithBilling(cfg *config.Config, repos *repository.Reposit
 	)
 
 	return &AnalyzerService{
-		cfg:             cfg,
-		repos:           repos,
-		billing:         billing,
-		resolver:        resolver,
-		logger:          logger,
-		encryptor:       encryptor,
-		cleaner:         primaryCleaner,  // noop by default - raw HTML for analysis
-		fallbackCleaner: fallbackCleaner, // refyne for context length fallback
-		preprocessor:    llmPreprocessor,
+		cfg:                cfg,
+		repos:              repos,
+		billing:            billing,
+		resolver:           resolver,
+		logger:             logger,
+		encryptor:          encryptor,
+		cleaner:            primaryCleaner,  // noop by default - raw HTML for analysis
+		fallbackCleaner:    fallbackCleaner, // refyne for context length fallback
+		preprocessor:       llmPreprocessor,
+		protectionDetector: protection.NewDetector(),
 	}
 }
 
@@ -525,8 +528,11 @@ func (s *AnalyzerService) fetchContent(ctx context.Context, targetURL string, fe
 
 	// Static fetching with Colly
 	var content string
+	var rawBody []byte
+	var statusCode int
 	var links []string
 	recommendedMode := models.FetchModeStatic
+	isAutoMode := fetchMode == "" || fetchMode == "auto"
 
 	c := colly.NewCollector(
 		colly.UserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
@@ -536,9 +542,11 @@ func (s *AnalyzerService) fetchContent(ctx context.Context, targetURL string, fe
 	// Set timeout
 	c.SetRequestTimeout(30 * time.Second)
 
-	// Capture full HTML
+	// Capture full HTML and status code for protection detection
 	c.OnResponse(func(r *colly.Response) {
 		content = string(r.Body)
+		rawBody = r.Body
+		statusCode = r.StatusCode
 	})
 
 	// Extract links
@@ -573,6 +581,45 @@ func (s *AnalyzerService) fetchContent(ctx context.Context, targetURL string, fe
 
 	if err := c.Visit(targetURL); err != nil {
 		return "", nil, recommendedMode, fmt.Errorf("failed to fetch URL: %w", err)
+	}
+
+	// Check for bot protection signals in the response
+	if s.protectionDetector != nil {
+		detection := s.protectionDetector.DetectFromResponse(statusCode, nil, rawBody)
+		if detection.Detected {
+			s.logger.Info("bot protection detected in static fetch",
+				"url", targetURL,
+				"user_id", userID,
+				"signal", detection.Signal,
+				"confidence", detection.Confidence,
+				"description", detection.Description,
+			)
+
+			// If auto mode and protection is retryable, attempt dynamic fetch
+			if isAutoMode && detection.IsRetryable() {
+				// Check if user can use dynamic mode
+				if contentDynamicAllowed && s.captchaSvc != nil {
+					s.logger.Info("auto-retrying with browser rendering due to bot protection",
+						"url", targetURL,
+						"user_id", userID,
+						"protection_type", detection.Signal,
+					)
+
+					// Recursive call with explicit dynamic mode
+					return s.fetchContent(ctx, targetURL, "dynamic", userID, tier, contentDynamicAllowed)
+				}
+
+				// User doesn't have dynamic feature or service not configured
+				// Return error with suggestion to use browser rendering
+				return "", nil, models.FetchModeStatic, NewErrBotProtectionDetected(
+					string(detection.Signal),
+					detection.UserMessage(),
+				)
+			}
+
+			// If protection detected but not auto mode, just recommend dynamic
+			recommendedMode = models.FetchModeDynamic
+		}
 	}
 
 	// Apply cleaner to content (noop for analyzer - keeps raw HTML)

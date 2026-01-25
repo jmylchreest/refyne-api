@@ -34,18 +34,20 @@ func NewJobService(cfg *config.Config, repos *repository.Repositories, storageSv
 
 // CrawlOptions represents crawl job options.
 type CrawlOptions struct {
-	FollowSelector   string          `json:"follow_selector,omitempty"`
-	FollowPattern    string          `json:"follow_pattern,omitempty"`
-	MaxDepth         int             `json:"max_depth,omitempty"`
-	NextSelector     string          `json:"next_selector,omitempty"`
-	MaxPages         int             `json:"max_pages,omitempty"`
-	MaxURLs          int             `json:"max_urls,omitempty"`
-	Delay            string          `json:"delay,omitempty"`
-	Concurrency      int             `json:"concurrency,omitempty"`
-	SameDomainOnly   bool            `json:"same_domain_only,omitempty"`
-	ExtractFromSeeds bool            `json:"extract_from_seeds,omitempty"`
-	UseSitemap       bool            `json:"use_sitemap,omitempty"`
-	CleanerChain     []CleanerConfig `json:"cleaner_chain,omitempty"`
+	FollowSelector        string          `json:"follow_selector,omitempty"`
+	FollowPattern         string          `json:"follow_pattern,omitempty"`
+	MaxDepth              int             `json:"max_depth,omitempty"`
+	NextSelector          string          `json:"next_selector,omitempty"`
+	MaxPages              int             `json:"max_pages,omitempty"`
+	MaxURLs               int             `json:"max_urls,omitempty"`
+	Delay                 string          `json:"delay,omitempty"`
+	Concurrency           int             `json:"concurrency,omitempty"`
+	SameDomainOnly        bool            `json:"same_domain_only,omitempty"`
+	ExtractFromSeeds      bool            `json:"extract_from_seeds,omitempty"`
+	UseSitemap            bool            `json:"use_sitemap,omitempty"`
+	FetchMode             string          `json:"fetch_mode,omitempty"`              // auto, static, or dynamic
+	ContentDynamicAllowed bool            `json:"content_dynamic_allowed,omitempty"` // Whether user has content_dynamic feature (set at job creation)
+	CleanerChain          []CleanerConfig `json:"cleaner_chain,omitempty"`
 }
 
 // CreateCrawlJobInput represents input for creating a crawl job.
