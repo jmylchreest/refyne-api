@@ -549,6 +549,15 @@ func (s *AnalyzerService) fetchContent(ctx context.Context, targetURL string, fe
 		statusCode = r.StatusCode
 	})
 
+	// Also capture responses for 4xx/5xx errors (for bot protection detection)
+	c.OnError(func(r *colly.Response, err error) {
+		if r != nil {
+			content = string(r.Body)
+			rawBody = r.Body
+			statusCode = r.StatusCode
+		}
+	})
+
 	// Extract links
 	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
 		href := e.Attr("href")
@@ -579,8 +588,14 @@ func (s *AnalyzerService) fetchContent(ctx context.Context, targetURL string, fe
 		}
 	})
 
+	var visitErr error
 	if err := c.Visit(targetURL); err != nil {
-		return "", nil, recommendedMode, fmt.Errorf("failed to fetch URL: %w", err)
+		visitErr = err
+		// If we didn't capture any response (true network error), return immediately
+		if rawBody == nil {
+			return "", nil, recommendedMode, fmt.Errorf("failed to fetch URL: %w", err)
+		}
+		// Otherwise, we have a response captured in OnError - continue to bot protection check
 	}
 
 	// Check for bot protection signals in the response
@@ -620,6 +635,11 @@ func (s *AnalyzerService) fetchContent(ctx context.Context, targetURL string, fe
 			// If protection detected but not auto mode, just recommend dynamic
 			recommendedMode = models.FetchModeDynamic
 		}
+	}
+
+	// If we had an HTTP error but no bot protection was detected/handled, return the original error
+	if visitErr != nil {
+		return "", nil, recommendedMode, fmt.Errorf("failed to fetch URL: %w", visitErr)
 	}
 
 	// Apply cleaner to content (noop for analyzer - keeps raw HTML)
