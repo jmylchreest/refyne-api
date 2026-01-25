@@ -250,23 +250,6 @@ func TestCleanerFactoryCreateChain(t *testing.T) {
 	}
 }
 
-func TestIsValidCleanerType(t *testing.T) {
-	valid := []string{"noop", "refyne"}
-	invalid := []string{"invalid", "unknown", "html", "", "markdown", "trafilatura", "readability"}
-
-	for _, v := range valid {
-		if !IsValidCleanerType(v) {
-			t.Errorf("expected %q to be valid", v)
-		}
-	}
-
-	for _, v := range invalid {
-		if IsValidCleanerType(v) {
-			t.Errorf("expected %q to be invalid", v)
-		}
-	}
-}
-
 func TestGetAvailableCleaners(t *testing.T) {
 	cleaners := GetAvailableCleaners()
 

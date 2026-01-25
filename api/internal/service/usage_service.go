@@ -67,8 +67,3 @@ func (s *UsageService) GetBillingPeriodUsage(ctx context.Context, userID string)
 	)
 	return s.repos.Usage.GetSummary(ctx, userID, "month")
 }
-
-// GetDailyUsage retrieves today's usage for a user.
-func (s *UsageService) GetDailyUsage(ctx context.Context, userID string) (*repository.UsageSummary, error) {
-	return s.repos.Usage.GetSummary(ctx, userID, "day")
-}

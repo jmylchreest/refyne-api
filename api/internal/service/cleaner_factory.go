@@ -90,24 +90,6 @@ type CleanerConfig struct {
 	Options *CleanerOptions `json:"options,omitempty"`
 }
 
-// ValidCleanerTypes returns all valid cleaner type names.
-func ValidCleanerTypes() []CleanerType {
-	return []CleanerType{
-		CleanerNoop,
-		CleanerRefyne,
-	}
-}
-
-// IsValidCleanerType checks if a string is a valid cleaner type.
-func IsValidCleanerType(s string) bool {
-	for _, ct := range ValidCleanerTypes() {
-		if string(ct) == s {
-			return true
-		}
-	}
-	return false
-}
-
 // CleanerFactory creates cleaner instances by name.
 type CleanerFactory struct{}
 
@@ -220,24 +202,6 @@ func (f *CleanerFactory) CreateChainWithDefault(configs []CleanerConfig, default
 		configs = defaultChain
 	}
 	return f.CreateChain(configs)
-}
-
-// CreateFromString creates a cleaner from a simple string name.
-// This is a convenience method for simple cases where no options are needed.
-// Returns the default extraction cleaner chain if the string is empty.
-func (f *CleanerFactory) CreateFromString(name string) (cleaner.Cleaner, error) {
-	if name == "" {
-		return f.CreateChain(DefaultExtractionCleanerChain)
-	}
-	return f.Create(CleanerConfig{Name: name})
-}
-
-// CreateFromStringWithDefault creates a cleaner from a string, using the provided default if empty.
-func (f *CleanerFactory) CreateFromStringWithDefault(name string, defaultChain []CleanerConfig) (cleaner.Cleaner, error) {
-	if name == "" {
-		return f.CreateChain(defaultChain)
-	}
-	return f.Create(CleanerConfig{Name: name})
 }
 
 // GetChainName returns a descriptive name for a cleaner chain.
