@@ -1,8 +1,141 @@
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
+import { formatDistanceToNow, formatDistance, format } from 'date-fns';
+import type { ApiError } from './api/types';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
+}
+
+// ==================== Date/Time Formatters ====================
+
+export function formatRelativeTime(dateString: string) {
+  return formatDistanceToNow(new Date(dateString), { addSuffix: false });
+}
+
+export function formatDateTime(dateString: string) {
+  return format(new Date(dateString), 'PPpp');
+}
+
+export function formatDuration(startDate: string, endDate: string) {
+  return formatDistance(new Date(startDate), new Date(endDate));
+}
+
+// ==================== Number Formatters ====================
+
+export function formatTokens(count: number): string {
+  if (count >= 1000000) return `${(count / 1000000).toFixed(1)}M`;
+  if (count >= 1000) return `${(count / 1000).toFixed(1)}k`;
+  return count.toString();
+}
+
+export function formatCurrency(amount: number, decimals = 4): string {
+  return `$${amount.toFixed(decimals)}`;
+}
+
+// ==================== URL Helpers ====================
+
+export function truncateUrl(url: string, maxLength = 30): string {
+  try {
+    const parsed = new URL(url);
+    const path =
+      parsed.pathname.length > 18
+        ? parsed.pathname.slice(0, 18) + '...'
+        : parsed.pathname;
+    return parsed.hostname + path;
+  } catch {
+    return url.length > maxLength ? url.slice(0, maxLength) + '...' : url;
+  }
+}
+
+export function normalizeUrl(inputUrl: string): string {
+  const trimmed = inputUrl.trim();
+  if (!trimmed) return trimmed;
+  if (!trimmed.match(/^https?:\/\//i)) {
+    return `https://${trimmed}`;
+  }
+  return trimmed;
+}
+
+export function getHostname(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+}
+
+// ==================== Status Colors ====================
+
+export type JobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+export function getStatusColor(status: JobStatus): string {
+  switch (status) {
+    case 'pending':
+      return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400';
+    case 'running':
+      return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400';
+    case 'completed':
+      return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400';
+    case 'failed':
+      return 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400';
+    case 'cancelled':
+      return 'bg-zinc-100 text-zinc-800 dark:bg-zinc-900/30 dark:text-zinc-400';
+    default:
+      return 'bg-zinc-100 text-zinc-800 dark:bg-zinc-900/30 dark:text-zinc-400';
+  }
+}
+
+export function getStatusDotColor(status: JobStatus): string {
+  switch (status) {
+    case 'pending':
+      return 'bg-yellow-500';
+    case 'running':
+      return 'bg-blue-500 animate-pulse';
+    case 'completed':
+      return 'bg-green-500';
+    case 'failed':
+      return 'bg-red-500';
+    case 'cancelled':
+      return 'bg-zinc-400';
+    default:
+      return 'bg-zinc-400';
+  }
+}
+
+// ==================== Error Handling ====================
+
+export function getErrorMessage(error: ApiError | { error?: string }): string {
+  const apiError = error as ApiError;
+
+  // If we have an error category, provide a more helpful message
+  if (apiError.error_category) {
+    const categoryMessages: Record<string, string> = {
+      invalid_api_key: apiError.is_byok
+        ? 'Your API key is invalid. Please check your LLM provider settings.'
+        : 'Authentication error. Please try again.',
+      insufficient_credits: 'Insufficient credits. Please add credits to continue.',
+      quota_exceeded: 'You have exceeded your usage quota. Please upgrade your plan or wait for your quota to reset.',
+      feature_disabled: 'This feature is not available on your current plan.',
+      rate_limited: 'Too many requests. Please wait a moment and try again.',
+      quota_exhausted: 'Free tier quota exhausted. Please upgrade or try again later.',
+      provider_unavailable: apiError.is_byok
+        ? `The ${apiError.provider || 'LLM'} provider is currently unavailable. Please check their status or try a different provider.`
+        : 'The extraction service is temporarily unavailable. Please try again later.',
+      model_unavailable: apiError.is_byok
+        ? `The model ${apiError.model || ''} is unavailable. Please try a different model.`
+        : 'The extraction model is temporarily unavailable. Please try again later.',
+      provider_error: apiError.is_byok
+        ? `Error from ${apiError.provider || 'provider'}: ${apiError.error}${apiError.error_details ? `\n\nDetails: ${apiError.error_details}` : ''}`
+        : 'A temporary error occurred. Please try again.',
+      extraction_error: apiError.error || 'Extraction failed. Please check your schema and try again.',
+    };
+
+    return categoryMessages[apiError.error_category] || apiError.error || 'An error occurred';
+  }
+
+  // Fallback to the error message
+  return apiError.error || 'An error occurred';
 }
 
 /**
