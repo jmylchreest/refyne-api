@@ -106,14 +106,16 @@ func main() {
 	// Initialize repositories
 	repos := repository.NewRepositories(db)
 
-	// Clean up stale running jobs from previous server runs
+	// Clean up stale running jobs from previous server runs (async - not critical for startup)
 	// Jobs running for more than 1 hour are considered stale on startup
-	staleCount, err := repos.Job.MarkStaleRunningJobsFailed(context.Background(), 1*time.Hour)
-	if err != nil {
-		logger.Warn("failed to clean up stale jobs", "error", err)
-	} else if staleCount > 0 {
-		logger.Info("cleaned up stale running jobs", "count", staleCount)
-	}
+	go func() {
+		staleCount, err := repos.Job.MarkStaleRunningJobsFailed(context.Background(), 1*time.Hour)
+		if err != nil {
+			logger.Warn("failed to clean up stale jobs", "error", err)
+		} else if staleCount > 0 {
+			logger.Info("cleaned up stale running jobs", "count", staleCount)
+		}
+	}()
 
 	// Initialize services
 	services, err := service.NewServices(cfg, repos, logger)
@@ -258,10 +260,12 @@ func main() {
 			Key:      "config/api-keys.json",
 			Logger:   logger,
 		})
-		// Pre-load API keys so they're available for the first request
-		if loader := config.GetAPIKeyLoader(); loader != nil {
-			loader.Load(context.Background())
-		}
+		// Pre-load API keys asynchronously (lazy-loads on first use if not ready)
+		go func() {
+			if loader := config.GetAPIKeyLoader(); loader != nil {
+				loader.Load(context.Background())
+			}
+		}()
 
 		logger.Info("S3 config loaders enabled",
 			"bucket", bucket,

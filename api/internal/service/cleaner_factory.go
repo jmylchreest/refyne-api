@@ -164,7 +164,22 @@ func (f *CleanerFactory) Create(config CleanerConfig) (cleaner.Cleaner, error) {
 }
 
 // createTrafilatura creates a Trafilatura cleaner with optional config.
+// If trafilatura is not compiled in (build without -tags trafilatura),
+// it falls back to the refyne cleaner which provides similar functionality.
 func (f *CleanerFactory) createTrafilatura(opts *CleanerOptions) cleaner.Cleaner {
+	// Check if trafilatura is available (compiled with -tags trafilatura)
+	testCleaner := cleaner.NewTrafilatura(nil)
+	if !testCleaner.IsAvailable() {
+		// Fall back to refyne cleaner with similar settings
+		refyneOpts := &CleanerOptions{
+			Output: "html",
+		}
+		if opts != nil {
+			refyneOpts.Output = opts.Output
+		}
+		return f.createRefyne(refyneOpts)
+	}
+
 	cfg := &cleaner.TrafilaturaConfig{
 		Output: cleaner.OutputHTML, // Default to HTML
 		Tables: cleaner.Include,

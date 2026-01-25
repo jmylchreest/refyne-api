@@ -111,11 +111,15 @@ func NewServices(cfg *config.Config, repos *repository.Repositories, logger *slo
 		clerkClient := auth.NewClerkBackendClient(cfg.ClerkSecretKey)
 		tierSyncSvc = NewTierSyncService(clerkClient, logger)
 
-		// Sync tier metadata from Clerk on startup
-		if err := tierSyncSvc.SyncFromClerk(context.Background()); err != nil {
-			// Log but don't fail startup - we have hardcoded defaults
-			logger.Warn("failed to sync tier metadata from Clerk on startup", "error", err)
-		}
+		// Sync tier metadata from Clerk asynchronously (non-blocking startup)
+		// We have hardcoded defaults, so the API will work even if this fails
+		go func() {
+			if err := tierSyncSvc.SyncFromClerk(context.Background()); err != nil {
+				logger.Warn("failed to sync tier metadata from Clerk on startup", "error", err)
+			} else {
+				logger.Info("tier metadata synced from Clerk")
+			}
+		}()
 
 		// Create subscription cache for API key tier/feature hydration
 		// Uses 5-minute TTL to balance freshness with API rate limits

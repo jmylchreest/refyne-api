@@ -49,8 +49,11 @@ func TestNew_Defaults(t *testing.T) {
 		t.Fatal("expected worker, got nil")
 	}
 	// Check defaults were applied
-	if w.pollInterval != 5*time.Second {
-		t.Errorf("pollInterval = %v, want 5s (default)", w.pollInterval)
+	if w.basePollInterval != 1*time.Second {
+		t.Errorf("basePollInterval = %v, want 1s (default)", w.basePollInterval)
+	}
+	if w.maxPollInterval != 30*time.Second {
+		t.Errorf("maxPollInterval = %v, want 30s (default)", w.maxPollInterval)
 	}
 	if w.concurrency != 3 {
 		t.Errorf("concurrency = %d, want 3 (default)", w.concurrency)
@@ -62,8 +65,9 @@ func TestNew_Defaults(t *testing.T) {
 
 func TestNew_CustomConfig(t *testing.T) {
 	cfg := Config{
-		PollInterval: 10 * time.Second,
-		Concurrency:  8,
+		PollInterval:    10 * time.Second,
+		MaxPollInterval: 60 * time.Second,
+		Concurrency:     8,
 	}
 	logger := slog.Default()
 
@@ -72,8 +76,11 @@ func TestNew_CustomConfig(t *testing.T) {
 	if w == nil {
 		t.Fatal("expected worker, got nil")
 	}
-	if w.pollInterval != 10*time.Second {
-		t.Errorf("pollInterval = %v, want 10s", w.pollInterval)
+	if w.basePollInterval != 10*time.Second {
+		t.Errorf("basePollInterval = %v, want 10s", w.basePollInterval)
+	}
+	if w.maxPollInterval != 60*time.Second {
+		t.Errorf("maxPollInterval = %v, want 60s", w.maxPollInterval)
 	}
 	if w.concurrency != 8 {
 		t.Errorf("concurrency = %d, want 8", w.concurrency)
@@ -81,15 +88,18 @@ func TestNew_CustomConfig(t *testing.T) {
 }
 
 func TestNew_PartialDefaults(t *testing.T) {
-	// Only set PollInterval, Concurrency should use default
+	// Only set PollInterval, Concurrency and MaxPollInterval should use defaults
 	cfg := Config{
 		PollInterval: 15 * time.Second,
 	}
 
 	w := New(nil, nil, nil, nil, nil, nil, cfg, nil)
 
-	if w.pollInterval != 15*time.Second {
-		t.Errorf("pollInterval = %v, want 15s", w.pollInterval)
+	if w.basePollInterval != 15*time.Second {
+		t.Errorf("basePollInterval = %v, want 15s", w.basePollInterval)
+	}
+	if w.maxPollInterval != 30*time.Second {
+		t.Errorf("maxPollInterval = %v, want 30s (default)", w.maxPollInterval)
 	}
 	if w.concurrency != 3 {
 		t.Errorf("concurrency = %d, want 3 (default)", w.concurrency)

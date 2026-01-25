@@ -68,7 +68,7 @@ func NewAnalyzerServiceWithBilling(cfg *config.Config, repos *repository.Reposit
 		primaryCleaner = cleaner.NewNoop() // Fallback to direct creation
 	}
 
-	// Fallback cleaner chain: trafilatura (used when content exceeds context window)
+	// Fallback cleaner chain: refyne (used when content exceeds context window)
 	fallbackCleaner, err := factory.CreateChain(AnalyzerFallbackCleanerChain)
 	if err != nil {
 		logger.Error("failed to create fallback cleaner", "error", err)
@@ -91,7 +91,7 @@ func NewAnalyzerServiceWithBilling(cfg *config.Config, repos *repository.Reposit
 		logger:          logger,
 		encryptor:       encryptor,
 		cleaner:         primaryCleaner,  // noop by default - raw HTML for analysis
-		fallbackCleaner: fallbackCleaner, // trafilatura for context length fallback
+		fallbackCleaner: fallbackCleaner, // refyne for context length fallback
 		preprocessor:    llmPreprocessor,
 	}
 }
@@ -157,7 +157,7 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 		"tier", tier,
 		"byok_allowed", byokAllowed,
 		"models_custom_allowed", modelsCustomAllowed,
-		"cleaner", "noop (fallback: trafilatura->html)",
+		"cleaner", "noop (fallback: refyne)",
 	)
 
 	// Get LLM config for analysis early (needed for error recording)

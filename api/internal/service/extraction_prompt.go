@@ -227,14 +227,23 @@ func (s *ExtractionService) extractWithPrompt(ctx context.Context, userID string
 }
 
 // buildPromptExtractionPrompt constructs the LLM prompt for freeform extraction.
+// Uses strings.Builder for efficient memory allocation with large page content.
 func (s *ExtractionService) buildPromptExtractionPrompt(pageContent, userPrompt string) string {
-	return fmt.Sprintf(`You are a data extraction assistant. Extract structured data from the provided web page content based on the user's instructions.
+	const templateOverhead = 500 // Approximate size of template text
+	var b strings.Builder
+	b.Grow(len(pageContent) + len(userPrompt) + templateOverhead)
+
+	b.WriteString(`You are a data extraction assistant. Extract structured data from the provided web page content based on the user's instructions.
 
 USER'S EXTRACTION INSTRUCTIONS:
-%s
+`)
+	b.WriteString(userPrompt)
+	b.WriteString(`
 
 WEB PAGE CONTENT:
-%s
+`)
+	b.WriteString(pageContent)
+	b.WriteString(`
 
 IMPORTANT INSTRUCTIONS:
 1. Extract ONLY the data requested by the user
@@ -244,7 +253,9 @@ IMPORTANT INSTRUCTIONS:
 5. For lists/arrays, include all matching items found
 6. Be thorough but only include what was explicitly requested
 
-Respond with ONLY valid JSON, no markdown formatting or explanation.`, userPrompt, pageContent)
+Respond with ONLY valid JSON, no markdown formatting or explanation.`)
+
+	return b.String()
 }
 
 // fetchAndCleanContent fetches a URL and cleans the content using the configured cleaner chain.

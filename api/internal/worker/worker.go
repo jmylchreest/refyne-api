@@ -25,7 +25,8 @@ type Worker struct {
 	webhookSvc          *service.WebhookService
 	storageSvc          *service.StorageService
 	sitemapSvc          *service.SitemapService
-	pollInterval        time.Duration
+	basePollInterval    time.Duration // Base poll interval (reset to this after finding a job)
+	maxPollInterval     time.Duration // Maximum backoff interval
 	concurrency         int
 	shutdownGracePeriod time.Duration
 	stop                chan struct{}
@@ -37,7 +38,8 @@ type Worker struct {
 
 // Config holds worker configuration.
 type Config struct {
-	PollInterval        time.Duration
+	PollInterval        time.Duration // Base poll interval (minimum, reset after finding a job)
+	MaxPollInterval     time.Duration // Maximum poll interval for backoff (default 30s)
 	Concurrency         int
 	ShutdownGracePeriod time.Duration // Max time to wait for running jobs during shutdown
 }
@@ -54,7 +56,10 @@ func New(
 	logger *slog.Logger,
 ) *Worker {
 	if cfg.PollInterval == 0 {
-		cfg.PollInterval = 5 * time.Second
+		cfg.PollInterval = 1 * time.Second // Reduced base for faster response when jobs exist
+	}
+	if cfg.MaxPollInterval == 0 {
+		cfg.MaxPollInterval = 30 * time.Second // Max backoff when idle
 	}
 	if cfg.Concurrency == 0 {
 		cfg.Concurrency = 3
@@ -72,7 +77,8 @@ func New(
 		webhookSvc:          webhookSvc,
 		storageSvc:          storageSvc,
 		sitemapSvc:          sitemapSvc,
-		pollInterval:        cfg.PollInterval,
+		basePollInterval:    cfg.PollInterval,
+		maxPollInterval:     cfg.MaxPollInterval,
 		concurrency:         cfg.Concurrency,
 		shutdownGracePeriod: cfg.ShutdownGracePeriod,
 		stop:                make(chan struct{}),
@@ -84,7 +90,8 @@ func New(
 func (w *Worker) Start(ctx context.Context) {
 	w.logger.Info("starting",
 		"concurrency", w.concurrency,
-		"poll_interval", w.pollInterval,
+		"base_poll_interval", w.basePollInterval,
+		"max_poll_interval", w.maxPollInterval,
 		"shutdown_grace_period", w.shutdownGracePeriod,
 	)
 
@@ -140,8 +147,10 @@ func (w *Worker) Stop() {
 func (w *Worker) runWorker(ctx context.Context, workerID int) {
 	defer w.wg.Done()
 
-	ticker := time.NewTicker(w.pollInterval)
-	defer ticker.Stop()
+	// Adaptive polling: start at base interval, back off when idle, reset on job found
+	currentInterval := w.basePollInterval
+	timer := time.NewTimer(currentInterval)
+	defer timer.Stop()
 
 	for {
 		select {
@@ -149,13 +158,26 @@ func (w *Worker) runWorker(ctx context.Context, workerID int) {
 			return
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			w.processNextJob(ctx, workerID)
+		case <-timer.C:
+			found := w.processNextJob(ctx, workerID)
+			if found {
+				// Job found - reset to base interval for quick pickup of next job
+				currentInterval = w.basePollInterval
+			} else {
+				// No job found - exponential backoff (double interval, up to max)
+				currentInterval = currentInterval * 2
+				if currentInterval > w.maxPollInterval {
+					currentInterval = w.maxPollInterval
+				}
+			}
+			timer.Reset(currentInterval)
 		}
 	}
 }
 
-func (w *Worker) processNextJob(ctx context.Context, workerID int) {
+// processNextJob claims and processes the next available job.
+// Returns true if a job was found and processed, false otherwise.
+func (w *Worker) processNextJob(ctx context.Context, workerID int) bool {
 	// Build tier limits from constants for priority scheduling
 	tierLimits := repository.TierJobLimits{
 		constants.TierFree:       constants.GetTierLimits(constants.TierFree).MaxConcurrentJobs,
@@ -168,10 +190,10 @@ func (w *Worker) processNextJob(ctx context.Context, workerID int) {
 	job, err := w.jobRepo.ClaimPendingWithLimits(ctx, tierLimits)
 	if err != nil {
 		w.logger.Error("failed to claim job", "worker_id", workerID, "error", err)
-		return
+		return false
 	}
 	if job == nil {
-		return // No pending jobs or all eligible users at limit
+		return false // No pending jobs or all eligible users at limit
 	}
 
 	// Track active job
@@ -195,6 +217,8 @@ func (w *Worker) processNextJob(ctx context.Context, workerID int) {
 	default:
 		w.failJob(ctx, job, "unknown job type")
 	}
+
+	return true
 }
 
 func (w *Worker) processExtractJob(ctx context.Context, job *models.Job) {

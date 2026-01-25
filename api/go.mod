@@ -99,3 +99,6 @@ require (
 	google.golang.org/appengine v1.6.8 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
+
+// Local development: use local refyne library for trafilatura build tag support
+replace github.com/jmylchreest/refyne => ../../refyne
