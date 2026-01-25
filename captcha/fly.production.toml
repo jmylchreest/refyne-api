@@ -1,5 +1,5 @@
-# fly.toml - Fly.io configuration for refyne-captcha service
-# Deploy: fly deploy --app refyne-captcha
+# fly.production.toml - Fly.io configuration for refyne-captcha PRODUCTION service
+# Deploy: fly deploy --config fly.production.toml --app refyne-captcha
 #
 # INTERNAL SERVICE ONLY - Not publicly accessible
 # Access via private networking: refyne-captcha.internal:8191
