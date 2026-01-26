@@ -49,14 +49,13 @@ func (s *BillingService) GetAvailableBalance(ctx context.Context, userID string)
 
 // CheckSufficientBalance verifies the user has enough balance for an estimated operation.
 // Returns an error if insufficient balance.
-// For free tier users, skip the balance check - they're limited by extraction quota instead.
-func (s *BillingService) CheckSufficientBalance(ctx context.Context, userID, tier string, estimatedCostUSD float64) error {
-	// Skip balance check for free tier - they're limited by monthly extraction quota
-	normalizedTier := constants.NormalizeTierName(tier)
-	if normalizedTier == constants.TierFree {
-		s.logger.Debug("skipping balance check for free tier user",
+// If skipCreditCheck is true (from Clerk feature "skip_credit_check"), the check is bypassed.
+// This allows certain tiers/users to operate without credits (limited by quota instead).
+func (s *BillingService) CheckSufficientBalance(ctx context.Context, userID string, skipCreditCheck bool, estimatedCostUSD float64) error {
+	// Skip balance check if feature flag is set
+	if skipCreditCheck {
+		s.logger.Debug("skipping balance check (skip_credit_check feature enabled)",
 			"user_id", userID,
-			"tier", tier,
 		)
 		return nil
 	}

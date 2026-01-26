@@ -157,7 +157,8 @@ type AnalyzeDebugCapture struct {
 // The byokAllowed parameter comes from JWT claims and indicates if user has the "provider_byok" feature.
 // The modelsCustomAllowed parameter comes from JWT claims and indicates if user has the "models_custom" feature.
 // The contentDynamicAllowed parameter comes from JWT claims and indicates if user has the "content_dynamic" feature.
-func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input AnalyzeInput, tier string, byokAllowed bool, modelsCustomAllowed bool, contentDynamicAllowed bool) (*AnalyzeOutput, error) {
+// The skipCreditCheck parameter comes from JWT claims and indicates if user has the "skip_credit_check" feature.
+func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input AnalyzeInput, tier string, byokAllowed bool, modelsCustomAllowed bool, contentDynamicAllowed bool, skipCreditCheck bool) (*AnalyzeOutput, error) {
 	startTime := time.Now()
 	requestID := ulid.Make().String()
 
@@ -214,7 +215,7 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 		)
 		// Only check balance for non-BYOK users
 		if !llmChain.IsBYOK() {
-			if err := s.billing.CheckSufficientBalance(ctx, userID, tier, estimatedCost); err != nil {
+			if err := s.billing.CheckSufficientBalance(ctx, userID, skipCreditCheck, estimatedCost); err != nil {
 				return nil, err
 			}
 		}

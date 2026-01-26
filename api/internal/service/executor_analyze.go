@@ -11,15 +11,16 @@ import (
 // AnalyzeExecutor handles URL analysis jobs.
 // It implements the JobExecutor interface for synchronous analysis.
 type AnalyzeExecutor struct {
-	analyzerSvc           *AnalyzerService
-	input                 AnalyzeInput
-	userID                string
-	tier                  string
-	byokAllowed           bool
-	modelsCustomAllowed   bool
-	contentDynamicAllowed bool
-	isByok                bool
-	jobID                 string // Job ID for tracking in downstream services
+	analyzerSvc            *AnalyzerService
+	input                  AnalyzeInput
+	userID                 string
+	tier                   string
+	byokAllowed            bool
+	modelsCustomAllowed    bool
+	contentDynamicAllowed  bool
+	skipCreditCheckAllowed bool
+	isByok                 bool
+	jobID                  string // Job ID for tracking in downstream services
 }
 
 // NewAnalyzeExecutor creates a new analyze executor.
@@ -31,16 +32,18 @@ func NewAnalyzeExecutor(
 	byokAllowed bool,
 	modelsCustomAllowed bool,
 	contentDynamicAllowed bool,
+	skipCreditCheckAllowed bool,
 ) *AnalyzeExecutor {
 	return &AnalyzeExecutor{
-		analyzerSvc:           analyzerSvc,
-		input:                 input,
-		userID:                userID,
-		tier:                  tier,
-		byokAllowed:           byokAllowed,
-		modelsCustomAllowed:   modelsCustomAllowed,
-		contentDynamicAllowed: contentDynamicAllowed,
-		isByok:                false,
+		analyzerSvc:            analyzerSvc,
+		input:                  input,
+		userID:                 userID,
+		tier:                   tier,
+		byokAllowed:            byokAllowed,
+		modelsCustomAllowed:    modelsCustomAllowed,
+		contentDynamicAllowed:  contentDynamicAllowed,
+		skipCreditCheckAllowed: skipCreditCheckAllowed,
+		isByok:                 false,
 	}
 }
 
@@ -60,6 +63,7 @@ func (e *AnalyzeExecutor) Execute(ctx context.Context) (*JobExecutionResult, err
 		e.byokAllowed,
 		e.modelsCustomAllowed,
 		e.contentDynamicAllowed,
+		e.skipCreditCheckAllowed,
 	)
 	if err != nil {
 		return nil, err

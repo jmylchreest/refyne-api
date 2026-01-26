@@ -62,14 +62,15 @@ func ConvertJobCleanerChain(input []JobCleanerConfigInput) []service.CleanerConf
 // BuildExtractContext creates an ExtractContext from UserContext and optional LLM config.
 func BuildExtractContext(uc UserContext, llmConfig *LLMConfigInput) *service.ExtractContext {
 	ectx := &service.ExtractContext{
-		UserID:                uc.UserID,
-		Tier:                  uc.Tier,
-		BYOKAllowed:           uc.BYOKAllowed,
-		ModelsCustomAllowed:   uc.ModelsCustomAllowed,
-		ModelsPremiumAllowed:  uc.ModelsPremiumAllowed,
-		ContentDynamicAllowed: uc.ContentDynamicAllowed,
-		LLMProvider:           uc.LLMProvider,
-		LLMModel:              uc.LLMModel,
+		UserID:                 uc.UserID,
+		Tier:                   uc.Tier,
+		BYOKAllowed:            uc.BYOKAllowed,
+		ModelsCustomAllowed:    uc.ModelsCustomAllowed,
+		ModelsPremiumAllowed:   uc.ModelsPremiumAllowed,
+		ContentDynamicAllowed:  uc.ContentDynamicAllowed,
+		SkipCreditCheckAllowed: uc.SkipCreditCheckAllowed,
+		LLMProvider:            uc.LLMProvider,
+		LLMModel:               uc.LLMModel,
 	}
 
 	if llmConfig != nil && llmConfig.APIKey != "" {

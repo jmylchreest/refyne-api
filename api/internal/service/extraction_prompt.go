@@ -53,7 +53,7 @@ func (s *ExtractionService) extractWithPrompt(ctx context.Context, userID string
 	} else if s.billing != nil && firstCfg != nil && !llmChain.IsBYOK() {
 		// Standard pre-flight balance check for non-premium users
 		estimatedCost := s.billing.EstimateCost(1, firstCfg.Model, firstCfg.Provider)
-		if err := s.billing.CheckSufficientBalance(ctx, userID, ectx.Tier, estimatedCost); err != nil {
+		if err := s.billing.CheckSufficientBalance(ctx, userID, ectx.SkipCreditCheckAllowed, estimatedCost); err != nil {
 			return nil, err
 		}
 	}

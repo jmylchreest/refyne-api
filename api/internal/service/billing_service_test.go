@@ -243,7 +243,6 @@ func TestCheckSufficientBalance(t *testing.T) {
 	svc, _, creditRepo, _, _, _ := newTestBillingService()
 	ctx := context.Background()
 	userID := "user_123"
-	tier := "standard" // Use standard tier to test balance checking (free tier skips check)
 
 	tests := []struct {
 		name         string
@@ -261,7 +260,8 @@ func TestCheckSufficientBalance(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			creditRepo.availableBalance = tt.balance
-			err := svc.CheckSufficientBalance(ctx, userID, tier, tt.estimatedUSD)
+			// skipCreditCheck=false means balance is checked
+			err := svc.CheckSufficientBalance(ctx, userID, false, tt.estimatedUSD)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("CheckSufficientBalance() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -274,12 +274,13 @@ func TestCheckSufficientBalance(t *testing.T) {
 		})
 	}
 
-	// Test that free tier skips balance check
-	t.Run("free tier skips balance check", func(t *testing.T) {
+	// Test that skipCreditCheck=true skips balance check
+	t.Run("skip_credit_check feature skips balance check", func(t *testing.T) {
 		creditRepo.availableBalance = 0.0 // No balance
-		err := svc.CheckSufficientBalance(ctx, userID, "free", 100.0) // High cost
+		// skipCreditCheck=true means balance is NOT checked
+		err := svc.CheckSufficientBalance(ctx, userID, true, 100.0) // High cost
 		if err != nil {
-			t.Errorf("CheckSufficientBalance() for free tier should not error, got %v", err)
+			t.Errorf("CheckSufficientBalance() with skipCreditCheck=true should not error, got %v", err)
 		}
 	})
 }

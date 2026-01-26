@@ -27,6 +27,7 @@ const (
 	FeatureModelsCustom   = "models_custom"   // Controls custom model/fallback chain configuration
 	FeatureModelsPremium  = "models_premium"  // Access to premium/charged models with budget-based fallback
 	FeatureContentDynamic = "content_dynamic" // JavaScript/real browser support for dynamic content
+	FeatureSkipCreditCheck = "skip_credit_check" // Skip pre-flight credit balance check (user limited by quota instead)
 )
 
 // TierLimits defines the numeric limits for a subscription tier.

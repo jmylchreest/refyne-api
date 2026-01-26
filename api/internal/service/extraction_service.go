@@ -183,17 +183,18 @@ type BudgetSkip struct {
 
 // ExtractContext holds context for billing tracking and feature access.
 type ExtractContext struct {
-	UserID                string
-	Tier                  string // From JWT claims
-	SchemaID              string
-	JobID                 string // Job ID for tracking in captcha/browser service
-	IsBYOK                bool
-	BYOKAllowed           bool   // From JWT claims - whether user has the "provider_byok" feature
-	ModelsCustomAllowed   bool   // From JWT claims - whether user has the "models_custom" feature
-	ModelsPremiumAllowed  bool   // From JWT claims - whether user has the "models_premium" feature (budget-based fallback)
-	ContentDynamicAllowed bool   // From JWT claims - whether user has the "content_dynamic" feature (browser rendering)
-	LLMProvider           string // For S3 API keys: forced LLM provider (bypasses fallback chain)
-	LLMModel              string // For S3 API keys: forced LLM model (bypasses fallback chain)
+	UserID                 string
+	Tier                   string // From JWT claims
+	SchemaID               string
+	JobID                  string // Job ID for tracking in captcha/browser service
+	IsBYOK                 bool
+	BYOKAllowed            bool   // From JWT claims - whether user has the "provider_byok" feature
+	ModelsCustomAllowed    bool   // From JWT claims - whether user has the "models_custom" feature
+	ModelsPremiumAllowed   bool   // From JWT claims - whether user has the "models_premium" feature (budget-based fallback)
+	ContentDynamicAllowed  bool   // From JWT claims - whether user has the "content_dynamic" feature (browser rendering)
+	SkipCreditCheckAllowed bool   // From JWT claims - whether user has the "skip_credit_check" feature
+	LLMProvider            string // For S3 API keys: forced LLM provider (bypasses fallback chain)
+	LLMModel               string // For S3 API keys: forced LLM model (bypasses fallback chain)
 }
 
 // Extract performs a single-page extraction.
@@ -295,7 +296,7 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 			"estimated_cost_usd", estimatedCost,
 			"is_byok", llmChain.IsBYOK(),
 		)
-		if err := s.billing.CheckSufficientBalance(ctx, userID, ectx.Tier, estimatedCost); err != nil {
+		if err := s.billing.CheckSufficientBalance(ctx, userID, ectx.SkipCreditCheckAllowed, estimatedCost); err != nil {
 			return nil, err
 		}
 	}

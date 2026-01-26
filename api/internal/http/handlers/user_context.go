@@ -11,14 +11,15 @@ import (
 // UserContext holds user-related context extracted from JWT claims.
 // Used across handlers to avoid repeating the same extraction logic.
 type UserContext struct {
-	UserID                string
-	Tier                  string
-	BYOKAllowed           bool
-	ModelsCustomAllowed   bool
-	ModelsPremiumAllowed  bool   // Access to premium/charged models with budget-based fallback
-	ContentDynamicAllowed bool   // JavaScript/real browser support for dynamic content
-	LLMProvider           string // For S3 API keys: forced LLM provider
-	LLMModel              string // For S3 API keys: forced LLM model
+	UserID                 string
+	Tier                   string
+	BYOKAllowed            bool
+	ModelsCustomAllowed    bool
+	ModelsPremiumAllowed   bool   // Access to premium/charged models with budget-based fallback
+	ContentDynamicAllowed  bool   // JavaScript/real browser support for dynamic content
+	SkipCreditCheckAllowed bool   // Skip pre-flight credit balance check (limited by quota instead)
+	LLMProvider            string // For S3 API keys: forced LLM provider
+	LLMModel               string // For S3 API keys: forced LLM model
 }
 
 // ExtractUserContext extracts user context from JWT claims.
@@ -37,6 +38,7 @@ func ExtractUserContext(ctx context.Context) UserContext {
 		uc.ModelsCustomAllowed = claims.HasFeature(constants.FeatureModelsCustom)
 		uc.ModelsPremiumAllowed = claims.HasFeature(constants.FeatureModelsPremium)
 		uc.ContentDynamicAllowed = claims.HasFeature(constants.FeatureContentDynamic)
+		uc.SkipCreditCheckAllowed = claims.HasFeature(constants.FeatureSkipCreditCheck)
 		uc.LLMProvider = claims.LLMProvider
 		uc.LLMModel = claims.LLMModel
 

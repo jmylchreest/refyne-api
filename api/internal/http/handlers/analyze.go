@@ -99,6 +99,7 @@ func (h *AnalyzeHandler) Analyze(ctx context.Context, input *AnalyzeInput) (*Ana
 		uc.BYOKAllowed,
 		uc.ModelsCustomAllowed,
 		uc.ContentDynamicAllowed,
+		uc.SkipCreditCheckAllowed,
 	)
 
 	// Run job with full lifecycle management (creates job, executes, handles webhooks)
@@ -132,7 +133,7 @@ func (h *AnalyzeHandler) Analyze(ctx context.Context, input *AnalyzeInput) (*Ana
 			URL:       input.Body.URL,
 			Depth:     depth,
 			FetchMode: input.Body.FetchMode,
-		}, uc.Tier, uc.BYOKAllowed, uc.ModelsCustomAllowed, uc.ContentDynamicAllowed)
+		}, uc.Tier, uc.BYOKAllowed, uc.ModelsCustomAllowed, uc.ContentDynamicAllowed, uc.SkipCreditCheckAllowed)
 		if directErr != nil {
 			return nil, NewJobError(directErr, uc.BYOKAllowed)
 		}
