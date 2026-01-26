@@ -167,6 +167,13 @@ func (m *IdleMonitor) IdleTime() time.Duration {
 	return time.Since(m.LastRequestTime())
 }
 
+// ResetTimer resets the idle timer to now.
+// Call this after warmup/initialization to ensure the full idle timeout applies.
+func (m *IdleMonitor) ResetTimer() {
+	m.lastRequest.Store(time.Now())
+	m.logger.Debug("idle timer reset")
+}
+
 // DefaultIsHealthCheck returns true if this is a health check request.
 // Detects Fly.io health checks by User-Agent and common health check paths.
 func DefaultIsHealthCheck(r *http.Request) bool {

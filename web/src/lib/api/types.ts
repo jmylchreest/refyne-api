@@ -58,6 +58,7 @@ export interface AnalyzeResult {
   follow_patterns: FollowPattern[];
   sample_links: string[];
   recommended_fetch_mode: string;
+  fetch_mode_used?: string;  // Actual fetch mode used for this analysis (static or dynamic)
   sample_data?: unknown;
   token_usage?: AnalyzeTokenUsage;
 }

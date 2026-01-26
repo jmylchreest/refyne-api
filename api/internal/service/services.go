@@ -120,6 +120,11 @@ func NewServices(cfg *config.Config, repos *repository.Repositories, logger *slo
 		logger.Info("captcha service enabled for dynamic content fetching",
 			"service_url", cfg.CaptchaServiceURL,
 		)
+	} else {
+		logger.Warn("captcha service NOT configured - dynamic fetch mode unavailable",
+			"captcha_url_set", cfg.CaptchaServiceURL != "",
+			"captcha_secret_set", cfg.CaptchaSecret != "",
+		)
 	}
 
 	// Create Clerk-dependent services

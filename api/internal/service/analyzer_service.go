@@ -135,7 +135,8 @@ type AnalyzeOutput struct {
 	FollowPatterns       []models.FollowPattern   `json:"follow_patterns"`
 	SampleLinks          []string                 `json:"sample_links"`
 	RecommendedFetchMode models.FetchMode         `json:"recommended_fetch_mode"`
-	SampleData           any                      `json:"sample_data,omitempty"` // Preview extraction result
+	FetchModeUsed        models.FetchMode         `json:"fetch_mode_used,omitempty"` // Actual fetch mode used for this analysis (static or dynamic)
+	SampleData           any                      `json:"sample_data,omitempty"`     // Preview extraction result
 	TokenUsage           AnalyzeTokenUsage        `json:"token_usage"`
 	// Debug capture data (only populated when debug capture is enabled)
 	DebugCapture *AnalyzeDebugCapture `json:"-"` // Internal use only, not serialized in API response
@@ -369,6 +370,7 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 		"success", "", requestID)
 
 	result.Output.RecommendedFetchMode = fetchMode
+	result.Output.FetchModeUsed = fetchMode // Record what mode was actually used
 	if len(links) > 0 {
 		result.Output.SampleLinks = links[:min(10, len(links))] // Return up to 10 sample links
 	}
@@ -623,6 +625,14 @@ func (s *AnalyzerService) fetchContent(ctx context.Context, targetURL string, fe
 					// Recursive call with explicit dynamic mode
 					return s.fetchContent(ctx, targetURL, "dynamic", userID, tier, contentDynamicAllowed)
 				}
+
+				// Log why auto-retry didn't happen
+				s.logger.Info("cannot auto-retry with dynamic mode",
+					"url", targetURL,
+					"user_id", userID,
+					"content_dynamic_allowed", contentDynamicAllowed,
+					"captcha_service_configured", s.captchaSvc != nil,
+				)
 
 				// User doesn't have dynamic feature or service not configured
 				// Return error with suggestion to use browser rendering

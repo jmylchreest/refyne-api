@@ -48,6 +48,10 @@ type Pool struct {
 	// Launcher configuration
 	chromePath string
 	headless   bool
+
+	// Ready state for async warmup
+	ready     bool
+	readyChan chan struct{}
 }
 
 // NewPool creates a new browser pool.
@@ -59,6 +63,25 @@ func NewPool(cfg *config.Config, logger *slog.Logger) *Pool {
 		logger:     logger,
 		chromePath: cfg.ChromePath,
 		headless:   true,
+		ready:      false,
+		readyChan:  make(chan struct{}),
+	}
+}
+
+// Ready returns true if the pool has completed warmup.
+func (p *Pool) Ready() bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.ready
+}
+
+// WaitReady blocks until the pool is ready or context is cancelled.
+func (p *Pool) WaitReady(ctx context.Context) error {
+	select {
+	case <-p.readyChan:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -100,6 +123,12 @@ func (p *Pool) Warmup(ctx context.Context, preCreate int) error {
 		}
 		p.logger.Info("browser pool warmed up", "browsers", preCreate)
 	}
+
+	// Mark pool as ready
+	p.mu.Lock()
+	p.ready = true
+	close(p.readyChan) // Signal all waiters
+	p.mu.Unlock()
 
 	return nil
 }
@@ -220,6 +249,7 @@ func (p *Pool) Stats() PoolStats {
 		Total:   len(p.browsers),
 		MaxSize: p.cfg.BrowserPoolSize,
 		Waiting: len(p.waiting),
+		Ready:   p.ready,
 	}
 
 	for _, b := range p.browsers {
@@ -235,11 +265,12 @@ func (p *Pool) Stats() PoolStats {
 
 // PoolStats contains pool statistics.
 type PoolStats struct {
-	Total     int `json:"total"`
-	InUse     int `json:"inUse"`
-	Available int `json:"available"`
-	MaxSize   int `json:"maxSize"`
-	Waiting   int `json:"waiting"`
+	Total     int  `json:"total"`
+	InUse     int  `json:"inUse"`
+	Available int  `json:"available"`
+	MaxSize   int  `json:"maxSize"`
+	Waiting   int  `json:"waiting"`
+	Ready     bool `json:"ready"`
 }
 
 // createBrowser creates a new browser instance.

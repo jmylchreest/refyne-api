@@ -325,6 +325,22 @@ func classifyByErrorMessage(llmErr *LLMError, errStr string, isFreeTier bool) *L
 		}
 		llmErr.Retryable = true
 
+	case strings.Contains(errStr, "captcha service") || strings.Contains(errStr, "dynamic content fetch") ||
+		strings.Contains(errStr, "browser rendering") || strings.Contains(errStr, "fetch error"):
+		// Captcha/browser service errors - not an LLM error
+		llmErr.Err = ErrProviderError
+		llmErr.Category = "fetch_error"
+		llmErr.ShouldFallback = false // Not a provider issue, retrying won't help
+
+		if strings.Contains(errStr, "starting up") {
+			llmErr.UserMessage = "The browser rendering service is starting up. Please retry in a few seconds."
+			llmErr.Retryable = true
+		} else {
+			llmErr.UserMessage = "Failed to fetch page content. The page may be protected or unavailable."
+			llmErr.Retryable = false
+		}
+		llmErr.SuggestUpgrade = false
+
 	default:
 		// Generic error
 		llmErr.Err = ErrProviderError

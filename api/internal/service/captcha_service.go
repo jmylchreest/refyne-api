@@ -3,13 +3,24 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/jmylchreest/refyne-api/internal/captcha"
 )
+
+// ErrCaptchaServiceStarting is returned when the captcha service is still warming up.
+var ErrCaptchaServiceStarting = errors.New("captcha service is starting up, please try again in a few seconds")
+
+// isServiceStartingUp checks if the error message indicates the service is still starting.
+func isServiceStartingUp(msg string) bool {
+	return strings.Contains(strings.ToLower(msg), "starting up") ||
+		strings.Contains(strings.ToLower(msg), "service starting")
+}
 
 // CaptchaService provides internal captcha/browser solving for dynamic content.
 // This is an internal service used by the extraction pipeline, not exposed to users.
@@ -131,16 +142,48 @@ func (s *CaptchaService) FetchDynamicContent(ctx context.Context, userID, tier s
 		"session", input.Session,
 	)
 
-	// Send request to captcha service
-	resp, err := s.client.Solve(ctx, userCtx, req, instanceID)
-	if err != nil {
-		s.logger.Error("captcha service error",
-			"user_id", userID,
-			"job_id", input.JobID,
-			"url", input.URL,
-			"error", err,
-		)
-		return nil, fmt.Errorf("captcha service error: %w", err)
+	// Send request to captcha service with retry for startup conditions
+	const maxRetries = 3
+	var resp *captcha.SolveResponse
+	var err error
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		resp, err = s.client.Solve(ctx, userCtx, req, instanceID)
+		if err != nil {
+			s.logger.Error("captcha service error",
+				"user_id", userID,
+				"job_id", input.JobID,
+				"url", input.URL,
+				"error", err,
+				"attempt", attempt+1,
+			)
+			return nil, fmt.Errorf("captcha service error: %w", err)
+		}
+
+		// Check for "service starting up" response - retry with backoff
+		if resp.Status != "ok" && isServiceStartingUp(resp.Message) {
+			if attempt < maxRetries {
+				backoff := time.Duration(2<<attempt) * time.Second // 2s, 4s, 8s
+				s.logger.Info("captcha service starting up, retrying",
+					"user_id", userID,
+					"job_id", input.JobID,
+					"url", input.URL,
+					"attempt", attempt+1,
+					"backoff", backoff,
+				)
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(backoff):
+					continue
+				}
+			}
+			// Max retries exceeded - return service unavailable error
+			return nil, ErrCaptchaServiceStarting
+		}
+
+		// Non-startup error or success - break out of retry loop
+		break
 	}
 
 	if resp.Status != "ok" {

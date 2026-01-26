@@ -67,15 +67,9 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Initialize browser pool
+	// Initialize browser pool (does not block - warmup is async)
 	pool := browser.NewPool(cfg, logger)
 	defer pool.Close()
-
-	// Warmup: ensure Chromium is ready and pre-create one browser
-	if err := pool.Warmup(ctx, 1); err != nil {
-		logger.Error("failed to warmup browser pool", "error", err)
-		os.Exit(1)
-	}
 
 	// Initialize session manager
 	sessions := session.NewManager(cfg, logger)
@@ -247,6 +241,18 @@ func main() {
 			logger.Error("server error", "error", err)
 			os.Exit(1)
 		}
+	}()
+
+	// Warmup browser pool asynchronously (server is already accepting requests)
+	// Health checks will pass with status="starting" until warmup completes
+	go func() {
+		if err := pool.Warmup(ctx, 1); err != nil {
+			logger.Error("failed to warmup browser pool", "error", err)
+			// Don't exit - let existing requests complete, but new requests will fail
+			return
+		}
+		// Reset idle timer after warmup so the full idle timeout applies
+		idleMonitor.ResetTimer()
 	}()
 
 	// Wait for shutdown signal (SIGTERM or idle timeout)

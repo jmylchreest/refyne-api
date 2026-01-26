@@ -33,8 +33,14 @@ type HealthOutput struct {
 func (h *HealthHandler) Handle(ctx context.Context) *HealthResponse {
 	stats := h.pool.Stats()
 
+	// Report "starting" while pool is warming up (still returns 200 OK for health checks)
+	status := "healthy"
+	if !stats.Ready {
+		status = "starting"
+	}
+
 	return &HealthResponse{
-		Status:  "healthy",
+		Status:  status,
 		Version: version.Get().Version,
 		Pool:    &stats,
 	}
