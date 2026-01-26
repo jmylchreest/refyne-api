@@ -285,18 +285,19 @@ func (w *Worker) processExtractJob(ctx context.Context, job *models.Job) {
 		}
 	}
 
-	// Send webhook if configured
+	// Send webhooks (both ephemeral if configured, and user's saved webhooks)
+	var ephemeralConfig *service.WebhookConfig
 	if job.WebhookURL != "" {
-		ephemeralConfig := &service.WebhookConfig{
+		ephemeralConfig = &service.WebhookConfig{
 			URL:    job.WebhookURL,
 			Events: []string{"*"},
 		}
-		w.webhookSvc.SendForJob(ctx, job.UserID, string(models.WebhookEventJobCompleted), job.ID, map[string]any{
-			"job_id": job.ID,
-			"status": "completed",
-			"data":   result.Data,
-		}, ephemeralConfig)
 	}
+	w.webhookSvc.SendForJob(ctx, job.UserID, string(models.WebhookEventJobCompleted), job.ID, map[string]any{
+		"job_id": job.ID,
+		"status": "completed",
+		"data":   result.Data,
+	}, ephemeralConfig)
 
 	w.logger.Info("completed job", "job_id", job.ID)
 }
@@ -600,20 +601,21 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 		}
 	}
 
-	// Send webhook if configured
+	// Send webhooks (both ephemeral if configured, and user's saved webhooks)
+	var ephemeralConfig *service.WebhookConfig
 	if job.WebhookURL != "" {
-		ephemeralConfig := &service.WebhookConfig{
+		ephemeralConfig = &service.WebhookConfig{
 			URL:    job.WebhookURL,
 			Events: []string{"*"},
 		}
-		w.webhookSvc.SendForJob(ctx, job.UserID, string(models.WebhookEventJobCompleted), job.ID, map[string]any{
-			"job_id":       job.ID,
-			"status":       "completed",
-			"page_count":   result.PageCount,
-			"results":      result.Results,
-			"cost_usd":     result.TotalCostUSD,
-		}, ephemeralConfig)
 	}
+	w.webhookSvc.SendForJob(ctx, job.UserID, string(models.WebhookEventJobCompleted), job.ID, map[string]any{
+		"job_id":       job.ID,
+		"status":       "completed",
+		"page_count":   result.PageCount,
+		"results":      result.Results,
+		"cost_usd":     result.TotalCostUSD,
+	}, ephemeralConfig)
 
 	w.logger.Info("completed crawl job", "job_id", job.ID, "page_count", result.PageCount)
 }
@@ -628,18 +630,19 @@ func (w *Worker) failJob(ctx context.Context, job *models.Job, errMsg string) {
 		w.logger.Error("failed to update job", "job_id", job.ID, "error", err)
 	}
 
-	// Send webhook if configured
+	// Send webhooks (both ephemeral if configured, and user's saved webhooks)
+	var ephemeralConfig *service.WebhookConfig
 	if job.WebhookURL != "" {
-		ephemeralConfig := &service.WebhookConfig{
+		ephemeralConfig = &service.WebhookConfig{
 			URL:    job.WebhookURL,
 			Events: []string{"*"},
 		}
-		w.webhookSvc.SendForJob(ctx, job.UserID, string(models.WebhookEventJobFailed), job.ID, map[string]any{
-			"job_id": job.ID,
-			"status": "failed",
-			"error":  errMsg,
-		}, ephemeralConfig)
 	}
+	w.webhookSvc.SendForJob(ctx, job.UserID, string(models.WebhookEventJobFailed), job.ID, map[string]any{
+		"job_id": job.ID,
+		"status": "failed",
+		"error":  errMsg,
+	}, ephemeralConfig)
 
 	w.logger.Error("job failed", "job_id", job.ID, "error", errMsg)
 }
