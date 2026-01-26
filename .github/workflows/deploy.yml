@@ -58,7 +58,7 @@ jobs:
       demos_changed: ${{ steps.changes.outputs.demos }}
       deploy_all: ${{ steps.changes.outputs.deploy_all }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -170,7 +170,7 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.api_changed == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Configure Git for private modules
         run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
@@ -194,7 +194,7 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.captcha_changed == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -213,7 +213,7 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.web_changed == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -237,7 +237,7 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.docs_changed == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -261,7 +261,7 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.demo_changed == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -285,7 +285,7 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.demos_changed == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
           token: ${{ secrets.GH_PAT }}
@@ -312,7 +312,7 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.demos_changed == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
           token: ${{ secrets.GH_PAT }}
@@ -345,7 +345,7 @@ jobs:
        needs.prepare.outputs.docs_changed == 'true') &&
       (needs.test-api.result == 'success' || needs.test-api.result == 'skipped')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Configure Git for private modules
         run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
@@ -392,7 +392,7 @@ jobs:
         working-directory: api
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -446,7 +446,7 @@ jobs:
         working-directory: captcha
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -499,7 +499,7 @@ jobs:
       url: ${{ vars.WEB_URL }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -570,7 +570,7 @@ jobs:
       url: ${{ vars.DOCS_URL }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive  # Required for code embedding from demos
           token: ${{ secrets.GH_PAT }}
@@ -626,7 +626,7 @@ jobs:
       url: https://demo.refyne.uk
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -669,7 +669,7 @@ jobs:
       url: https://recipeapp-demo.refyne.uk
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
           token: ${{ secrets.GH_PAT }}
@@ -719,7 +719,7 @@ jobs:
       url: https://diyviewer-demo.refyne.uk
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
           token: ${{ secrets.GH_PAT }}

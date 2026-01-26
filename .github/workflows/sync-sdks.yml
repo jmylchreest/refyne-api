@@ -28,7 +28,7 @@ jobs:
       api_patch: ${{ steps.version.outputs.patch }}
       api_sha: ${{ steps.version.outputs.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
