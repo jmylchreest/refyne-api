@@ -9,6 +9,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 
 interface OverwriteConfirmationDialogProps {
   open: boolean;
@@ -39,15 +44,31 @@ export function OverwriteConfirmationDialog({
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
         <div className="py-4">
-          <div className="rounded-md bg-zinc-100 dark:bg-zinc-800 p-3">
+          <div className="rounded-md bg-zinc-100 dark:bg-zinc-800 p-3 overflow-hidden">
             <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
               Existing item:
             </p>
-            <p className="text-sm text-zinc-500 dark:text-zinc-400 font-mono mt-1 truncate">
-              {itemName}
-            </p>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <p className="text-sm text-zinc-500 dark:text-zinc-400 font-mono mt-1 truncate cursor-help max-w-full">
+                  {itemName}
+                </p>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="max-w-md break-all">
+                {itemName}
+              </TooltipContent>
+            </Tooltip>
             {itemDetail && (
-              <p className="text-xs text-zinc-400 mt-1">{itemDetail}</p>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <p className="text-xs text-zinc-400 mt-1 truncate cursor-help max-w-full">
+                    {itemDetail}
+                  </p>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-md break-all">
+                  {itemDetail}
+                </TooltipContent>
+              </Tooltip>
             )}
           </div>
         </div>
