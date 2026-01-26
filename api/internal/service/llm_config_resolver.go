@@ -534,6 +534,7 @@ func (r *LLMConfigResolver) buildBYOKOnlyConfigs(ctx context.Context, userID str
 
 // GetDefaultConfigsForTier returns the default LLM configs for a tier.
 // Returns nil if no chain is configured for the tier.
+// Fallback order: tier-specific -> default (NULL) -> free tier
 func (r *LLMConfigResolver) GetDefaultConfigsForTier(ctx context.Context, tier string) []*LLMConfigInput {
 	// Normalize tier name (e.g., "tier_v1_free" -> "free")
 	normalizedTier := constants.NormalizeTierName(tier)
@@ -548,12 +549,22 @@ func (r *LLMConfigResolver) GetDefaultConfigsForTier(ctx context.Context, tier s
 		var chain []*models.FallbackChainEntry
 		var err error
 
+		// 1. Try tier-specific chain
 		if normalizedTier != "" {
 			chain, err = r.repos.FallbackChain.GetEnabledByTier(ctx, normalizedTier)
 		}
+
+		// 2. Fall back to default chain (tier IS NULL)
 		if err != nil || len(chain) == 0 {
-			// Fall back to default chain (tier IS NULL)
 			chain, err = r.repos.FallbackChain.GetEnabled(ctx)
+		}
+
+		// 3. Fall back to "free" tier chain if nothing else found
+		if (err != nil || len(chain) == 0) && normalizedTier != constants.TierFree {
+			r.logger.Debug("falling back to free tier chain",
+				"original_tier", normalizedTier,
+			)
+			chain, err = r.repos.FallbackChain.GetEnabledByTier(ctx, constants.TierFree)
 		}
 
 		if err == nil && len(chain) > 0 {
