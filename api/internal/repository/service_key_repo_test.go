@@ -18,7 +18,6 @@ func TestServiceKeyRepository_Upsert_Create(t *testing.T) {
 	key := &models.ServiceKey{
 		Provider:        "openrouter",
 		APIKeyEncrypted: "encrypted-api-key",
-		DefaultModel:    "anthropic/claude-3-haiku",
 		IsEnabled:       true,
 	}
 
@@ -45,9 +44,6 @@ func TestServiceKeyRepository_Upsert_Create(t *testing.T) {
 	if fetched.APIKeyEncrypted != "encrypted-api-key" {
 		t.Errorf("APIKeyEncrypted = %q, want %q", fetched.APIKeyEncrypted, "encrypted-api-key")
 	}
-	if fetched.DefaultModel != "anthropic/claude-3-haiku" {
-		t.Errorf("DefaultModel = %q, want %q", fetched.DefaultModel, "anthropic/claude-3-haiku")
-	}
 	if !fetched.IsEnabled {
 		t.Error("expected IsEnabled to be true")
 	}
@@ -61,7 +57,6 @@ func TestServiceKeyRepository_Upsert_Update(t *testing.T) {
 	key := &models.ServiceKey{
 		Provider:        "anthropic",
 		APIKeyEncrypted: "old-key",
-		DefaultModel:    "claude-3-opus",
 		IsEnabled:       true,
 	}
 	repos.ServiceKey.Upsert(ctx, key)
@@ -70,7 +65,6 @@ func TestServiceKeyRepository_Upsert_Update(t *testing.T) {
 	updatedKey := &models.ServiceKey{
 		Provider:        "anthropic",
 		APIKeyEncrypted: "new-key",
-		DefaultModel:    "claude-3-sonnet",
 		IsEnabled:       false,
 	}
 	err := repos.ServiceKey.Upsert(ctx, updatedKey)
@@ -85,9 +79,6 @@ func TestServiceKeyRepository_Upsert_Update(t *testing.T) {
 	}
 	if fetched.APIKeyEncrypted != "new-key" {
 		t.Errorf("APIKeyEncrypted = %q, want %q", fetched.APIKeyEncrypted, "new-key")
-	}
-	if fetched.DefaultModel != "claude-3-sonnet" {
-		t.Errorf("DefaultModel = %q, want %q", fetched.DefaultModel, "claude-3-sonnet")
 	}
 	if fetched.IsEnabled {
 		t.Error("expected IsEnabled to be false after update")

@@ -26,20 +26,18 @@ func NewAdminHandler(adminSvc *service.AdminService, tierSyncSvc *service.TierSy
 
 // ServiceKeyInput represents a service key in API requests.
 type ServiceKeyInput struct {
-	Provider     string `json:"provider" enum:"openrouter,anthropic,openai" doc:"LLM provider name"`
-	APIKey       string `json:"api_key,omitempty" doc:"API key for the provider (required for new keys, optional for updates)"`
-	DefaultModel string `json:"default_model" doc:"Default model to use"`
-	IsEnabled    bool   `json:"is_enabled" doc:"Whether this provider is enabled"`
+	Provider  string `json:"provider" enum:"openrouter,anthropic,openai" doc:"LLM provider name"`
+	APIKey    string `json:"api_key,omitempty" doc:"API key for the provider (required for new keys, optional for updates)"`
+	IsEnabled bool   `json:"is_enabled" doc:"Whether this provider is enabled"`
 }
 
 // ServiceKeyResponse represents a service key in API responses.
 type ServiceKeyResponse struct {
-	Provider     string `json:"provider"`
-	DefaultModel string `json:"default_model"`
-	IsEnabled    bool   `json:"is_enabled"`
-	HasKey       bool   `json:"has_key"` // Never expose actual key
-	CreatedAt    string `json:"created_at"`
-	UpdatedAt    string `json:"updated_at"`
+	Provider  string `json:"provider"`
+	IsEnabled bool   `json:"is_enabled"`
+	HasKey    bool   `json:"has_key"` // Never expose actual key
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 // ListServiceKeysOutput represents the list service keys response.
@@ -64,12 +62,11 @@ func (h *AdminHandler) ListServiceKeys(ctx context.Context, input *struct{}) (*L
 	responses := make([]ServiceKeyResponse, 0, len(keys))
 	for _, k := range keys {
 		responses = append(responses, ServiceKeyResponse{
-			Provider:     k.Provider,
-			DefaultModel: k.DefaultModel,
-			IsEnabled:    k.IsEnabled,
-			HasKey:       k.APIKeyEncrypted != "",
-			CreatedAt:    k.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-			UpdatedAt:    k.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			Provider:  k.Provider,
+			IsEnabled: k.IsEnabled,
+			HasKey:    k.APIKeyEncrypted != "",
+			CreatedAt: k.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			UpdatedAt: k.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		})
 	}
 
@@ -98,10 +95,9 @@ func (h *AdminHandler) UpsertServiceKey(ctx context.Context, input *UpsertServic
 	}
 
 	key, err := h.adminSvc.UpsertServiceKey(ctx, service.ServiceKeyInput{
-		Provider:     input.Body.Provider,
-		APIKey:       input.Body.APIKey,
-		DefaultModel: input.Body.DefaultModel,
-		IsEnabled:    input.Body.IsEnabled,
+		Provider:  input.Body.Provider,
+		APIKey:    input.Body.APIKey,
+		IsEnabled: input.Body.IsEnabled,
 	})
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to save service key: " + err.Error())
@@ -109,12 +105,11 @@ func (h *AdminHandler) UpsertServiceKey(ctx context.Context, input *UpsertServic
 
 	return &UpsertServiceKeyOutput{
 		Body: ServiceKeyResponse{
-			Provider:     key.Provider,
-			DefaultModel: key.DefaultModel,
-			IsEnabled:    key.IsEnabled,
-			HasKey:       true,
-			CreatedAt:    key.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-			UpdatedAt:    key.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			Provider:  key.Provider,
+			IsEnabled: key.IsEnabled,
+			HasKey:    true,
+			CreatedAt: key.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			UpdatedAt: key.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		},
 	}, nil
 }

@@ -336,13 +336,11 @@ func TestAdminService_ListServiceKeys(t *testing.T) {
 	keyRepo.Upsert(ctx, &models.ServiceKey{
 		Provider:        "openrouter",
 		APIKeyEncrypted: "encrypted-1",
-		DefaultModel:    "model-1",
 		IsEnabled:       true,
 	})
 	keyRepo.Upsert(ctx, &models.ServiceKey{
 		Provider:        "anthropic",
 		APIKeyEncrypted: "encrypted-2",
-		DefaultModel:    "model-2",
 		IsEnabled:       true,
 	})
 
@@ -379,10 +377,9 @@ func TestAdminService_UpsertServiceKey_Create(t *testing.T) {
 	ctx := context.Background()
 
 	input := ServiceKeyInput{
-		Provider:     "openrouter",
-		APIKey:       "test-api-key",
-		DefaultModel: "anthropic/claude-3-haiku",
-		IsEnabled:    true,
+		Provider:  "openrouter",
+		APIKey:    "test-api-key",
+		IsEnabled: true,
 	}
 
 	key, err := svc.UpsertServiceKey(ctx, input)
@@ -398,9 +395,6 @@ func TestAdminService_UpsertServiceKey_Create(t *testing.T) {
 	}
 	if key.Provider != "openrouter" {
 		t.Errorf("Provider = %q, want %q", key.Provider, "openrouter")
-	}
-	if key.DefaultModel != "anthropic/claude-3-haiku" {
-		t.Errorf("DefaultModel = %q, want %q", key.DefaultModel, "anthropic/claude-3-haiku")
 	}
 	if !key.IsEnabled {
 		t.Error("expected IsEnabled to be true")
@@ -429,18 +423,14 @@ func TestAdminService_UpsertServiceKey_Update(t *testing.T) {
 
 	// Update
 	key, err := svc.UpsertServiceKey(ctx, ServiceKeyInput{
-		Provider:     "anthropic",
-		APIKey:       "new-key",
-		DefaultModel: "claude-3-opus",
-		IsEnabled:    false,
+		Provider:  "anthropic",
+		APIKey:    "new-key",
+		IsEnabled: false,
 	})
 	if err != nil {
 		t.Fatalf("failed to update key: %v", err)
 	}
 
-	if key.DefaultModel != "claude-3-opus" {
-		t.Errorf("DefaultModel = %q, want %q", key.DefaultModel, "claude-3-opus")
-	}
 	if key.IsEnabled {
 		t.Error("expected IsEnabled to be false")
 	}
@@ -448,37 +438,6 @@ func TestAdminService_UpsertServiceKey_Update(t *testing.T) {
 	decrypted, _ := encryptor.Decrypt(key.APIKeyEncrypted)
 	if decrypted != "new-key" {
 		t.Errorf("decrypted key = %q, want %q", decrypted, "new-key")
-	}
-}
-
-func TestAdminService_UpsertServiceKey_DefaultModel(t *testing.T) {
-	svc, _, _, _ := setupAdminService(t)
-	ctx := context.Background()
-
-	tests := []struct {
-		provider      string
-		expectedModel string
-	}{
-		{"openrouter", "xiaomi/mimo-v2-flash:free"},
-		{"anthropic", "claude-sonnet-4-5-20250514"},
-		{"openai", "gpt-4o-mini"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.provider, func(t *testing.T) {
-			key, err := svc.UpsertServiceKey(ctx, ServiceKeyInput{
-				Provider:  tt.provider,
-				APIKey:    "test-key",
-				IsEnabled: true,
-				// DefaultModel not provided
-			})
-			if err != nil {
-				t.Fatalf("failed to upsert key: %v", err)
-			}
-			if key.DefaultModel != tt.expectedModel {
-				t.Errorf("DefaultModel = %q, want %q", key.DefaultModel, tt.expectedModel)
-			}
-		})
 	}
 }
 
@@ -1114,23 +1073,3 @@ func TestIsValidChainProvider(t *testing.T) {
 	}
 }
 
-func TestGetDefaultModelForProvider(t *testing.T) {
-	tests := []struct {
-		provider string
-		expected string
-	}{
-		{"openrouter", "xiaomi/mimo-v2-flash:free"},
-		{"anthropic", "claude-sonnet-4-5-20250514"},
-		{"openai", "gpt-4o-mini"},
-		{"unknown", ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.provider, func(t *testing.T) {
-			result := getDefaultModelForProvider(tt.provider)
-			if result != tt.expected {
-				t.Errorf("getDefaultModelForProvider(%q) = %q, want %q", tt.provider, result, tt.expected)
-			}
-		})
-	}
-}

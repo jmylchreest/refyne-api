@@ -51,10 +51,9 @@ func NewAdminServiceWithClerk(repos *repository.Repositories, encryptor *crypto.
 
 // ServiceKeyInput represents input for creating/updating a service key.
 type ServiceKeyInput struct {
-	Provider     string
-	APIKey       string
-	DefaultModel string
-	IsEnabled    bool
+	Provider  string
+	APIKey    string
+	IsEnabled bool
 }
 
 // ListServiceKeys returns all configured service keys.
@@ -69,12 +68,6 @@ func (s *AdminService) UpsertServiceKey(ctx context.Context, input ServiceKeyInp
 	// Validate provider
 	if !isValidProvider(input.Provider) {
 		return nil, fmt.Errorf("invalid provider: %s (must be openrouter, anthropic, or openai)", input.Provider)
-	}
-
-	// Set default model if not provided
-	defaultModel := input.DefaultModel
-	if defaultModel == "" {
-		defaultModel = getDefaultModelForProvider(input.Provider)
 	}
 
 	// Check if key already exists
@@ -107,7 +100,7 @@ func (s *AdminService) UpsertServiceKey(ctx context.Context, input ServiceKeyInp
 	key := &models.ServiceKey{
 		Provider:        input.Provider,
 		APIKeyEncrypted: encryptedKey,
-		DefaultModel:    defaultModel,
+		DefaultModel:    "", // Deprecated - models come from fallback chain
 		IsEnabled:       input.IsEnabled,
 	}
 
@@ -117,7 +110,6 @@ func (s *AdminService) UpsertServiceKey(ctx context.Context, input ServiceKeyInp
 
 	s.logger.Info("service key updated",
 		"provider", input.Provider,
-		"model", defaultModel,
 		"enabled", input.IsEnabled,
 		"key_changed", input.APIKey != "",
 	)
@@ -243,20 +235,6 @@ func isValidChainProvider(provider string) bool {
 		return true
 	default:
 		return false
-	}
-}
-
-// getDefaultModelForProvider returns the default model for a provider.
-func getDefaultModelForProvider(provider string) string {
-	switch provider {
-	case "openrouter":
-		return "xiaomi/mimo-v2-flash:free"
-	case "anthropic":
-		return "claude-sonnet-4-5-20250514"
-	case "openai":
-		return "gpt-4o-mini"
-	default:
-		return ""
 	}
 }
 
