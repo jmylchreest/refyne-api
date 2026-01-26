@@ -182,7 +182,7 @@ func TestJobRepository_GetPending(t *testing.T) {
 		job := &models.Job{
 			ID:         ulid.Make().String(),
 			UserID:     "user_123",
-			Type:       models.JobTypeExtract,
+			Type:       models.JobTypeCrawl, // GetPending only returns crawl jobs (used by worker)
 			Status:     status,
 			URL:        "https://example.com",
 			SchemaJSON: "{}",
@@ -259,13 +259,13 @@ func TestJobRepository_ClaimPending(t *testing.T) {
 	repos := setupTestRepos(t)
 	ctx := context.Background()
 
-	// Create multiple pending jobs
+	// Create multiple pending crawl jobs (ClaimPending only returns crawl jobs - used by worker)
 	jobs := make([]*models.Job, 3)
 	for i := 0; i < 3; i++ {
 		jobs[i] = &models.Job{
 			ID:         ulid.Make().String(),
 			UserID:     "user_123",
-			Type:       models.JobTypeExtract,
+			Type:       models.JobTypeCrawl,
 			Status:     models.JobStatusPending,
 			URL:        "https://example.com",
 			SchemaJSON: "{}",
