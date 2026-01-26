@@ -244,14 +244,105 @@ func (r *LLMConfigResolver) ResolveConfigs(ctx context.Context, userID string, o
 	return configs, false
 }
 
-// ResolveConfig returns the first valid config from ResolveConfigs.
-// This is a convenience method for services that only need a single config.
-func (r *LLMConfigResolver) ResolveConfig(ctx context.Context, userID string, override *LLMConfigInput, tier string, byokAllowed, modelsCustomAllowed bool) (*LLMConfigInput, bool) {
-	configs, isBYOK := r.ResolveConfigs(ctx, userID, override, tier, byokAllowed, modelsCustomAllowed)
-	if len(configs) > 0 {
-		return configs[0], isBYOK
+// LLMConfigChain provides iteration over fallback LLM configurations.
+// It allows services to try each config in sequence until one succeeds.
+type LLMConfigChain struct {
+	configs []*LLMConfigInput
+	isBYOK  bool
+	index   int // 0 = not started, 1 = first config, etc.
+}
+
+// NewLLMConfigChain creates a new config chain from a slice of configs.
+// Use this when you need to create a chain from custom logic (e.g., injected configs).
+func NewLLMConfigChain(configs []*LLMConfigInput, isBYOK bool) *LLMConfigChain {
+	return &LLMConfigChain{
+		configs: configs,
+		isBYOK:  isBYOK,
+		index:   0,
 	}
-	return nil, false
+}
+
+// ResolveConfigChain returns an iterator over LLM configurations for the fallback chain.
+// Use Next() to iterate through configs, typically in a retry loop.
+//
+// Example usage:
+//
+//	chain := resolver.ResolveConfigChain(ctx, userID, nil, tier, byokAllowed, modelsCustomAllowed)
+//	if chain.IsEmpty() {
+//	    return nil, ErrNoModelsConfigured
+//	}
+//	for cfg := chain.Next(); cfg != nil; cfg = chain.Next() {
+//	    result, err := doSomething(cfg)
+//	    if err == nil {
+//	        return result, nil
+//	    }
+//	    // Log error and continue to next config
+//	}
+func (r *LLMConfigResolver) ResolveConfigChain(ctx context.Context, userID string, override *LLMConfigInput, tier string, byokAllowed, modelsCustomAllowed bool) *LLMConfigChain {
+	configs, isBYOK := r.ResolveConfigs(ctx, userID, override, tier, byokAllowed, modelsCustomAllowed)
+	return &LLMConfigChain{
+		configs: configs,
+		isBYOK:  isBYOK,
+		index:   0,
+	}
+}
+
+// Next returns the next LLM config in the chain, or nil if exhausted.
+// Call this in a loop to iterate through all fallback configs.
+func (c *LLMConfigChain) Next() *LLMConfigInput {
+	if c.index >= len(c.configs) {
+		return nil
+	}
+	cfg := c.configs[c.index]
+	c.index++
+	return cfg
+}
+
+// Current returns the current config without advancing the iterator.
+// Returns nil if Next() hasn't been called yet or the chain is exhausted.
+func (c *LLMConfigChain) Current() *LLMConfigInput {
+	if c.index == 0 || c.index > len(c.configs) {
+		return nil
+	}
+	return c.configs[c.index-1]
+}
+
+// First returns the first config in the chain without advancing the iterator.
+// Useful for pre-flight checks (e.g., cost estimation) before iterating.
+// Returns nil if the chain is empty.
+func (c *LLMConfigChain) First() *LLMConfigInput {
+	if len(c.configs) == 0 {
+		return nil
+	}
+	return c.configs[0]
+}
+
+// IsBYOK returns whether the chain uses the user's own API keys.
+func (c *LLMConfigChain) IsBYOK() bool {
+	return c.isBYOK
+}
+
+// Position returns the current position (1-indexed) and total count.
+// Useful for logging "attempt 2 of 5" style messages.
+// Returns (0, 0) if Next() hasn't been called yet.
+func (c *LLMConfigChain) Position() (current, total int) {
+	return c.index, len(c.configs)
+}
+
+// IsEmpty returns true if the chain has no configs.
+func (c *LLMConfigChain) IsEmpty() bool {
+	return len(c.configs) == 0
+}
+
+// Len returns the total number of configs in the chain.
+func (c *LLMConfigChain) Len() int {
+	return len(c.configs)
+}
+
+// All returns all configs in the chain as a slice.
+// Use this when you need to serialize or store the configs for later use.
+func (c *LLMConfigChain) All() []*LLMConfigInput {
+	return c.configs
 }
 
 // BuildUserFallbackChain builds LLM configs from user's fallback chain using their own keys.

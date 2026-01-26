@@ -175,10 +175,10 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 		"cleaner", "noop (fallback: refyne)",
 	)
 
-	// Get LLM config for analysis early (needed for error recording)
-	s.logger.Debug("resolving LLM config", "request_id", requestID, "user_id", userID, "tier", tier, "byok_allowed", byokAllowed, "models_custom_allowed", modelsCustomAllowed)
-	llmConfig, isBYOK := s.resolveLLMConfig(ctx, userID, tier, requestID, byokAllowed, modelsCustomAllowed)
-	if llmConfig == nil {
+	// Get LLM config chain for analysis (fallback chain iterator)
+	s.logger.Debug("resolving LLM config chain", "request_id", requestID, "user_id", userID, "tier", tier, "byok_allowed", byokAllowed, "models_custom_allowed", modelsCustomAllowed)
+	llmChain := s.resolveLLMConfigChain(ctx, userID, tier, requestID, byokAllowed, modelsCustomAllowed)
+	if llmChain.IsEmpty() {
 		s.logger.Error("no valid LLM models configured",
 			"request_id", requestID,
 			"user_id", userID,
@@ -188,28 +188,32 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 		)
 		return nil, llm.NewNoModelsConfiguredError("no models in fallback chain or missing API keys")
 	}
-	s.logger.Debug("LLM config resolved",
+
+	firstCfg := llmChain.First()
+	s.logger.Debug("LLM config chain resolved",
 		"request_id", requestID,
 		"user_id", userID,
-		"provider", llmConfig.Provider,
-		"model", llmConfig.Model,
-		"has_api_key", llmConfig.APIKey != "",
-		"is_byok", isBYOK,
+		"first_provider", firstCfg.Provider,
+		"first_model", firstCfg.Model,
+		"has_api_key", firstCfg.APIKey != "",
+		"is_byok", llmChain.IsBYOK(),
+		"chain_length", llmChain.Len(),
 	)
 
 	// Pre-flight cost estimate (triggers pricing cache refresh if needed) and balance check
+	// Use first config in chain for estimate
 	if s.billing != nil {
-		estimatedCost := s.billing.EstimateCost(1, llmConfig.Model, llmConfig.Provider)
+		estimatedCost := s.billing.EstimateCost(1, firstCfg.Model, firstCfg.Provider)
 		s.logger.Debug("pre-flight cost estimate",
 			"request_id", requestID,
 			"user_id", userID,
-			"provider", llmConfig.Provider,
-			"model", llmConfig.Model,
+			"provider", firstCfg.Provider,
+			"model", firstCfg.Model,
 			"estimated_cost_usd", estimatedCost,
-			"is_byok", isBYOK,
+			"is_byok", llmChain.IsBYOK(),
 		)
 		// Only check balance for non-BYOK users
-		if !isBYOK {
+		if !llmChain.IsBYOK() {
 			if err := s.billing.CheckSufficientBalance(ctx, userID, estimatedCost); err != nil {
 				return nil, err
 			}
@@ -222,7 +226,7 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 	mainContent, links, fetchMode, err := s.fetchContent(ctx, targetURL, input.FetchMode, userID, tier, contentDynamicAllowed, input.JobID)
 	if err != nil {
 		s.logger.Error("failed to fetch page content", "request_id", requestID, "user_id", userID, "url", targetURL, "error", err)
-		s.recordAnalyzeUsage(ctx, userID, tier, targetURL, llmConfig, isBYOK, 0, 0,
+		s.recordAnalyzeUsage(ctx, userID, tier, targetURL, firstCfg, llmChain.IsBYOK(), 0, 0,
 			int(time.Since(fetchStart).Milliseconds()), 0, int(time.Since(startTime).Milliseconds()),
 			"failed", err.Error(), requestID)
 		return nil, fmt.Errorf("failed to fetch page content: %w", err)
@@ -292,80 +296,118 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 
 	// Generate analysis prompt and call LLM
 	// First try with raw content (noop cleaner), retry with fallback cleaner on context length errors
+	// Iterate through fallback chain if a model fails
 	llmStart := time.Now()
-	s.logger.Debug("calling LLM for analysis", "request_id", requestID, "user_id", userID, "provider", llmConfig.Provider, "model", llmConfig.Model)
-	result, err := s.analyzeWithLLM(ctx, targetURL, mainContent, detailContents, detailURLs, links, llmConfig)
+	var result *analyzeResult
+	var lastErr error
+	var llmConfig *LLMConfigInput
+
+	for cfg := llmChain.Next(); cfg != nil; cfg = llmChain.Next() {
+		llmConfig = cfg // Track which config we're using
+		pos, total := llmChain.Position()
+
+		s.logger.Info("analysis attempt",
+			"request_id", requestID,
+			"user_id", userID,
+			"provider", cfg.Provider,
+			"model", cfg.Model,
+			"attempt", pos,
+			"of", total,
+		)
+
+		result, lastErr = s.analyzeWithLLM(ctx, targetURL, mainContent, detailContents, detailURLs, links, cfg)
+
+		// If context length error, retry with cleaned content
+		if lastErr != nil && isContextLengthError(lastErr) {
+			s.logger.Info("context length error detected, retrying with cleaned content",
+				"request_id", requestID,
+				"user_id", userID,
+				"original_content_length", len(mainContent),
+				"error", lastErr.Error(),
+			)
+
+			// Clean main content with fallback cleaner (Trafilatura HTML with tables/links)
+			cleanedMain, cleanErr := s.fallbackCleaner.Clean(mainContent)
+			if cleanErr != nil {
+				s.logger.Warn("fallback cleaner failed, using original content", "request_id", requestID, "user_id", userID, "error", cleanErr)
+				cleanedMain = mainContent
+			} else {
+				s.logger.Debug("content cleaned for retry",
+					"request_id", requestID,
+					"user_id", userID,
+					"original_length", len(mainContent),
+					"cleaned_length", len(cleanedMain),
+					"reduction_percent", 100-int(float64(len(cleanedMain))/float64(len(mainContent))*100),
+				)
+			}
+
+			// Clean detail contents as well
+			var cleanedDetails []string
+			for _, detail := range detailContents {
+				cleaned, err := s.fallbackCleaner.Clean(detail)
+				if err != nil {
+					cleaned = detail // Keep original on error
+				}
+				cleanedDetails = append(cleanedDetails, cleaned)
+			}
+
+			// Retry with cleaned content (same model)
+			result, lastErr = s.analyzeWithLLM(ctx, targetURL, cleanedMain, cleanedDetails, detailURLs, links, cfg)
+			if lastErr == nil {
+				s.logger.Info("analysis succeeded after retry with cleaned content",
+					"request_id", requestID,
+					"user_id", userID,
+					"provider", cfg.Provider,
+					"model", cfg.Model,
+				)
+			}
+		}
+
+		// Success!
+		if lastErr == nil {
+			s.logger.Info("analysis succeeded",
+				"request_id", requestID,
+				"user_id", userID,
+				"provider", cfg.Provider,
+				"model", cfg.Model,
+				"attempt", pos,
+				"of", total,
+			)
+			break
+		}
+
+		// Log failure and try next model in the chain
+		s.logger.Warn("analysis failed, trying next model in fallback chain",
+			"request_id", requestID,
+			"user_id", userID,
+			"provider", cfg.Provider,
+			"model", cfg.Model,
+			"error", lastErr.Error(),
+			"attempt", pos,
+			"of", total,
+		)
+	}
+
 	llmDuration := time.Since(llmStart)
 
-	// If context length error, retry with cleaned content
-	if err != nil && isContextLengthError(err) {
-		s.logger.Info("context length error detected, retrying with cleaned content",
+	// If all models in the chain failed
+	if lastErr != nil {
+		s.logger.Error("LLM analysis failed (all models in fallback chain exhausted)",
 			"request_id", requestID,
 			"user_id", userID,
-			"original_content_length", len(mainContent),
-			"error", err.Error(),
+			"last_provider", llmConfig.Provider,
+			"last_model", llmConfig.Model,
+			"chain_length", llmChain.Len(),
+			"error", lastErr,
 		)
-
-		// Clean main content with fallback cleaner (Trafilatura HTML with tables/links)
-		cleanedMain, cleanErr := s.fallbackCleaner.Clean(mainContent)
-		if cleanErr != nil {
-			s.logger.Warn("fallback cleaner failed, using original content", "request_id", requestID, "user_id", userID, "error", cleanErr)
-			cleanedMain = mainContent
-		} else {
-			s.logger.Debug("content cleaned for retry",
-				"request_id", requestID,
-				"user_id", userID,
-				"original_length", len(mainContent),
-				"cleaned_length", len(cleanedMain),
-				"reduction_percent", 100-int(float64(len(cleanedMain))/float64(len(mainContent))*100),
-			)
-		}
-
-		// Clean detail contents as well
-		var cleanedDetails []string
-		for _, detail := range detailContents {
-			cleaned, err := s.fallbackCleaner.Clean(detail)
-			if err != nil {
-				cleaned = detail // Keep original on error
-			}
-			cleanedDetails = append(cleanedDetails, cleaned)
-		}
-
-		// Retry with cleaned content
-		llmRetryStart := time.Now()
-		result, err = s.analyzeWithLLM(ctx, targetURL, cleanedMain, cleanedDetails, detailURLs, links, llmConfig)
-		llmDuration = time.Since(llmStart) + time.Since(llmRetryStart) // Total LLM time including retry
-
-		if err != nil {
-			s.logger.Error("LLM analysis failed after retry with cleaned content",
-				"request_id", requestID,
-				"user_id", userID,
-				"provider", llmConfig.Provider,
-				"model", llmConfig.Model,
-				"error", err,
-			)
-			s.recordAnalyzeUsage(ctx, userID, tier, targetURL, llmConfig, isBYOK, 0, 0,
-				int(fetchDuration.Milliseconds()), int(llmDuration.Milliseconds()), int(time.Since(startTime).Milliseconds()),
-				"failed", "retry failed: "+err.Error(), requestID)
-			return nil, fmt.Errorf("LLM analysis failed after retry: %w", err)
-		}
-		s.logger.Info("analysis succeeded after retry with cleaned content", "request_id", requestID, "user_id", userID)
-	} else if err != nil {
-		s.logger.Error("LLM analysis failed",
-			"request_id", requestID,
-			"user_id", userID,
-			"provider", llmConfig.Provider,
-			"model", llmConfig.Model,
-			"error", err,
-		)
-		s.recordAnalyzeUsage(ctx, userID, tier, targetURL, llmConfig, isBYOK, 0, 0,
+		s.recordAnalyzeUsage(ctx, userID, tier, targetURL, llmConfig, llmChain.IsBYOK(), 0, 0,
 			int(fetchDuration.Milliseconds()), int(llmDuration.Milliseconds()), int(time.Since(startTime).Milliseconds()),
-			"failed", err.Error(), requestID)
-		return nil, fmt.Errorf("LLM analysis failed: %w", err)
+			"failed", lastErr.Error(), requestID)
+		return nil, fmt.Errorf("LLM analysis failed: %w", lastErr)
 	}
 
 	// Record successful usage
-	s.recordAnalyzeUsage(ctx, userID, tier, targetURL, llmConfig, isBYOK,
+	s.recordAnalyzeUsage(ctx, userID, tier, targetURL, llmConfig, llmChain.IsBYOK(),
 		result.InputTokens, result.OutputTokens,
 		int(fetchDuration.Milliseconds()), int(llmDuration.Milliseconds()), int(time.Since(startTime).Milliseconds()),
 		"success", "", requestID)
@@ -385,7 +427,7 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 			Model:        llmConfig.Model,
 			Provider:     llmConfig.Provider,
 			Tier:         tier,
-			IsBYOK:       isBYOK,
+			IsBYOK:       llmChain.IsBYOK(),
 		})
 	}
 
@@ -395,7 +437,7 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 		OutputTokens: result.OutputTokens,
 		CostUSD:      costs.UserCostUSD,
 		LLMCostUSD:   costs.LLMCostUSD,
-		IsBYOK:       isBYOK,
+		IsBYOK:       llmChain.IsBYOK(),
 		LLMProvider:  llmConfig.Provider,
 		LLMModel:     llmConfig.Model,
 	}
@@ -420,7 +462,7 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 		"output_tokens", result.OutputTokens,
 		"llm_cost_usd", costs.LLMCostUSD,
 		"user_cost_usd", costs.UserCostUSD,
-		"is_byok", isBYOK,
+		"is_byok", llmChain.IsBYOK(),
 		"duration_ms", time.Since(startTime).Milliseconds(),
 	)
 
@@ -1144,33 +1186,22 @@ func (s *AnalyzerService) parsePageType(pt string) models.PageType {
 	}
 }
 
-// resolveLLMConfig determines which LLM configuration to use for analysis.
-// Returns (config, isBYOK) where isBYOK is true if using user's own key.
+// resolveLLMConfigChain determines which LLM configurations to use for analysis.
+// Returns an iterator over configs in the fallback chain so the caller can try each on failure.
 // Implements 2x2 feature matrix:
 // - BYOK + models_custom: user keys + user chain
 // - BYOK only: user keys + system chain
 // - models_custom only: system keys + user chain
 // - Neither: system keys + system chain
-func (s *AnalyzerService) resolveLLMConfig(ctx context.Context, userID, tier, requestID string, byokAllowed bool, modelsCustomAllowed bool) (*LLMConfigInput, bool) {
+func (s *AnalyzerService) resolveLLMConfigChain(ctx context.Context, userID, tier, requestID string, byokAllowed bool, modelsCustomAllowed bool) *LLMConfigChain {
 	// Delegate to resolver for all standard cases
 	if s.resolver != nil {
-		config, isBYOK := s.resolver.ResolveConfig(ctx, userID, nil, tier, byokAllowed, modelsCustomAllowed)
-		if config != nil {
-			return config, isBYOK
-		}
-		// Resolver returned nil - no valid models configured
-		s.logger.Warn("resolver returned no valid models",
-			"user_id", userID,
-			"tier", tier,
-			"byok_allowed", byokAllowed,
-			"models_custom_allowed", modelsCustomAllowed,
-		)
-		return nil, false
+		return s.resolver.ResolveConfigChain(ctx, userID, nil, tier, byokAllowed, modelsCustomAllowed)
 	}
 
 	// Resolver not set - this is a configuration error
 	s.logger.Error("LLM config resolver not set - this is a server configuration error")
-	return nil, false
+	return NewLLMConfigChain(nil, false)
 }
 
 // ExtractDomain extracts the domain from a URL.

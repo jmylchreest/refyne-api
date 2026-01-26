@@ -250,24 +250,25 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 		}
 	}
 
-	// Get the list of LLM configs to try (using tier-specific chain)
+	// Get the LLM config chain to try (using tier-specific chain)
 	// BYOKAllowed comes from JWT claims - this is the authoritative check for BYOK eligibility
 	// ModelsCustomAllowed controls whether user's custom model chain is used
 	// LLMProvider/LLMModel from S3 API keys bypass the entire fallback chain
-	llmConfigs, isBYOK := s.resolveLLMConfigsWithFallback(ctx, userID, input.LLMConfig, ectx.Tier, ectx.BYOKAllowed, ectx.ModelsCustomAllowed, ectx.LLMProvider, ectx.LLMModel)
-	ectx.IsBYOK = isBYOK
+	llmChain := s.resolveLLMConfigChain(ctx, userID, input.LLMConfig, ectx.Tier, ectx.BYOKAllowed, ectx.ModelsCustomAllowed, ectx.LLMProvider, ectx.LLMModel)
+	ectx.IsBYOK = llmChain.IsBYOK()
 
-	s.logger.Debug("LLM configs resolved",
-		"config_count", len(llmConfigs),
-		"is_byok", isBYOK,
+	s.logger.Debug("LLM config chain resolved",
+		"chain_length", llmChain.Len(),
+		"is_byok", llmChain.IsBYOK(),
 	)
 
 	// For models_premium users, get available balance for per-model budget checking
 	// This enables budget-based fallback - skip expensive models if insufficient balance
 	var availableBudget float64
 	var budgetSkips []BudgetSkip
-	useBudgetFallback := !isBYOK && ectx.ModelsPremiumAllowed && s.billing != nil
+	useBudgetFallback := !llmChain.IsBYOK() && ectx.ModelsPremiumAllowed && s.billing != nil
 
+	firstCfg := llmChain.First()
 	if useBudgetFallback {
 		var err error
 		availableBudget, err = s.billing.GetAvailableBalance(ctx, userID)
@@ -281,18 +282,18 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 			s.logger.Debug("budget fallback enabled",
 				"user_id", userID,
 				"available_budget_usd", availableBudget,
-				"model_count", len(llmConfigs),
+				"chain_length", llmChain.Len(),
 			)
 		}
-	} else if s.billing != nil && len(llmConfigs) > 0 && !isBYOK {
+	} else if s.billing != nil && firstCfg != nil && !llmChain.IsBYOK() {
 		// Standard pre-flight balance check for non-premium users
-		estimatedCost := s.billing.EstimateCost(1, llmConfigs[0].Model, llmConfigs[0].Provider)
+		estimatedCost := s.billing.EstimateCost(1, firstCfg.Model, firstCfg.Provider)
 		s.logger.Debug("pre-flight cost estimate",
 			"user_id", userID,
-			"provider", llmConfigs[0].Provider,
-			"model", llmConfigs[0].Model,
+			"provider", firstCfg.Provider,
+			"model", firstCfg.Model,
 			"estimated_cost_usd", estimatedCost,
-			"is_byok", isBYOK,
+			"is_byok", llmChain.IsBYOK(),
 		)
 		if err := s.billing.CheckSufficientBalance(ctx, userID, estimatedCost); err != nil {
 			return nil, err
@@ -305,8 +306,9 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 	var lastCfg *LLMConfigInput
 	modelsSkippedDueToBudget := 0
 
-	for providerIdx, llmCfg := range llmConfigs {
+	for llmCfg := llmChain.Next(); llmCfg != nil; llmCfg = llmChain.Next() {
 		lastCfg = llmCfg
+		pos, total := llmChain.Position()
 
 		// Budget-based fallback: check if this model is affordable
 		if useBudgetFallback {
@@ -330,8 +332,8 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 					"model", llmCfg.Model,
 					"estimated_cost_usd", estimatedCost,
 					"available_budget_usd", availableBudget,
-					"provider_idx", providerIdx+1,
-					"of_providers", len(llmConfigs),
+					"attempt", pos,
+					"of", total,
 				)
 				continue // Try next model in the fallback chain
 			}
@@ -351,9 +353,9 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 			"provider", llmCfg.Provider,
 			"model", llmCfg.Model,
 			"max_tokens", llmCfg.MaxTokens,
-			"provider_idx", providerIdx+1,
-			"of_providers", len(llmConfigs),
-			"is_byok", isBYOK,
+			"attempt", pos,
+			"of", total,
+			"is_byok", llmChain.IsBYOK(),
 			"fetch_mode", input.FetchMode,
 		)
 
@@ -396,7 +398,7 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 				"error", err,
 			)
 			lastErr = err
-			lastLLMErr = llm.WrapError(err, llmCfg.Provider, llmCfg.Model, isBYOK)
+			lastLLMErr = llm.WrapError(err, llmCfg.Provider, llmCfg.Model, llmChain.IsBYOK())
 			continue // Try next provider in chain
 		}
 
@@ -407,7 +409,7 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 		// Check for success
 		if err == nil && result != nil && result.Error == nil {
 			// Success! Handle billing and return
-			return s.handleSuccessfulExtraction(ctx, userID, input, ectx, llmCfg, result, isBYOK, startTime, budgetSkips)
+			return s.handleSuccessfulExtraction(ctx, userID, input, ectx, llmCfg, result, llmChain.IsBYOK(), startTime, budgetSkips)
 		}
 
 		// Extraction failed - classify the error
@@ -441,7 +443,7 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 			return nil, protectionErr
 		}
 
-		lastLLMErr = llm.WrapError(lastErr, llmCfg.Provider, llmCfg.Model, isBYOK)
+		lastLLMErr = llm.WrapError(lastErr, llmCfg.Provider, llmCfg.Model, llmChain.IsBYOK())
 
 		s.logger.Warn("extraction failed",
 			"provider", llmCfg.Provider,
@@ -470,12 +472,12 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 
 	// All attempts failed - record the failure with detailed error info
 	if lastErr != nil {
-		s.recordFailedExtractionWithDetails(ctx, userID, input, ectx, lastCfg, isBYOK, lastErr, lastLLMErr, len(llmConfigs), startTime, budgetSkips)
-		return nil, s.handleLLMError(lastErr, lastCfg, isBYOK)
+		s.recordFailedExtractionWithDetails(ctx, userID, input, ectx, lastCfg, llmChain.IsBYOK(), lastErr, lastLLMErr, llmChain.Len(), startTime, budgetSkips)
+		return nil, s.handleLLMError(lastErr, lastCfg, llmChain.IsBYOK())
 	}
 
 	// Check if all models were skipped due to budget constraints
-	if modelsSkippedDueToBudget > 0 && modelsSkippedDueToBudget == len(llmConfigs) {
+	if modelsSkippedDueToBudget > 0 && modelsSkippedDueToBudget == llmChain.Len() {
 		s.logger.Warn("all models skipped due to budget constraints",
 			"user_id", userID,
 			"models_skipped", modelsSkippedDueToBudget,
@@ -686,13 +688,12 @@ func (s *ExtractionService) handleSuccessfulExtraction(
 	}, nil
 }
 
-// resolveLLMConfigsWithFallback returns the list of LLM configs to try, in order.
-// Returns (configs, isBYOK) where isBYOK is true if user provided their own API key.
+// resolveLLMConfigChain returns an iterator over LLM configs to try.
 // Delegates to LLMConfigResolver for the feature matrix implementation.
 //
 // If injectedProvider and injectedModel are set (from S3 API key config), they bypass
 // the entire fallback chain and use system keys for that specific provider/model.
-func (s *ExtractionService) resolveLLMConfigsWithFallback(ctx context.Context, userID string, override *LLMConfigInput, tier string, byokAllowed bool, modelsCustomAllowed bool, injectedProvider, injectedModel string) ([]*LLMConfigInput, bool) {
+func (s *ExtractionService) resolveLLMConfigChain(ctx context.Context, userID string, override *LLMConfigInput, tier string, byokAllowed bool, modelsCustomAllowed bool, injectedProvider, injectedModel string) *LLMConfigChain {
 	// Check for injected LLM config from S3 API keys first - this bypasses the entire fallback chain
 	if injectedProvider != "" && injectedModel != "" {
 		s.logger.Info("using injected LLM config from S3 API key",
@@ -724,17 +725,17 @@ func (s *ExtractionService) resolveLLMConfigsWithFallback(ctx context.Context, u
 			}
 		}
 
-		return []*LLMConfigInput{config}, false // Not BYOK - using system keys
+		return NewLLMConfigChain([]*LLMConfigInput{config}, false) // Not BYOK - using system keys
 	}
 
 	// Delegate to resolver for all standard cases
 	if s.resolver != nil {
-		return s.resolver.ResolveConfigs(ctx, userID, override, tier, byokAllowed, modelsCustomAllowed)
+		return s.resolver.ResolveConfigChain(ctx, userID, override, tier, byokAllowed, modelsCustomAllowed)
 	}
 
 	// Fallback if resolver not set (shouldn't happen in normal operation)
 	s.logger.Warn("resolver not set, using hardcoded defaults")
-	return s.getHardcodedDefaultChain(ctx), false
+	return NewLLMConfigChain(s.getHardcodedDefaultChain(ctx), false)
 }
 
 // NOTE: Crawl and CrawlWithCallback methods are in extraction_crawl.go

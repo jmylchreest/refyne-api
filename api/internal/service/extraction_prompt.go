@@ -26,19 +26,20 @@ func (s *ExtractionService) extractWithPrompt(ctx context.Context, userID string
 		"prompt_length", len(promptText),
 	)
 
-	// Get LLM configs (same as schema-based extraction)
-	llmConfigs, isBYOK := s.resolveLLMConfigsWithFallback(ctx, userID, input.LLMConfig, ectx.Tier, ectx.BYOKAllowed, ectx.ModelsCustomAllowed, ectx.LLMProvider, ectx.LLMModel)
-	ectx.IsBYOK = isBYOK
+	// Get LLM config chain (same as schema-based extraction)
+	llmChain := s.resolveLLMConfigChain(ctx, userID, input.LLMConfig, ectx.Tier, ectx.BYOKAllowed, ectx.ModelsCustomAllowed, ectx.LLMProvider, ectx.LLMModel)
+	ectx.IsBYOK = llmChain.IsBYOK()
 
-	if len(llmConfigs) == 0 {
+	if llmChain.IsEmpty() {
 		return nil, llm.NewNoModelsConfiguredError("no models in fallback chain or missing API keys")
 	}
 
 	// For models_premium users, get available balance for per-model budget checking
 	var availableBudget float64
 	var budgetSkips []BudgetSkip
-	useBudgetFallback := !isBYOK && ectx.ModelsPremiumAllowed && s.billing != nil
+	useBudgetFallback := !llmChain.IsBYOK() && ectx.ModelsPremiumAllowed && s.billing != nil
 
+	firstCfg := llmChain.First()
 	if useBudgetFallback {
 		var err error
 		availableBudget, err = s.billing.GetAvailableBalance(ctx, userID)
@@ -49,9 +50,9 @@ func (s *ExtractionService) extractWithPrompt(ctx context.Context, userID string
 			)
 			useBudgetFallback = false
 		}
-	} else if s.billing != nil && len(llmConfigs) > 0 && !isBYOK {
+	} else if s.billing != nil && firstCfg != nil && !llmChain.IsBYOK() {
 		// Standard pre-flight balance check for non-premium users
-		estimatedCost := s.billing.EstimateCost(1, llmConfigs[0].Model, llmConfigs[0].Provider)
+		estimatedCost := s.billing.EstimateCost(1, firstCfg.Model, firstCfg.Provider)
 		if err := s.billing.CheckSufficientBalance(ctx, userID, estimatedCost); err != nil {
 			return nil, err
 		}
@@ -80,8 +81,9 @@ func (s *ExtractionService) extractWithPrompt(ctx context.Context, userID string
 	var lastCfg *LLMConfigInput
 	modelsSkippedDueToBudget := 0
 
-	for providerIdx, llmCfg := range llmConfigs {
+	for llmCfg := llmChain.Next(); llmCfg != nil; llmCfg = llmChain.Next() {
 		lastCfg = llmCfg
+		pos, total := llmChain.Position()
 
 		// Budget-based fallback: check if this model is affordable
 		if useBudgetFallback {
@@ -115,8 +117,8 @@ func (s *ExtractionService) extractWithPrompt(ctx context.Context, userID string
 			"url", input.URL,
 			"provider", llmCfg.Provider,
 			"model", llmCfg.Model,
-			"provider_idx", providerIdx+1,
-			"of_providers", len(llmConfigs),
+			"attempt", pos,
+			"of", total,
 		)
 
 		// Call LLM using shared client
@@ -150,7 +152,7 @@ func (s *ExtractionService) extractWithPrompt(ctx context.Context, userID string
 					Model:        llmCfg.Model,
 					Provider:     llmCfg.Provider,
 					Tier:         ectx.Tier,
-					IsBYOK:       isBYOK,
+					IsBYOK:       llmChain.IsBYOK(),
 				})
 				_ = s.billing.RecordUsage(ctx, &UsageRecord{
 					UserID:          userID,
@@ -160,7 +162,7 @@ func (s *ExtractionService) extractWithPrompt(ctx context.Context, userID string
 					TokensOutput:    result.OutputTokens,
 					TotalChargedUSD: costs.UserCostUSD,
 					LLMCostUSD:      costs.LLMCostUSD,
-					IsBYOK:          isBYOK,
+					IsBYOK:          llmChain.IsBYOK(),
 					TargetURL:       input.URL,
 					LLMProvider:     llmCfg.Provider,
 					LLMModel:        llmCfg.Model,
@@ -177,7 +179,7 @@ func (s *ExtractionService) extractWithPrompt(ctx context.Context, userID string
 					OutputTokens: result.OutputTokens,
 					CostUSD:      costs.UserCostUSD,
 					LLMCostUSD:   costs.LLMCostUSD,
-					IsBYOK:       isBYOK,
+					IsBYOK:       llmChain.IsBYOK(),
 				},
 				Metadata: ExtractMeta{
 					FetchDurationMs:   int(fetchDuration.Milliseconds()),
@@ -192,7 +194,7 @@ func (s *ExtractionService) extractWithPrompt(ctx context.Context, userID string
 
 		// Failed - try next provider
 		lastErr = err
-		lastLLMErr = llm.WrapError(err, llmCfg.Provider, llmCfg.Model, isBYOK)
+		lastLLMErr = llm.WrapError(err, llmCfg.Provider, llmCfg.Model, llmChain.IsBYOK())
 
 		s.logger.Warn("prompt extraction failed",
 			"provider", llmCfg.Provider,
@@ -209,11 +211,11 @@ func (s *ExtractionService) extractWithPrompt(ctx context.Context, userID string
 
 	// All attempts failed
 	if lastErr != nil {
-		return nil, s.handleLLMError(lastErr, lastCfg, isBYOK)
+		return nil, s.handleLLMError(lastErr, lastCfg, llmChain.IsBYOK())
 	}
 
 	// Check if all models were skipped due to budget constraints
-	if modelsSkippedDueToBudget > 0 && modelsSkippedDueToBudget == len(llmConfigs) {
+	if modelsSkippedDueToBudget > 0 && modelsSkippedDueToBudget == llmChain.Len() {
 		s.logger.Warn("all models skipped due to budget constraints",
 			"user_id", userID,
 			"models_skipped", modelsSkippedDueToBudget,

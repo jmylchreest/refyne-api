@@ -181,13 +181,12 @@ func (h *JobHandler) CreateCrawlJob(ctx context.Context, input *CreateCrawlJobIn
 		return nil, huma.Error401Unauthorized("unauthorized")
 	}
 
-	// Resolve LLM configs at job creation time
-	var llmConfigs []*service.LLMConfigInput
-	var isBYOK bool
+	// Resolve LLM config chain at job creation time
+	var llmChain *service.LLMConfigChain
 	if h.resolver != nil {
-		llmConfigs, isBYOK = h.resolver.ResolveConfigs(ctx, uc.UserID, nil, uc.Tier, uc.BYOKAllowed, uc.ModelsCustomAllowed)
+		llmChain = h.resolver.ResolveConfigChain(ctx, uc.UserID, nil, uc.Tier, uc.BYOKAllowed, uc.ModelsCustomAllowed)
 	}
-	if len(llmConfigs) == 0 {
+	if llmChain == nil || llmChain.IsEmpty() {
 		return nil, huma.Error500InternalServerError("failed to resolve LLM configuration")
 	}
 
@@ -214,9 +213,9 @@ func (h *JobHandler) CreateCrawlJob(ctx context.Context, input *CreateCrawlJobIn
 		},
 		CleanerChain: cleanerChain,
 		WebhookURL:   input.Body.WebhookURL,
-		LLMConfigs:   llmConfigs,
+		LLMConfigs:   llmChain.All(),
 		Tier:         uc.Tier,
-		IsBYOK:       isBYOK,
+		IsBYOK:       llmChain.IsBYOK(),
 	})
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to create crawl job: " + err.Error())

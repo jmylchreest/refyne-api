@@ -461,7 +461,7 @@ func TestGetStrictMode(t *testing.T) {
 	}
 }
 
-func TestResolveConfigs_Override(t *testing.T) {
+func TestResolveConfigChain_Override(t *testing.T) {
 	resolver, _, _, _, _ := newTestLLMConfigResolver()
 	ctx := context.Background()
 	userID := "user_123"
@@ -499,26 +499,26 @@ func TestResolveConfigs_Override(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			configs, isBYOK := resolver.ResolveConfigs(ctx, userID, tt.override, "free", tt.byokAllowed, false)
+			chain := resolver.ResolveConfigChain(ctx, userID, tt.override, "free", tt.byokAllowed, false)
 
-			if isBYOK != tt.wantBYOK {
-				t.Errorf("isBYOK = %v, want %v", isBYOK, tt.wantBYOK)
+			if chain.IsBYOK() != tt.wantBYOK {
+				t.Errorf("IsBYOK() = %v, want %v", chain.IsBYOK(), tt.wantBYOK)
 			}
-			if len(configs) != tt.wantLen {
-				t.Errorf("len(configs) = %d, want %d", len(configs), tt.wantLen)
+			if chain.Len() != tt.wantLen {
+				t.Errorf("Len() = %d, want %d", chain.Len(), tt.wantLen)
 			}
 
 			// For BYOK case, verify the override was used
-			if tt.wantBYOK && len(configs) > 0 {
-				if configs[0].Provider != tt.override.Provider {
-					t.Errorf("provider = %s, want %s", configs[0].Provider, tt.override.Provider)
+			if tt.wantBYOK && chain.First() != nil {
+				if chain.First().Provider != tt.override.Provider {
+					t.Errorf("provider = %s, want %s", chain.First().Provider, tt.override.Provider)
 				}
 			}
 		})
 	}
 }
 
-func TestResolveConfigs_BYOKAndModelsCustom(t *testing.T) {
+func TestResolveConfigChain_BYOKAndModelsCustom(t *testing.T) {
 	resolver, _, _, userServiceKeyRepo, userFallbackChainRepo := newTestLLMConfigResolver()
 	ctx := context.Background()
 	userID := "user_123"
@@ -533,28 +533,28 @@ func TestResolveConfigs_BYOKAndModelsCustom(t *testing.T) {
 		{UserID: userID, Provider: "openrouter", Model: "user-model", Position: 1, IsEnabled: true},
 	}
 
-	configs, isBYOK := resolver.ResolveConfigs(ctx, userID, nil, "free", true, true)
+	chain := resolver.ResolveConfigChain(ctx, userID, nil, "free", true, true)
 
-	if !isBYOK {
-		t.Error("expected isBYOK = true for BYOK + models_custom")
+	if !chain.IsBYOK() {
+		t.Error("expected IsBYOK() = true for BYOK + models_custom")
 	}
-	if len(configs) != 1 {
-		t.Errorf("len(configs) = %d, want 1", len(configs))
+	if chain.Len() != 1 {
+		t.Errorf("Len() = %d, want 1", chain.Len())
 	}
-	if len(configs) > 0 {
-		if configs[0].Provider != "openrouter" {
-			t.Errorf("provider = %s, want openrouter", configs[0].Provider)
+	if first := chain.First(); first != nil {
+		if first.Provider != "openrouter" {
+			t.Errorf("provider = %s, want openrouter", first.Provider)
 		}
-		if configs[0].Model != "user-model" {
-			t.Errorf("model = %s, want user-model", configs[0].Model)
+		if first.Model != "user-model" {
+			t.Errorf("model = %s, want user-model", first.Model)
 		}
-		if configs[0].APIKey != "user-or-key" {
-			t.Errorf("apiKey = %s, want user-or-key", configs[0].APIKey)
+		if first.APIKey != "user-or-key" {
+			t.Errorf("apiKey = %s, want user-or-key", first.APIKey)
 		}
 	}
 }
 
-func TestResolveConfigs_ModelsCustomOnly(t *testing.T) {
+func TestResolveConfigChain_ModelsCustomOnly(t *testing.T) {
 	resolver, _, _, _, userFallbackChainRepo := newTestLLMConfigResolver()
 	ctx := context.Background()
 	userID := "user_123"
@@ -564,26 +564,26 @@ func TestResolveConfigs_ModelsCustomOnly(t *testing.T) {
 		{UserID: userID, Provider: "openrouter", Model: "custom-model", Position: 1, IsEnabled: true},
 	}
 
-	configs, isBYOK := resolver.ResolveConfigs(ctx, userID, nil, "free", false, true)
+	chain := resolver.ResolveConfigChain(ctx, userID, nil, "free", false, true)
 
-	if isBYOK {
-		t.Error("expected isBYOK = false for models_custom only")
+	if chain.IsBYOK() {
+		t.Error("expected IsBYOK() = false for models_custom only")
 	}
-	if len(configs) != 1 {
-		t.Errorf("len(configs) = %d, want 1", len(configs))
+	if chain.Len() != 1 {
+		t.Errorf("Len() = %d, want 1", chain.Len())
 	}
-	if len(configs) > 0 {
-		if configs[0].Model != "custom-model" {
-			t.Errorf("model = %s, want custom-model", configs[0].Model)
+	if first := chain.First(); first != nil {
+		if first.Model != "custom-model" {
+			t.Errorf("model = %s, want custom-model", first.Model)
 		}
 		// Should use system key
-		if configs[0].APIKey != "env-openrouter-key" {
-			t.Errorf("apiKey = %s, want env-openrouter-key", configs[0].APIKey)
+		if first.APIKey != "env-openrouter-key" {
+			t.Errorf("apiKey = %s, want env-openrouter-key", first.APIKey)
 		}
 	}
 }
 
-func TestResolveConfigs_BYOKOnly(t *testing.T) {
+func TestResolveConfigChain_BYOKOnly(t *testing.T) {
 	resolver, _, fallbackChainRepo, userServiceKeyRepo, _ := newTestLLMConfigResolver()
 	ctx := context.Background()
 	userID := "user_123"
@@ -598,37 +598,39 @@ func TestResolveConfigs_BYOKOnly(t *testing.T) {
 		{Provider: "openrouter", Model: "system-model", Position: 1, IsEnabled: true},
 	}
 
-	configs, isBYOK := resolver.ResolveConfigs(ctx, userID, nil, "free", true, false)
+	chain := resolver.ResolveConfigChain(ctx, userID, nil, "free", true, false)
 
-	if !isBYOK {
-		t.Error("expected isBYOK = true for BYOK only")
+	if !chain.IsBYOK() {
+		t.Error("expected IsBYOK() = true for BYOK only")
 	}
-	if len(configs) < 1 {
-		t.Errorf("expected at least 1 config, got %d", len(configs))
+	if chain.Len() < 1 {
+		t.Errorf("expected at least 1 config, got %d", chain.Len())
 	}
-	if len(configs) > 0 {
+
+	first := chain.First()
+	if first != nil {
 		// Should use system model with user key
-		if configs[0].Model != "system-model" {
-			t.Errorf("model = %s, want system-model", configs[0].Model)
+		if first.Model != "system-model" {
+			t.Errorf("model = %s, want system-model", first.Model)
 		}
-		if configs[0].APIKey != "user-or-key" {
-			t.Errorf("apiKey = %s, want user-or-key", configs[0].APIKey)
+		if first.APIKey != "user-or-key" {
+			t.Errorf("apiKey = %s, want user-or-key", first.APIKey)
 		}
 	}
 }
 
-func TestResolveConfigs_Default(t *testing.T) {
+func TestResolveConfigChain_Default(t *testing.T) {
 	resolver, _, _, _, _ := newTestLLMConfigResolver()
 	ctx := context.Background()
 	userID := "user_123"
 
-	configs, isBYOK := resolver.ResolveConfigs(ctx, userID, nil, "free", false, false)
+	chain := resolver.ResolveConfigChain(ctx, userID, nil, "free", false, false)
 
-	if isBYOK {
-		t.Error("expected isBYOK = false for default case")
+	if chain.IsBYOK() {
+		t.Error("expected IsBYOK() = false for default case")
 	}
 	// Should get hardcoded chain (3 openrouter + 1 ollama)
-	if len(configs) < 1 {
+	if chain.Len() < 1 {
 		t.Error("expected at least one config in default chain")
 	}
 }
@@ -746,18 +748,62 @@ func TestBuildUserFallbackChain_OllamaNoKey(t *testing.T) {
 	}
 }
 
-func TestResolveConfig_SingleConfig(t *testing.T) {
+func TestResolveConfigChain_Iterator(t *testing.T) {
 	resolver, _, _, _, _ := newTestLLMConfigResolver()
 	ctx := context.Background()
 	userID := "user_123"
 
-	config, isBYOK := resolver.ResolveConfig(ctx, userID, nil, "free", false, false)
+	chain := resolver.ResolveConfigChain(ctx, userID, nil, "free", false, false)
 
-	if config == nil {
-		t.Fatal("expected non-nil config")
+	if chain.IsEmpty() {
+		t.Fatal("expected non-empty chain")
 	}
-	if isBYOK {
+	if chain.IsBYOK() {
 		t.Error("expected isBYOK = false")
+	}
+
+	// Test First() doesn't advance iterator
+	first := chain.First()
+	if first == nil {
+		t.Fatal("expected non-nil first config")
+	}
+
+	// Test iteration
+	config := chain.Next()
+	if config == nil {
+		t.Fatal("expected non-nil config from Next()")
+	}
+	if config != first {
+		t.Error("First() and first Next() should return same config")
+	}
+
+	// Test Current() returns the current config
+	current := chain.Current()
+	if current != config {
+		t.Error("Current() should return same config as last Next()")
+	}
+
+	// Test Position()
+	pos, total := chain.Position()
+	if pos != 1 {
+		t.Errorf("expected position 1, got %d", pos)
+	}
+	if total != chain.Len() {
+		t.Errorf("expected total %d, got %d", chain.Len(), total)
+	}
+
+	// Iterate through remaining configs
+	count := 1
+	for cfg := chain.Next(); cfg != nil; cfg = chain.Next() {
+		count++
+	}
+	if count != chain.Len() {
+		t.Errorf("expected to iterate through %d configs, got %d", chain.Len(), count)
+	}
+
+	// After exhaustion, Next() should return nil
+	if chain.Next() != nil {
+		t.Error("expected nil after chain exhausted")
 	}
 }
 
