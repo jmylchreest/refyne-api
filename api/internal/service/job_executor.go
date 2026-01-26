@@ -27,6 +27,10 @@ type JobExecutor interface {
 
 	// GetSchema returns the schema/prompt for this job (may be nil for some job types).
 	GetSchema() json.RawMessage
+
+	// SetJobID sets the job ID on the executor after job record creation.
+	// This is called by RunJob before Execute to provide tracking context.
+	SetJobID(jobID string)
 }
 
 // JobExecutionResult contains the output of job execution.

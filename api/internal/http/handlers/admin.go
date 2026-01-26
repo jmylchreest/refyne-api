@@ -27,7 +27,7 @@ func NewAdminHandler(adminSvc *service.AdminService, tierSyncSvc *service.TierSy
 // ServiceKeyInput represents a service key in API requests.
 type ServiceKeyInput struct {
 	Provider     string `json:"provider" enum:"openrouter,anthropic,openai" doc:"LLM provider name"`
-	APIKey       string `json:"api_key" minLength:"1" doc:"API key for the provider"`
+	APIKey       string `json:"api_key,omitempty" doc:"API key for the provider (required for new keys, optional for updates)"`
 	DefaultModel string `json:"default_model" doc:"Default model to use"`
 	IsEnabled    bool   `json:"is_enabled" doc:"Whether this provider is enabled"`
 }

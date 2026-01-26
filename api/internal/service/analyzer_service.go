@@ -111,8 +111,9 @@ func (s *AnalyzerService) SetCaptchaService(captchaSvc *CaptchaService) {
 // AnalyzeInput represents input for the analyze operation.
 type AnalyzeInput struct {
 	URL       string `json:"url"`
-	Depth     int    `json:"depth"`     // 0 = single page, 1 = crawl one level
+	Depth     int    `json:"depth"`      // 0 = single page, 1 = crawl one level
 	FetchMode string `json:"fetch_mode"` // auto, static, dynamic
+	JobID     string `json:"-"`          // Job ID for tracking (not serialized)
 }
 
 // AnalyzeTokenUsage represents token consumption and cost info for an analysis.
@@ -217,8 +218,8 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 
 	// Fetch main page content
 	fetchStart := time.Now()
-	s.logger.Debug("fetching main page content", "request_id", requestID, "user_id", userID, "url", targetURL, "fetch_mode", input.FetchMode)
-	mainContent, links, fetchMode, err := s.fetchContent(ctx, targetURL, input.FetchMode, userID, tier, contentDynamicAllowed)
+	s.logger.Debug("fetching main page content", "request_id", requestID, "user_id", userID, "url", targetURL, "fetch_mode", input.FetchMode, "job_id", input.JobID)
+	mainContent, links, fetchMode, err := s.fetchContent(ctx, targetURL, input.FetchMode, userID, tier, contentDynamicAllowed, input.JobID)
 	if err != nil {
 		s.logger.Error("failed to fetch page content", "request_id", requestID, "user_id", userID, "url", targetURL, "error", err)
 		s.recordAnalyzeUsage(ctx, userID, tier, targetURL, llmConfig, isBYOK, 0, 0,
@@ -250,7 +251,7 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 		)
 
 		for _, detailURL := range detailLinks {
-			content, _, _, err := s.fetchContent(ctx, detailURL, string(fetchMode), userID, tier, contentDynamicAllowed)
+			content, _, _, err := s.fetchContent(ctx, detailURL, string(fetchMode), userID, tier, contentDynamicAllowed, input.JobID)
 			if err != nil {
 				s.logger.Warn("failed to fetch detail page for mini-crawl",
 					"request_id", requestID,
@@ -273,7 +274,7 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 		// Fallback: if no detail links identified but depth > 0, use first few links
 		maxSamples := min(2, len(links))
 		for i := range maxSamples {
-			content, _, _, err := s.fetchContent(ctx, links[i], string(fetchMode), userID, tier, contentDynamicAllowed)
+			content, _, _, err := s.fetchContent(ctx, links[i], string(fetchMode), userID, tier, contentDynamicAllowed, input.JobID)
 			if err != nil {
 				s.logger.Warn("failed to fetch detail page",
 					"request_id", requestID,
@@ -481,7 +482,7 @@ func (s *AnalyzerService) recordAnalyzeUsage(
 
 // fetchContent fetches page content and extracts links.
 // Supports both static (Colly) and dynamic (browser rendering) fetch modes.
-func (s *AnalyzerService) fetchContent(ctx context.Context, targetURL string, fetchMode string, userID string, tier string, contentDynamicAllowed bool) (string, []string, models.FetchMode, error) {
+func (s *AnalyzerService) fetchContent(ctx context.Context, targetURL string, fetchMode string, userID string, tier string, contentDynamicAllowed bool, jobID string) (string, []string, models.FetchMode, error) {
 	// Determine effective fetch mode
 	effectiveFetchMode := fetchMode
 	if effectiveFetchMode == "" || effectiveFetchMode == "auto" {
@@ -502,12 +503,14 @@ func (s *AnalyzerService) fetchContent(ctx context.Context, targetURL string, fe
 		s.logger.Info("using browser rendering for analysis",
 			"url", targetURL,
 			"user_id", userID,
+			"job_id", jobID,
 		)
 
 		// Use captcha service for dynamic fetching
 		result, err := s.captchaSvc.FetchDynamicContent(ctx, userID, tier, CaptchaSolveInput{
 			URL:        targetURL,
 			MaxTimeout: 60000,
+			JobID:      jobID,
 		})
 		if err != nil {
 			return "", nil, models.FetchModeDynamic, fmt.Errorf("browser rendering failed: %w", err)
@@ -619,11 +622,12 @@ func (s *AnalyzerService) fetchContent(ctx context.Context, targetURL string, fe
 					s.logger.Info("auto-retrying with browser rendering due to bot protection",
 						"url", targetURL,
 						"user_id", userID,
+						"job_id", jobID,
 						"protection_type", detection.Signal,
 					)
 
 					// Recursive call with explicit dynamic mode
-					return s.fetchContent(ctx, targetURL, "dynamic", userID, tier, contentDynamicAllowed)
+					return s.fetchContent(ctx, targetURL, "dynamic", userID, tier, contentDynamicAllowed, jobID)
 				}
 
 				// Log why auto-retry didn't happen

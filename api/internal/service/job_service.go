@@ -56,22 +56,25 @@ func (s *JobService) RunJob(ctx context.Context, executor JobExecutor, opts *Run
 		return nil, fmt.Errorf("failed to create job record: %w", err)
 	}
 
-	// 2. Mark job as running
+	// 2. Set the job ID on the executor for tracking in downstream services (e.g., captcha)
+	executor.SetJobID(job.ID)
+
+	// 3. Mark job as running
 	if err := s.markJobRunning(ctx, job); err != nil {
 		s.logger.Error("failed to mark job as running", "job_id", job.ID, "error", err)
 		// Continue anyway - the job record exists
 	}
 
-	// 3. Execute the job
+	// 4. Execute the job
 	result, execErr := executor.Execute(ctx)
 
-	// 4. Handle completion or failure
+	// 5. Handle completion or failure
 	if execErr != nil {
 		s.handleJobFailure(ctx, job, executor, execErr, opts)
 		return &RunJobResult{JobID: job.ID}, execErr
 	}
 
-	// 5. Handle success
+	// 6. Handle success
 	s.handleJobSuccess(ctx, job, executor, result, opts)
 
 	return &RunJobResult{

@@ -98,3 +98,10 @@ func (e *ExtractExecutor) GetURL() string {
 func (e *ExtractExecutor) GetSchema() json.RawMessage {
 	return e.schema
 }
+
+// SetJobID sets the job ID on the executor for tracking in downstream services.
+func (e *ExtractExecutor) SetJobID(jobID string) {
+	if e.ectx != nil {
+		e.ectx.JobID = jobID
+	}
+}

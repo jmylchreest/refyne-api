@@ -183,16 +183,17 @@ type BudgetSkip struct {
 
 // ExtractContext holds context for billing tracking and feature access.
 type ExtractContext struct {
-	UserID               string
-	Tier                 string // From JWT claims
-	SchemaID             string
-	IsBYOK               bool
-	BYOKAllowed          bool   // From JWT claims - whether user has the "provider_byok" feature
-	ModelsCustomAllowed  bool   // From JWT claims - whether user has the "models_custom" feature
-	ModelsPremiumAllowed bool   // From JWT claims - whether user has the "models_premium" feature (budget-based fallback)
-	ContentDynamicAllowed bool  // From JWT claims - whether user has the "content_dynamic" feature (browser rendering)
-	LLMProvider          string // For S3 API keys: forced LLM provider (bypasses fallback chain)
-	LLMModel             string // For S3 API keys: forced LLM model (bypasses fallback chain)
+	UserID                string
+	Tier                  string // From JWT claims
+	SchemaID              string
+	JobID                 string // Job ID for tracking in captcha/browser service
+	IsBYOK                bool
+	BYOKAllowed           bool   // From JWT claims - whether user has the "provider_byok" feature
+	ModelsCustomAllowed   bool   // From JWT claims - whether user has the "models_custom" feature
+	ModelsPremiumAllowed  bool   // From JWT claims - whether user has the "models_premium" feature (budget-based fallback)
+	ContentDynamicAllowed bool   // From JWT claims - whether user has the "content_dynamic" feature (browser rendering)
+	LLMProvider           string // For S3 API keys: forced LLM provider (bypasses fallback chain)
+	LLMModel              string // For S3 API keys: forced LLM model (bypasses fallback chain)
 }
 
 // Extract performs a single-page extraction.
@@ -367,12 +368,17 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 
 	extractAttempt:
 		// Create refyne instance with configured cleaner and fetch mode
+		// Use JobID if available, otherwise fall back to SchemaID for tracking
+		jobIDForTracking := ectx.JobID
+		if jobIDForTracking == "" {
+			jobIDForTracking = ectx.SchemaID
+		}
 		r, _, err := s.createRefyneInstanceWithFetchMode(llmCfg, input.CleanerChain, FetchModeConfig{
 			Mode:                  effectiveFetchMode,
 			ContentDynamicAllowed: ectx.ContentDynamicAllowed,
 			UserID:                userID,
 			Tier:                  ectx.Tier,
-			JobID:                 ectx.SchemaID, // Use schema ID as a form of job tracking
+			JobID:                 jobIDForTracking,
 		})
 		if err != nil {
 			// Check for permission/configuration errors that shouldn't be retried

@@ -143,15 +143,18 @@ export default function ExtractorsPage() {
   }, [selectedTier, isSuperadmin]);
 
   const handleSave = async (provider: 'openrouter' | 'anthropic' | 'openai') => {
-    if (!formData.api_key) {
-      toast.error('API key is required');
+    const existingKey = keys.find(k => k.provider === provider);
+
+    // API key is required for new keys, optional for updates
+    if (!existingKey && !formData.api_key) {
+      toast.error('API key is required for new service keys');
       return;
     }
 
     try {
       await upsertServiceKey({
         provider,
-        api_key: formData.api_key,
+        api_key: formData.api_key || '', // Empty string preserves existing key on backend
         default_model: formData.default_model || DEFAULT_MODELS[provider],
         is_enabled: formData.is_enabled ?? true,
       });
@@ -347,7 +350,7 @@ export default function ExtractorsPage() {
                         <Input
                           id={`${provider}-key`}
                           type={showApiKey[provider] ? 'text' : 'password'}
-                          placeholder={key ? '(unchanged)' : 'Enter API key...'}
+                          placeholder={key ? '(leave empty to keep existing key)' : 'Enter API key...'}
                           value={formData.api_key || ''}
                           onChange={(e) => setFormData({ ...formData, api_key: e.target.value })}
                           className="pr-10"

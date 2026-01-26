@@ -63,6 +63,8 @@ func (s *AdminService) ListServiceKeys(ctx context.Context) ([]*models.ServiceKe
 }
 
 // UpsertServiceKey creates or updates a service key.
+// If APIKey is empty and a key already exists, the existing key is preserved.
+// If APIKey is empty and no key exists, an error is returned.
 func (s *AdminService) UpsertServiceKey(ctx context.Context, input ServiceKeyInput) (*models.ServiceKey, error) {
 	// Validate provider
 	if !isValidProvider(input.Provider) {
@@ -75,14 +77,31 @@ func (s *AdminService) UpsertServiceKey(ctx context.Context, input ServiceKeyInp
 		defaultModel = getDefaultModelForProvider(input.Provider)
 	}
 
-	// Encrypt the API key
-	encryptedKey := input.APIKey
-	if s.encryptor != nil && input.APIKey != "" {
-		encrypted, err := s.encryptor.Encrypt(input.APIKey)
-		if err != nil {
-			return nil, fmt.Errorf("failed to encrypt API key: %w", err)
+	// Check if key already exists
+	existingKey, err := s.repos.ServiceKey.GetByProvider(ctx, input.Provider)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check existing key: %w", err)
+	}
+
+	// Determine the encrypted key to use
+	var encryptedKey string
+	if input.APIKey != "" {
+		// New key provided - encrypt it
+		if s.encryptor != nil {
+			encrypted, err := s.encryptor.Encrypt(input.APIKey)
+			if err != nil {
+				return nil, fmt.Errorf("failed to encrypt API key: %w", err)
+			}
+			encryptedKey = encrypted
+		} else {
+			encryptedKey = input.APIKey
 		}
-		encryptedKey = encrypted
+	} else if existingKey != nil {
+		// No new key provided but existing key exists - preserve it
+		encryptedKey = existingKey.APIKeyEncrypted
+	} else {
+		// No new key and no existing key - error
+		return nil, fmt.Errorf("API key is required when creating a new service key")
 	}
 
 	key := &models.ServiceKey{
@@ -100,6 +119,7 @@ func (s *AdminService) UpsertServiceKey(ctx context.Context, input ServiceKeyInp
 		"provider", input.Provider,
 		"model", defaultModel,
 		"enabled", input.IsEnabled,
+		"key_changed", input.APIKey != "",
 	)
 
 	// Fetch the updated key to get timestamps

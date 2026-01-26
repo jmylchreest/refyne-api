@@ -11,14 +11,15 @@ import (
 // AnalyzeExecutor handles URL analysis jobs.
 // It implements the JobExecutor interface for synchronous analysis.
 type AnalyzeExecutor struct {
-	analyzerSvc *AnalyzerService
-	input       AnalyzeInput
-	userID      string
-	tier        string
-	byokAllowed bool
-	modelsCustomAllowed bool
+	analyzerSvc           *AnalyzerService
+	input                 AnalyzeInput
+	userID                string
+	tier                  string
+	byokAllowed           bool
+	modelsCustomAllowed   bool
 	contentDynamicAllowed bool
-	isByok      bool
+	isByok                bool
+	jobID                 string // Job ID for tracking in downstream services
 }
 
 // NewAnalyzeExecutor creates a new analyze executor.
@@ -47,10 +48,14 @@ func NewAnalyzeExecutor(
 func (e *AnalyzeExecutor) Execute(ctx context.Context) (*JobExecutionResult, error) {
 	startTime := time.Now()
 
+	// Set the job ID on the input for tracking in downstream services
+	input := e.input
+	input.JobID = e.jobID
+
 	result, err := e.analyzerSvc.Analyze(
 		ctx,
 		e.userID,
-		e.input,
+		input,
 		e.tier,
 		e.byokAllowed,
 		e.modelsCustomAllowed,
@@ -135,4 +140,9 @@ func (e *AnalyzeExecutor) GetURL() string {
 // GetSchema returns the schema for this job (nil for analyze jobs).
 func (e *AnalyzeExecutor) GetSchema() json.RawMessage {
 	return nil
+}
+
+// SetJobID sets the job ID on the executor for tracking in downstream services.
+func (e *AnalyzeExecutor) SetJobID(jobID string) {
+	e.jobID = jobID
 }
