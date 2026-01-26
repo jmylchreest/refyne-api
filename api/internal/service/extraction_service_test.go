@@ -409,33 +409,10 @@ func TestGetDefaultLLMConfig_NoResolver(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	// Without a resolver, should return hardcoded Ollama config
+	// Without a resolver, should return nil (no hardcoded fallback)
 	cfg := svc.getDefaultLLMConfig(ctx)
-	if cfg == nil {
-		t.Fatal("expected config, got nil")
-	}
-	if cfg.Provider != "ollama" {
-		t.Errorf("Provider = %q, want %q", cfg.Provider, "ollama")
-	}
-	if cfg.Model != "llama3.2" {
-		t.Errorf("Model = %q, want %q", cfg.Model, "llama3.2")
-	}
-}
-
-func TestGetHardcodedDefaultChain_NoResolver(t *testing.T) {
-	svc := &ExtractionService{
-		logger: slog.Default(),
-	}
-	ctx := context.Background()
-
-	configs := svc.getHardcodedDefaultChain(ctx)
-	if len(configs) == 0 {
-		t.Fatal("expected at least one config in chain")
-	}
-
-	// Should contain Ollama as fallback
-	if configs[0].Provider != "ollama" {
-		t.Errorf("configs[0].Provider = %q, want %q", configs[0].Provider, "ollama")
+	if cfg != nil {
+		t.Errorf("expected nil config without resolver, got %+v", cfg)
 	}
 }
 

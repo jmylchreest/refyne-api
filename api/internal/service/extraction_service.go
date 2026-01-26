@@ -734,8 +734,8 @@ func (s *ExtractionService) resolveLLMConfigChain(ctx context.Context, userID st
 	}
 
 	// Fallback if resolver not set (shouldn't happen in normal operation)
-	s.logger.Warn("resolver not set, using hardcoded defaults")
-	return NewLLMConfigChain(s.getHardcodedDefaultChain(ctx), false)
+	s.logger.Error("resolver not set, no LLM config chain available")
+	return NewLLMConfigChain(nil, false)
 }
 
 // NOTE: Crawl and CrawlWithCallback methods are in extraction_crawl.go
@@ -887,40 +887,14 @@ func (s *ExtractionService) handleLLMError(err error, llmCfg *LLMConfigInput, is
 	return llmErr
 }
 
-// getHardcodedDefaultChain returns the default fallback chain when no custom chain is configured.
-//
-// getHardcodedDefaultChain returns the hardcoded fallback chain when resolver isn't available.
-// This is a minimal fallback that should rarely be used in production.
-func (s *ExtractionService) getHardcodedDefaultChain(ctx context.Context) []*LLMConfigInput {
-	// If resolver is available, use its method which has access to service keys
-	if s.resolver != nil {
-		return s.resolver.GetDefaultConfigsForTier(ctx, "")
-	}
-
-	// Ultimate fallback: just Ollama (no API key needed)
-	return []*LLMConfigInput{{
-		Provider:   "ollama",
-		Model:      "llama3.2",
-		MaxTokens:  s.getMaxTokens(ctx, "ollama", "llama3.2", nil),
-		StrictMode: s.getStrictMode(ctx, "ollama", "llama3.2", nil),
-	}}
-}
-
 // getDefaultLLMConfig returns the first available LLM configuration (for backward compatibility).
 func (s *ExtractionService) getDefaultLLMConfig(ctx context.Context) *LLMConfigInput {
 	if s.resolver != nil {
 		return s.resolver.GetDefaultConfig(ctx, "")
 	}
-	// Fallback if resolver not set
-	configs := s.getHardcodedDefaultChain(ctx)
-	if len(configs) > 0 {
-		return configs[0]
-	}
-	return &LLMConfigInput{
-		Provider:   "ollama",
-		Model:      "llama3.2",
-		StrictMode: s.getStrictMode(ctx, "ollama", "llama3.2", nil),
-	}
+	// Fallback if resolver not set - return nil (no hardcoded defaults)
+	s.logger.Error("resolver not set, no default LLM config available")
+	return nil
 }
 
 // ========================================

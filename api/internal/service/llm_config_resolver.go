@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/jmylchreest/refyne-api/internal/config"
+	"github.com/jmylchreest/refyne-api/internal/constants"
 	"github.com/jmylchreest/refyne-api/internal/crypto"
 	"github.com/jmylchreest/refyne-api/internal/llm"
 	"github.com/jmylchreest/refyne-api/internal/models"
@@ -532,16 +533,26 @@ func (r *LLMConfigResolver) buildBYOKOnlyConfigs(ctx context.Context, userID str
 }
 
 // GetDefaultConfigsForTier returns the default LLM configs for a tier.
+// Returns nil if no chain is configured for the tier.
 func (r *LLMConfigResolver) GetDefaultConfigsForTier(ctx context.Context, tier string) []*LLMConfigInput {
-	// First try to get from admin-configured fallback chain
+	// Normalize tier name (e.g., "tier_v1_free" -> "free")
+	normalizedTier := constants.NormalizeTierName(tier)
+
+	r.logger.Debug("getting default configs for tier",
+		"original_tier", tier,
+		"normalized_tier", normalizedTier,
+	)
+
+	// Try to get from admin-configured fallback chain
 	if r.repos != nil && r.repos.FallbackChain != nil {
 		var chain []*models.FallbackChainEntry
 		var err error
 
-		if tier != "" {
-			chain, err = r.repos.FallbackChain.GetEnabledByTier(ctx, tier)
+		if normalizedTier != "" {
+			chain, err = r.repos.FallbackChain.GetEnabledByTier(ctx, normalizedTier)
 		}
 		if err != nil || len(chain) == 0 {
+			// Fall back to default chain (tier IS NULL)
 			chain, err = r.repos.FallbackChain.GetEnabled(ctx)
 		}
 
@@ -577,68 +588,21 @@ func (r *LLMConfigResolver) GetDefaultConfigsForTier(ctx context.Context, tier s
 		}
 	}
 
-	// Fallback to hardcoded defaults
-	return r.getHardcodedDefaultChain(ctx)
+	// No fallback chain configured - return nil (not hardcoded defaults)
+	r.logger.Warn("no fallback chain configured for tier",
+		"tier", normalizedTier,
+	)
+	return nil
 }
 
 // GetDefaultConfig returns the first valid default config for a tier.
+// Returns nil if no chain is configured for the tier.
 func (r *LLMConfigResolver) GetDefaultConfig(ctx context.Context, tier string) *LLMConfigInput {
 	configs := r.GetDefaultConfigsForTier(ctx, tier)
 	if len(configs) > 0 {
 		return configs[0]
 	}
-	// Ultimate fallback
-	return &LLMConfigInput{
-		Provider:   llm.ProviderOllama,
-		Model:      "llama3.2",
-		MaxTokens:  r.GetMaxTokens(ctx, llm.ProviderOllama, "llama3.2", nil),
-		StrictMode: r.GetStrictMode(ctx, llm.ProviderOllama, "llama3.2", nil),
-	}
+	// No fallback chain configured - return nil
+	return nil
 }
 
-// getHardcodedDefaultChain returns the hardcoded fallback chain.
-// This is used when no admin-configured chain is available.
-func (r *LLMConfigResolver) getHardcodedDefaultChain(ctx context.Context) []*LLMConfigInput {
-	serviceKeys := r.GetServiceKeys(ctx)
-	configs := make([]*LLMConfigInput, 0, 4)
-
-	// OpenRouter free models chain (requires OpenRouter API key)
-	if serviceKeys.OpenRouterKey != "" {
-		// 1. Xiaomi MiMo - fast and capable
-		configs = append(configs, &LLMConfigInput{
-			Provider:   llm.ProviderOpenRouter,
-			APIKey:     serviceKeys.OpenRouterKey,
-			Model:      "xiaomi/mimo-v2-flash:free",
-			MaxTokens:  r.GetMaxTokens(ctx, llm.ProviderOpenRouter, "xiaomi/mimo-v2-flash:free", nil),
-			StrictMode: r.GetStrictMode(ctx, llm.ProviderOpenRouter, "xiaomi/mimo-v2-flash:free", nil),
-		})
-
-		// 2. GPT-OSS-120B - large open-source model
-		configs = append(configs, &LLMConfigInput{
-			Provider:   llm.ProviderOpenRouter,
-			APIKey:     serviceKeys.OpenRouterKey,
-			Model:      "openai/gpt-oss-120b:free",
-			MaxTokens:  r.GetMaxTokens(ctx, llm.ProviderOpenRouter, "openai/gpt-oss-120b:free", nil),
-			StrictMode: r.GetStrictMode(ctx, llm.ProviderOpenRouter, "openai/gpt-oss-120b:free", nil),
-		})
-
-		// 3. Gemma 3 27B - Google's instruction-tuned model
-		configs = append(configs, &LLMConfigInput{
-			Provider:   llm.ProviderOpenRouter,
-			APIKey:     serviceKeys.OpenRouterKey,
-			Model:      "google/gemma-3-27b-it:free",
-			MaxTokens:  r.GetMaxTokens(ctx, llm.ProviderOpenRouter, "google/gemma-3-27b-it:free", nil),
-			StrictMode: r.GetStrictMode(ctx, llm.ProviderOpenRouter, "google/gemma-3-27b-it:free", nil),
-		})
-	}
-
-	// Final fallback: Ollama (no API key needed, requires local setup)
-	configs = append(configs, &LLMConfigInput{
-		Provider:   llm.ProviderOllama,
-		Model:      "llama3.2",
-		MaxTokens:  r.GetMaxTokens(ctx, llm.ProviderOllama, "llama3.2", nil),
-		StrictMode: r.GetStrictMode(ctx, llm.ProviderOllama, "llama3.2", nil),
-	})
-
-	return configs
-}

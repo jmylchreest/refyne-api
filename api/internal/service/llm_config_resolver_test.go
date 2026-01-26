@@ -462,9 +462,16 @@ func TestGetStrictMode(t *testing.T) {
 }
 
 func TestResolveConfigChain_Override(t *testing.T) {
-	resolver, _, _, _, _ := newTestLLMConfigResolver()
+	resolver, _, fallbackChainRepo, _, _ := newTestLLMConfigResolver()
 	ctx := context.Background()
 	userID := "user_123"
+
+	// Set up system fallback chain for "free" tier
+	freeTier := "free"
+	fallbackChainRepo.entries = []*models.FallbackChainEntry{
+		{Tier: &freeTier, Provider: "openrouter", Model: "system-model-1", Position: 1, IsEnabled: true},
+		{Tier: &freeTier, Provider: "openrouter", Model: "system-model-2", Position: 2, IsEnabled: true},
+	}
 
 	tests := []struct {
 		name        string
@@ -493,7 +500,7 @@ func TestResolveConfigChain_Override(t *testing.T) {
 			},
 			byokAllowed: false,
 			wantBYOK:    false,
-			wantLen:     4, // System chain (3 openrouter + 1 ollama)
+			wantLen:     2, // System chain configured above
 		},
 	}
 
@@ -629,9 +636,9 @@ func TestResolveConfigChain_Default(t *testing.T) {
 	if chain.IsBYOK() {
 		t.Error("expected IsBYOK() = false for default case")
 	}
-	// Should get hardcoded chain (3 openrouter + 1 ollama)
-	if chain.Len() < 1 {
-		t.Error("expected at least one config in default chain")
+	// Without any configured chain, should return empty (no hardcoded fallback)
+	if chain.Len() != 0 {
+		t.Errorf("expected empty chain when no fallback configured, got %d", chain.Len())
 	}
 }
 
@@ -665,7 +672,7 @@ func TestGetDefaultConfigsForTier(t *testing.T) {
 	}
 }
 
-func TestGetDefaultConfigsForTier_HardcodedFallback(t *testing.T) {
+func TestGetDefaultConfigsForTier_NoFallbackConfigured(t *testing.T) {
 	// Create resolver without any DB chain
 	repos := &repository.Repositories{
 		FallbackChain: nil, // No fallback chain repo
@@ -681,29 +688,44 @@ func TestGetDefaultConfigsForTier_HardcodedFallback(t *testing.T) {
 
 	configs := resolver.GetDefaultConfigsForTier(ctx, "free")
 
-	// Should return hardcoded chain (3 openrouter + 1 ollama)
-	if len(configs) != 4 {
-		t.Errorf("len(configs) = %d, want 4", len(configs))
-	}
-
-	// Last should be ollama
-	if len(configs) > 0 && configs[len(configs)-1].Provider != "ollama" {
-		t.Errorf("last provider = %s, want ollama", configs[len(configs)-1].Provider)
+	// Without a configured fallback chain, should return nil (no hardcoded fallback)
+	if len(configs) != 0 {
+		t.Errorf("expected empty configs when no fallback configured, got %d", len(configs))
 	}
 }
 
 func TestGetDefaultConfig(t *testing.T) {
-	resolver, _, _, _, _ := newTestLLMConfigResolver()
+	resolver, _, fallbackChainRepo, _, _ := newTestLLMConfigResolver()
 	ctx := context.Background()
+
+	// Set up a fallback chain for "free" tier
+	freeTier := "free"
+	fallbackChainRepo.entries = []*models.FallbackChainEntry{
+		{Tier: &freeTier, Provider: "openrouter", Model: "test-model", Position: 1, IsEnabled: true},
+	}
 
 	config := resolver.GetDefaultConfig(ctx, "free")
 	if config == nil {
-		t.Fatal("expected non-nil config")
+		t.Fatal("expected non-nil config when fallback chain is configured")
 	}
 
 	// Should get first config from chain
-	if config.Provider == "" {
-		t.Error("expected provider to be set")
+	if config.Provider != "openrouter" {
+		t.Errorf("provider = %s, want openrouter", config.Provider)
+	}
+	if config.Model != "test-model" {
+		t.Errorf("model = %s, want test-model", config.Model)
+	}
+}
+
+func TestGetDefaultConfig_NoChain(t *testing.T) {
+	resolver, _, _, _, _ := newTestLLMConfigResolver()
+	ctx := context.Background()
+
+	// Without a configured chain, should return nil
+	config := resolver.GetDefaultConfig(ctx, "free")
+	if config != nil {
+		t.Errorf("expected nil config without fallback chain, got %+v", config)
 	}
 }
 
@@ -749,9 +771,17 @@ func TestBuildUserFallbackChain_OllamaNoKey(t *testing.T) {
 }
 
 func TestResolveConfigChain_Iterator(t *testing.T) {
-	resolver, _, _, _, _ := newTestLLMConfigResolver()
+	resolver, _, fallbackChainRepo, _, _ := newTestLLMConfigResolver()
 	ctx := context.Background()
 	userID := "user_123"
+
+	// Set up a fallback chain for testing iteration
+	freeTier := "free"
+	fallbackChainRepo.entries = []*models.FallbackChainEntry{
+		{Tier: &freeTier, Provider: "openrouter", Model: "model-1", Position: 1, IsEnabled: true},
+		{Tier: &freeTier, Provider: "openrouter", Model: "model-2", Position: 2, IsEnabled: true},
+		{Tier: &freeTier, Provider: "openrouter", Model: "model-3", Position: 3, IsEnabled: true},
+	}
 
 	chain := resolver.ResolveConfigChain(ctx, userID, nil, "free", false, false)
 
