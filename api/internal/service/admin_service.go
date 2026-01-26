@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jmylchreest/refyne-api/internal/auth"
+	"github.com/jmylchreest/refyne-api/internal/constants"
 	"github.com/jmylchreest/refyne-api/internal/crypto"
 	"github.com/jmylchreest/refyne-api/internal/models"
 	"github.com/jmylchreest/refyne-api/internal/repository"
@@ -156,8 +157,10 @@ func (s *AdminService) GetFallbackChain(ctx context.Context) ([]*models.Fallback
 
 // GetFallbackChainByTier returns fallback chain entries for a specific tier.
 // Pass nil for the default chain.
+// Tier names are normalized (e.g., tier_v1_free -> free).
 func (s *AdminService) GetFallbackChainByTier(ctx context.Context, tier *string) ([]*models.FallbackChainEntry, error) {
-	return s.repos.FallbackChain.GetByTier(ctx, tier)
+	normalizedTier := normalizeTier(tier)
+	return s.repos.FallbackChain.GetByTier(ctx, normalizedTier)
 }
 
 // GetAllTiers returns a list of all tiers with custom chains configured.
@@ -167,7 +170,11 @@ func (s *AdminService) GetAllTiers(ctx context.Context) ([]string, error) {
 
 // SetFallbackChain replaces the fallback chain for a specific tier.
 // If tier is nil, updates the default chain.
+// Tier names are normalized (e.g., tier_v1_free -> free).
 func (s *AdminService) SetFallbackChain(ctx context.Context, input FallbackChainInput) ([]*models.FallbackChainEntry, error) {
+	// Normalize tier name for consistent storage
+	normalizedTier := normalizeTier(input.Tier)
+
 	entries := make([]*models.FallbackChainEntry, 0, len(input.Entries))
 
 	for i, e := range input.Entries {
@@ -182,7 +189,7 @@ func (s *AdminService) SetFallbackChain(ctx context.Context, input FallbackChain
 		}
 
 		entries = append(entries, &models.FallbackChainEntry{
-			Tier:        input.Tier,
+			Tier:        normalizedTier,
 			Position:    i + 1,
 			Provider:    e.Provider,
 			Model:       e.Model,
@@ -192,28 +199,40 @@ func (s *AdminService) SetFallbackChain(ctx context.Context, input FallbackChain
 		})
 	}
 
-	if err := s.repos.FallbackChain.ReplaceAllByTier(ctx, input.Tier, entries); err != nil {
+	if err := s.repos.FallbackChain.ReplaceAllByTier(ctx, normalizedTier, entries); err != nil {
 		return nil, fmt.Errorf("failed to update fallback chain: %w", err)
 	}
 
 	tierName := "default"
-	if input.Tier != nil {
-		tierName = *input.Tier
+	if normalizedTier != nil {
+		tierName = *normalizedTier
 	}
 	s.logger.Info("fallback chain updated", "tier", tierName, "entries", len(entries))
 
-	return s.repos.FallbackChain.GetByTier(ctx, input.Tier)
+	return s.repos.FallbackChain.GetByTier(ctx, normalizedTier)
 }
 
 // DeleteFallbackChainByTier removes all entries for a specific tier.
 // This allows the tier to fall back to the default chain.
+// Tier names are normalized (e.g., tier_v1_free -> free).
 func (s *AdminService) DeleteFallbackChainByTier(ctx context.Context, tier string) error {
-	if err := s.repos.FallbackChain.DeleteByTier(ctx, tier); err != nil {
+	normalizedTier := constants.NormalizeTierName(tier)
+	if err := s.repos.FallbackChain.DeleteByTier(ctx, normalizedTier); err != nil {
 		return fmt.Errorf("failed to delete fallback chain: %w", err)
 	}
 
-	s.logger.Info("fallback chain deleted", "tier", tier)
+	s.logger.Info("fallback chain deleted", "tier", normalizedTier)
 	return nil
+}
+
+// normalizeTier normalizes a tier name pointer for consistent storage.
+// Converts Clerk Commerce tier names (e.g., tier_v1_free) to internal names (e.g., free).
+func normalizeTier(tier *string) *string {
+	if tier == nil {
+		return nil
+	}
+	normalized := constants.NormalizeTierName(*tier)
+	return &normalized
 }
 
 // isValidProvider checks if a provider name is valid for service keys.
