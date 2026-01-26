@@ -214,7 +214,7 @@ func (s *AnalyzerService) Analyze(ctx context.Context, userID string, input Anal
 		)
 		// Only check balance for non-BYOK users
 		if !llmChain.IsBYOK() {
-			if err := s.billing.CheckSufficientBalance(ctx, userID, estimatedCost); err != nil {
+			if err := s.billing.CheckSufficientBalance(ctx, userID, tier, estimatedCost); err != nil {
 				return nil, err
 			}
 		}

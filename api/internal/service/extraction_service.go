@@ -295,7 +295,7 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 			"estimated_cost_usd", estimatedCost,
 			"is_byok", llmChain.IsBYOK(),
 		)
-		if err := s.billing.CheckSufficientBalance(ctx, userID, estimatedCost); err != nil {
+		if err := s.billing.CheckSufficientBalance(ctx, userID, ectx.Tier, estimatedCost); err != nil {
 			return nil, err
 		}
 	}

@@ -49,7 +49,18 @@ func (s *BillingService) GetAvailableBalance(ctx context.Context, userID string)
 
 // CheckSufficientBalance verifies the user has enough balance for an estimated operation.
 // Returns an error if insufficient balance.
-func (s *BillingService) CheckSufficientBalance(ctx context.Context, userID string, estimatedCostUSD float64) error {
+// For free tier users, skip the balance check - they're limited by extraction quota instead.
+func (s *BillingService) CheckSufficientBalance(ctx context.Context, userID, tier string, estimatedCostUSD float64) error {
+	// Skip balance check for free tier - they're limited by monthly extraction quota
+	normalizedTier := constants.NormalizeTierName(tier)
+	if normalizedTier == constants.TierFree {
+		s.logger.Debug("skipping balance check for free tier user",
+			"user_id", userID,
+			"tier", tier,
+		)
+		return nil
+	}
+
 	available, err := s.GetAvailableBalance(ctx, userID)
 	if err != nil {
 		s.logger.Warn("failed to check balance, allowing operation", "user_id", userID, "error", err)

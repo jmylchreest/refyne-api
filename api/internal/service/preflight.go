@@ -23,6 +23,7 @@ func NewPreflightCheck(billing *BillingService, logger *slog.Logger) *PreflightC
 // PreflightInput contains the parameters needed for preflight validation.
 type PreflightInput struct {
 	UserID   string
+	Tier     string // User's subscription tier
 	Provider string
 	Model    string
 	IsBYOK   bool
@@ -62,7 +63,7 @@ func (p *PreflightCheck) Check(ctx context.Context, input PreflightInput) (*Pref
 
 	// Only check balance for non-BYOK users
 	if !input.IsBYOK {
-		if err := p.billing.CheckSufficientBalance(ctx, input.UserID, result.EstimatedCost); err != nil {
+		if err := p.billing.CheckSufficientBalance(ctx, input.UserID, input.Tier, result.EstimatedCost); err != nil {
 			result.Passed = false
 			return result, err
 		}
@@ -73,13 +74,14 @@ func (p *PreflightCheck) Check(ctx context.Context, input PreflightInput) (*Pref
 
 // CheckWithConfig performs preflight validation using an LLMConfigInput.
 // This is a convenience wrapper for Check.
-func (p *PreflightCheck) CheckWithConfig(ctx context.Context, userID string, config *LLMConfigInput, isBYOK bool) (*PreflightResult, error) {
+func (p *PreflightCheck) CheckWithConfig(ctx context.Context, userID, tier string, config *LLMConfigInput, isBYOK bool) (*PreflightResult, error) {
 	if config == nil {
 		return &PreflightResult{Passed: true}, nil
 	}
 
 	return p.Check(ctx, PreflightInput{
 		UserID:   userID,
+		Tier:     tier,
 		Provider: config.Provider,
 		Model:    config.Model,
 		IsBYOK:   isBYOK,
@@ -89,10 +91,10 @@ func (p *PreflightCheck) CheckWithConfig(ctx context.Context, userID string, con
 
 // CheckWithConfigs performs preflight validation using the first config in a chain.
 // This is useful for crawl operations that have a fallback chain.
-func (p *PreflightCheck) CheckWithConfigs(ctx context.Context, userID string, configs []*LLMConfigInput, isBYOK bool) (*PreflightResult, error) {
+func (p *PreflightCheck) CheckWithConfigs(ctx context.Context, userID, tier string, configs []*LLMConfigInput, isBYOK bool) (*PreflightResult, error) {
 	if len(configs) == 0 {
 		return &PreflightResult{Passed: true}, nil
 	}
 
-	return p.CheckWithConfig(ctx, userID, configs[0], isBYOK)
+	return p.CheckWithConfig(ctx, userID, tier, configs[0], isBYOK)
 }
