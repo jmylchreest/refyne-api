@@ -2,38 +2,23 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
-	"time"
 
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/oklog/ulid/v2"
 
-	"github.com/jmylchreest/refyne-api/internal/models"
-	"github.com/jmylchreest/refyne-api/internal/repository"
 	"github.com/jmylchreest/refyne-api/internal/service"
 )
 
 // AnalyzeHandler handles URL analysis endpoints.
 type AnalyzeHandler struct {
 	analyzerSvc *service.AnalyzerService
-	jobRepo     repository.JobRepository
-	storageSvc  *service.StorageService
+	jobSvc      *service.JobService
 }
 
 // NewAnalyzeHandler creates a new analyze handler.
-func NewAnalyzeHandler(analyzerSvc *service.AnalyzerService, jobRepo repository.JobRepository) *AnalyzeHandler {
+func NewAnalyzeHandler(analyzerSvc *service.AnalyzerService, jobSvc *service.JobService) *AnalyzeHandler {
 	return &AnalyzeHandler{
 		analyzerSvc: analyzerSvc,
-		jobRepo:     jobRepo,
-	}
-}
-
-// NewAnalyzeHandlerWithStorage creates a new analyze handler with storage service for debug capture.
-func NewAnalyzeHandlerWithStorage(analyzerSvc *service.AnalyzerService, jobRepo repository.JobRepository, storageSvc *service.StorageService) *AnalyzeHandler {
-	return &AnalyzeHandler{
-		analyzerSvc: analyzerSvc,
-		jobRepo:     jobRepo,
-		storageSvc:  storageSvc,
+		jobSvc:      jobSvc,
 	}
 }
 
@@ -81,6 +66,7 @@ type FollowPatternOutput struct {
 }
 
 // Analyze handles URL analysis requests.
+// Uses the unified JobService.RunJob for consistent job lifecycle management including webhooks.
 func (h *AnalyzeHandler) Analyze(ctx context.Context, input *AnalyzeInput) (*AnalyzeOutput, error) {
 	// Extract user context from JWT claims
 	uc := ExtractUserContext(ctx)
@@ -94,99 +80,69 @@ func (h *AnalyzeHandler) Analyze(ctx context.Context, input *AnalyzeInput) (*Ana
 		captureDebug = *input.Body.Debug
 	}
 
-	// Create job record to track this analysis
-	now := time.Now()
-	startedAt := now
-	job := &models.Job{
-		ID:           ulid.Make().String(),
-		UserID:       uc.UserID,
-		Type:         models.JobTypeAnalyze,
-		Status:       models.JobStatusRunning,
-		URL:          input.Body.URL,
-		CaptureDebug: captureDebug,
-		StartedAt:    &startedAt,
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}
-
-	// Best effort: create job record. Analysis proceeds regardless.
-	_ = h.jobRepo.Create(ctx, job)
-
 	// Determine depth with default of 0
 	depth := 0
 	if input.Body.Depth != nil {
 		depth = *input.Body.Depth
 	}
 
-	// Perform analysis
-	result, err := h.analyzerSvc.Analyze(ctx, uc.UserID, service.AnalyzeInput{
-		URL:       input.Body.URL,
-		Depth:     depth,
-		FetchMode: input.Body.FetchMode,
-	}, uc.Tier, uc.BYOKAllowed, uc.ModelsCustomAllowed, uc.ContentDynamicAllowed)
+	// Create executor
+	executor := service.NewAnalyzeExecutor(
+		h.analyzerSvc,
+		service.AnalyzeInput{
+			URL:       input.Body.URL,
+			Depth:     depth,
+			FetchMode: input.Body.FetchMode,
+		},
+		uc.UserID,
+		uc.Tier,
+		uc.BYOKAllowed,
+		uc.ModelsCustomAllowed,
+		uc.ContentDynamicAllowed,
+	)
 
-	if err != nil {
-		// Extract error info using shared utilities
-		errInfo := ExtractErrorInfo(err, uc.BYOKAllowed)
+	// Run job with full lifecycle management (creates job, executes, handles webhooks)
+	var jobID string
+	var result *service.AnalyzeOutput
 
-		// Update job with failure using shared utilities
-		_ = FailJobDirect(ctx, h.jobRepo, job, JobFailureInput{
-			ErrorMessage: errInfo.UserMessage,
+	if h.jobSvc != nil {
+		runResult, err := h.jobSvc.RunJob(ctx, executor, &service.RunJobOptions{
+			UserID:       uc.UserID,
+			Tier:         uc.Tier,
+			CaptureDebug: captureDebug, // Default true for analyze
 		})
+		if err != nil {
+			return nil, NewJobError(err, uc.BYOKAllowed)
+		}
 
-		return nil, NewJobError(err, uc.BYOKAllowed)
+		// Get job ID from the run result
+		jobID = runResult.JobID
+
+		// Extract the full AnalyzeOutput from the execution result (stored in Data field)
+		if runResult.Result != nil && runResult.Result.Data != nil {
+			if analyzeResult, ok := runResult.Result.Data.(*service.AnalyzeOutput); ok {
+				result = analyzeResult
+			}
+		}
 	}
 
-	// Update job with success using shared utilities
-	resultJSON, _ := json.Marshal(result)
-	_ = CompleteJobDirect(ctx, h.jobRepo, job, JobCompletionInput{
-		TokensInput:  result.TokenUsage.InputTokens,
-		TokensOutput: result.TokenUsage.OutputTokens,
-		CostUSD:      result.TokenUsage.CostUSD,
-		LLMCostUSD:   result.TokenUsage.LLMCostUSD,
-		IsBYOK:       result.TokenUsage.IsBYOK,
-		LLMProvider:  result.TokenUsage.LLMProvider,
-		LLMModel:     result.TokenUsage.LLMModel,
-		PageCount:    1,
-		ResultJSON:   string(resultJSON),
-	})
-
-	// Store debug capture if enabled and storage is available
-	if captureDebug && h.storageSvc != nil && h.storageSvc.IsEnabled() && result.DebugCapture != nil {
-		capture := service.LLMRequestCapture{
-			ID:        ulid.Make().String(),
+	// Fallback: direct analysis without job tracking (if jobSvc is nil or result extraction failed)
+	if result == nil {
+		directResult, directErr := h.analyzerSvc.Analyze(ctx, uc.UserID, service.AnalyzeInput{
 			URL:       input.Body.URL,
-			Timestamp: now,
-			Request: service.LLMRequestMeta{
-				Provider:    result.TokenUsage.LLMProvider,
-				Model:       result.TokenUsage.LLMModel,
-				FetchMode:   result.DebugCapture.FetchMode,
-				ContentSize: len(result.DebugCapture.RawContent),
-				PromptSize:  len(result.DebugCapture.Prompt),
-			},
-			Response: service.LLMResponseMeta{
-				InputTokens:  result.TokenUsage.InputTokens,
-				OutputTokens: result.TokenUsage.OutputTokens,
-				DurationMs:   result.DebugCapture.DurationMs,
-				Success:      true,
-			},
-			Prompt:     result.DebugCapture.Prompt,
-			RawContent: result.DebugCapture.RawContent,
+			Depth:     depth,
+			FetchMode: input.Body.FetchMode,
+		}, uc.Tier, uc.BYOKAllowed, uc.ModelsCustomAllowed, uc.ContentDynamicAllowed)
+		if directErr != nil {
+			return nil, NewJobError(directErr, uc.BYOKAllowed)
 		}
-
-		jobDebugCapture := &service.JobDebugCapture{
-			JobID:    job.ID,
-			Enabled:  true,
-			Captures: []service.LLMRequestCapture{capture},
-		}
-		// Best effort - don't fail the request if debug storage fails
-		_ = h.storageSvc.StoreDebugCapture(ctx, jobDebugCapture)
+		result = directResult
 	}
 
 	// Convert result to output format
 	output := &AnalyzeOutput{
 		Body: AnalyzeResponseBody{
-			JobID:                job.ID,
+			JobID:                jobID,
 			SiteSummary:          result.SiteSummary,
 			PageType:             string(result.PageType),
 			SuggestedSchema:      result.SuggestedSchema,

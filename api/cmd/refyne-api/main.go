@@ -345,7 +345,7 @@ func main() {
 	webhookHandler := handlers.NewWebhookHandler(repos.Webhook, repos.WebhookDelivery, webhookEncryptor)
 	extractionHandler := handlers.NewExtractionHandler(services.Extraction, services.Job)
 	crawlHandler := handlers.NewJobHandler(services.Job, services.Storage, services.LLMConfigResolver)
-	analyzeHandler := handlers.NewAnalyzeHandlerWithStorage(services.Analyzer, repos.Job, services.Storage)
+	analyzeHandler := handlers.NewAnalyzeHandler(services.Analyzer, services.Job)
 
 	// Build handlers struct for shared route registration
 	routeHandlers := &routes.Handlers{

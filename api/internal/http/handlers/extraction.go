@@ -125,6 +125,7 @@ type MetadataResponse struct {
 }
 
 // Extract handles single-page extraction.
+// Uses the unified JobService.RunJob for consistent job lifecycle management including webhooks.
 func (h *ExtractionHandler) Extract(ctx context.Context, input *ExtractInput) (*ExtractOutput, error) {
 	// Extract user context from JWT claims
 	uc := ExtractUserContext(ctx)
@@ -137,74 +138,18 @@ func (h *ExtractionHandler) Extract(ctx context.Context, input *ExtractInput) (*
 		return nil, huma.Error400BadRequest("'schema' is required - provide either a structured schema (YAML/JSON) or freeform extraction instructions")
 	}
 
-	// Convert input LLM config if provided
-	var llmCfg *service.LLMConfigInput
-	isBYOK := false
-	if input.Body.LLMConfig != nil {
-		llmCfg = &service.LLMConfigInput{
-			Provider: input.Body.LLMConfig.Provider,
-			APIKey:   input.Body.LLMConfig.APIKey,
-			BaseURL:  input.Body.LLMConfig.BaseURL,
-			Model:    input.Body.LLMConfig.Model,
-		}
-		// If user provides their own API key, it's BYOK
-		isBYOK = input.Body.LLMConfig.APIKey != ""
-	}
+	// Convert cleaner chain using shared utility
+	cleanerChain := ConvertCleanerChain(input.Body.CleanerChain)
 
-	// Create job record before extraction (for history/tracking)
-	var jobID string
-	if h.jobSvc != nil {
-		jobOutput, err := h.jobSvc.CreateExtractJob(ctx, uc.UserID, service.CreateExtractJobInput{
-			URL:       input.Body.URL,
-			Schema:    input.Body.Schema,
-			FetchMode: input.Body.FetchMode,
-			IsBYOK:    isBYOK,
-		})
-		if err != nil {
-			// Log but don't fail - job tracking is secondary to extraction
-			// Continue without job tracking
-		} else {
-			jobID = jobOutput.JobID
-		}
-	}
+	// Build extraction context
+	ectx := BuildExtractContext(uc, input.Body.LLMConfig)
 
-	// Use ExtractWithContext to pass tier and feature eligibility information
-	ectx := &service.ExtractContext{
-		UserID:                uc.UserID,
-		Tier:                  uc.Tier,
-		BYOKAllowed:           uc.BYOKAllowed,
-		ModelsCustomAllowed:   uc.ModelsCustomAllowed,
-		ModelsPremiumAllowed:  uc.ModelsPremiumAllowed,
-		ContentDynamicAllowed: uc.ContentDynamicAllowed,
-		LLMProvider:           uc.LLMProvider, // From S3 API key config (bypasses fallback chain)
-		LLMModel:              uc.LLMModel,    // From S3 API key config (bypasses fallback chain)
-	}
+	// Convert LLM config
+	llmCfg := ConvertLLMConfig(input.Body.LLMConfig)
+	isBYOK := IsBYOKFromLLMConfig(input.Body.LLMConfig)
 
-	// Convert cleaner chain from handler input to service input
-	var cleanerChain []service.CleanerConfig
-	if len(input.Body.CleanerChain) > 0 {
-		cleanerChain = make([]service.CleanerConfig, len(input.Body.CleanerChain))
-		for i, c := range input.Body.CleanerChain {
-			cleanerChain[i] = service.CleanerConfig{
-				Name: c.Name,
-			}
-			if c.Options != nil {
-				cleanerChain[i].Options = &service.CleanerOptions{
-					Output:             c.Options.Output,
-					BaseURL:            c.Options.BaseURL,
-					Preset:             c.Options.Preset,
-					RemoveSelectors:    c.Options.RemoveSelectors,
-					KeepSelectors:      c.Options.KeepSelectors,
-					IncludeFrontmatter: c.Options.IncludeFrontmatter,
-					ExtractImages:      c.Options.ExtractImages,
-					ExtractHeadings:    c.Options.ExtractHeadings,
-					ResolveURLs:        c.Options.ResolveURLs,
-				}
-			}
-		}
-	}
-
-	result, err := h.extractionSvc.ExtractWithContext(ctx, uc.UserID, service.ExtractInput{
+	// Create executor
+	executor := service.NewExtractExecutor(h.extractionSvc, service.ExtractInput{
 		URL:          input.Body.URL,
 		Schema:       input.Body.Schema,
 		FetchMode:    input.Body.FetchMode,
@@ -212,31 +157,49 @@ func (h *ExtractionHandler) Extract(ctx context.Context, input *ExtractInput) (*
 		CleanerChain: cleanerChain,
 	}, ectx)
 
-	// Update job record with result or error
-	if h.jobSvc != nil && jobID != "" {
+	// Build ephemeral webhook config if provided
+	ephemeralWebhook := BuildEphemeralWebhook(input.Body.Webhook, input.Body.WebhookURL)
+
+	// Run job with full lifecycle management (creates job, executes, handles webhooks)
+	var jobID string
+	var result *service.ExtractOutput
+
+	if h.jobSvc != nil {
+		runResult, err := h.jobSvc.RunJob(ctx, executor, &service.RunJobOptions{
+			UserID:           uc.UserID,
+			Tier:             uc.Tier,
+			CaptureDebug:     false, // Default for extract
+			EphemeralWebhook: ephemeralWebhook,
+			WebhookID:        input.Body.WebhookID,
+		})
 		if err != nil {
-			// Record the failure using shared error utilities
-			errInfo := ExtractErrorInfo(err, isBYOK)
-			_ = FailExtractJobViaService(ctx, h.jobSvc, jobID, JobFailureFromErrorInfo(errInfo))
-		} else {
-			// Record success using shared job utilities
-			resultJSON, _ := json.Marshal(result.Data)
-			_ = CompleteExtractJobViaService(ctx, h.jobSvc, jobID, JobCompletionInput{
-				ResultJSON:   string(resultJSON),
-				PageCount:    1,
-				TokensInput:  result.Usage.InputTokens,
-				TokensOutput: result.Usage.OutputTokens,
-				CostUSD:      result.Usage.CostUSD,
-				LLMCostUSD:   result.Usage.LLMCostUSD,
-				LLMProvider:  result.Metadata.Provider,
-				LLMModel:     result.Metadata.Model,
-				IsBYOK:       result.Usage.IsBYOK,
-			})
+			return nil, NewJobError(err, isBYOK)
+		}
+
+		// Get job ID from the run result
+		jobID = runResult.JobID
+
+		// Extract the full ExtractOutput from the execution result (stored in Data field)
+		if runResult.Result != nil && runResult.Result.Data != nil {
+			if extractResult, ok := runResult.Result.Data.(*service.ExtractOutput); ok {
+				result = extractResult
+			}
 		}
 	}
 
-	if err != nil {
-		return nil, NewJobError(err, isBYOK)
+	// Fallback: direct extraction without job tracking (if jobSvc is nil or result extraction failed)
+	if result == nil {
+		directResult, directErr := h.extractionSvc.ExtractWithContext(ctx, uc.UserID, service.ExtractInput{
+			URL:          input.Body.URL,
+			Schema:       input.Body.Schema,
+			FetchMode:    input.Body.FetchMode,
+			LLMConfig:    llmCfg,
+			CleanerChain: cleanerChain,
+		}, ectx)
+		if directErr != nil {
+			return nil, NewJobError(directErr, isBYOK)
+		}
+		result = directResult
 	}
 
 	return &ExtractOutput{

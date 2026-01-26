@@ -19,6 +19,7 @@ type JobService struct {
 	cfg        *config.Config
 	repos      *repository.Repositories
 	storageSvc *StorageService
+	webhookSvc *WebhookService
 	logger     *slog.Logger
 }
 
@@ -30,6 +31,271 @@ func NewJobService(cfg *config.Config, repos *repository.Repositories, storageSv
 		storageSvc: storageSvc,
 		logger:     logger,
 	}
+}
+
+// SetWebhookService sets the webhook service for job completion notifications.
+// This allows for late binding to avoid circular dependencies.
+func (s *JobService) SetWebhookService(webhookSvc *WebhookService) {
+	s.webhookSvc = webhookSvc
+}
+
+// RunJobResult contains the result of running a job via RunJob.
+type RunJobResult struct {
+	JobID  string              // The job ID (ULID)
+	Result *JobExecutionResult // The execution result
+}
+
+// RunJob executes a job with full lifecycle management.
+// This is the single entry point for synchronous job types (extract, analyze).
+// It handles: job record creation, execution, completion/failure, webhooks, and storage.
+// Returns the job ID and result on success, or an error on failure.
+func (s *JobService) RunJob(ctx context.Context, executor JobExecutor, opts *RunJobOptions) (*RunJobResult, error) {
+	// 1. Create job record
+	job, err := s.createJobRecord(ctx, executor, opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create job record: %w", err)
+	}
+
+	// 2. Mark job as running
+	if err := s.markJobRunning(ctx, job); err != nil {
+		s.logger.Error("failed to mark job as running", "job_id", job.ID, "error", err)
+		// Continue anyway - the job record exists
+	}
+
+	// 3. Execute the job
+	result, execErr := executor.Execute(ctx)
+
+	// 4. Handle completion or failure
+	if execErr != nil {
+		s.handleJobFailure(ctx, job, executor, execErr, opts)
+		return &RunJobResult{JobID: job.ID}, execErr
+	}
+
+	// 5. Handle success
+	s.handleJobSuccess(ctx, job, executor, result, opts)
+
+	return &RunJobResult{
+		JobID:  job.ID,
+		Result: result,
+	}, nil
+}
+
+// createJobRecord creates a job record for tracking.
+func (s *JobService) createJobRecord(ctx context.Context, executor JobExecutor, opts *RunJobOptions) (*models.Job, error) {
+	// If an existing job ID is provided, retrieve it
+	if opts.JobID != "" {
+		job, err := s.repos.Job.GetByID(ctx, opts.JobID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get existing job: %w", err)
+		}
+		if job == nil {
+			return nil, fmt.Errorf("job not found: %s", opts.JobID)
+		}
+		return job, nil
+	}
+
+	// Create new job record
+	now := time.Now()
+	job := &models.Job{
+		ID:           ulid.Make().String(),
+		UserID:       opts.UserID,
+		Type:         executor.JobType(),
+		Status:       models.JobStatusPending,
+		URL:          executor.GetURL(),
+		SchemaJSON:   string(executor.GetSchema()),
+		Tier:         opts.Tier,
+		IsBYOK:       executor.IsBYOK(),
+		CaptureDebug: opts.CaptureDebug,
+		PageCount:    1, // Default for single-page jobs
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+
+	if err := s.repos.Job.Create(ctx, job); err != nil {
+		return nil, fmt.Errorf("failed to create job: %w", err)
+	}
+
+	s.logger.Info("created job record",
+		"job_id", job.ID,
+		"job_type", job.Type,
+		"user_id", opts.UserID,
+		"url", job.URL,
+	)
+
+	return job, nil
+}
+
+// markJobRunning marks a job as running.
+func (s *JobService) markJobRunning(ctx context.Context, job *models.Job) error {
+	now := time.Now()
+	job.Status = models.JobStatusRunning
+	job.StartedAt = &now
+	job.UpdatedAt = now
+	return s.repos.Job.Update(ctx, job)
+}
+
+// handleJobSuccess handles successful job completion including webhooks and storage.
+func (s *JobService) handleJobSuccess(ctx context.Context, job *models.Job, executor JobExecutor, result *JobExecutionResult, opts *RunJobOptions) {
+	// Update job record with results
+	now := time.Now()
+	job.Status = models.JobStatusCompleted
+	job.PageCount = result.PageCount
+	job.TokenUsageInput = result.TokensInput
+	job.TokenUsageOutput = result.TokensOutput
+	job.CostUSD = result.CostUSD
+	job.LLMCostUSD = result.LLMCostUSD
+	job.LLMProvider = result.LLMProvider
+	job.LLMModel = result.LLMModel
+	job.IsBYOK = result.IsBYOK
+	job.CompletedAt = &now
+	job.UpdatedAt = now
+
+	if err := s.repos.Job.Update(ctx, job); err != nil {
+		s.logger.Error("failed to update job record", "job_id", job.ID, "error", err)
+	}
+
+	// Store results to S3/Tigris
+	if s.storageSvc != nil && s.storageSvc.IsEnabled() && result.ResultJSON != "" {
+		jobResults := &JobResults{
+			JobID:       job.ID,
+			UserID:      job.UserID,
+			Status:      string(job.Status),
+			TotalPages:  result.PageCount,
+			CompletedAt: now,
+			Results: []JobResultData{
+				{
+					ID:        job.URL,
+					URL:       job.URL,
+					Data:      json.RawMessage(result.ResultJSON),
+					CreatedAt: now,
+				},
+			},
+		}
+
+		if err := s.storageSvc.StoreJobResults(ctx, jobResults); err != nil {
+			s.logger.Error("failed to store job results to S3",
+				"job_id", job.ID,
+				"error", err,
+			)
+			// Don't fail - results are still tracked in the job record
+		}
+	}
+
+	// Store debug capture if enabled
+	if opts.CaptureDebug && result.DebugCapture != nil && s.storageSvc != nil && s.storageSvc.IsEnabled() {
+		capture := &JobDebugCapture{
+			JobID:   job.ID,
+			Enabled: true,
+			Captures: []LLMRequestCapture{
+				{
+					ID:        ulid.Make().String(),
+					URL:       result.DebugCapture.URL,
+					Timestamp: now,
+					JobType:   string(executor.JobType()),
+					Request: LLMRequestMeta{
+						Provider:    result.LLMProvider,
+						Model:       result.LLMModel,
+						FetchMode:   result.DebugCapture.FetchMode,
+						ContentSize: len(result.DebugCapture.RawContent),
+						PromptSize:  len(result.DebugCapture.Prompt),
+					},
+					Response: LLMResponseMeta{
+						InputTokens:  result.TokensInput,
+						OutputTokens: result.TokensOutput,
+						DurationMs:   result.DebugCapture.DurationMs,
+						Success:      true,
+					},
+					Prompt:     result.DebugCapture.Prompt,
+					RawContent: result.DebugCapture.RawContent,
+				},
+			},
+		}
+
+		if err := s.storageSvc.StoreDebugCapture(ctx, capture); err != nil {
+			s.logger.Error("failed to store debug capture",
+				"job_id", job.ID,
+				"error", err,
+			)
+		}
+	}
+
+	// Send webhooks - ALWAYS for all job types
+	s.sendWebhooksForJob(ctx, job, string(models.WebhookEventJobCompleted), map[string]any{
+		"job_id":     job.ID,
+		"job_type":   string(executor.JobType()),
+		"status":     "completed",
+		"url":        job.URL,
+		"page_count": result.PageCount,
+		"cost_usd":   result.CostUSD,
+		"data":       result.WebhookData,
+	}, opts.EphemeralWebhook)
+
+	s.logger.Info("job completed successfully",
+		"job_id", job.ID,
+		"job_type", executor.JobType(),
+		"provider", result.LLMProvider,
+		"model", result.LLMModel,
+		"cost_usd", result.CostUSD,
+	)
+}
+
+// handleJobFailure handles job failure including webhooks.
+func (s *JobService) handleJobFailure(ctx context.Context, job *models.Job, executor JobExecutor, err error, opts *RunJobOptions) {
+	// Extract and classify error
+	errInfo := ClassifyError(err, executor.IsBYOK())
+
+	// Update job record
+	now := time.Now()
+	job.Status = models.JobStatusFailed
+	job.ErrorMessage = errInfo.UserMessage
+	job.ErrorDetails = errInfo.Details
+	job.ErrorCategory = errInfo.Category
+	job.LLMProvider = errInfo.Provider
+	job.LLMModel = errInfo.Model
+	job.CompletedAt = &now
+	job.UpdatedAt = now
+
+	if updateErr := s.repos.Job.Update(ctx, job); updateErr != nil {
+		s.logger.Error("failed to update job record for failure",
+			"job_id", job.ID,
+			"error", updateErr,
+		)
+	}
+
+	// Send webhooks - ALWAYS for all job types
+	s.sendWebhooksForJob(ctx, job, string(models.WebhookEventJobFailed), map[string]any{
+		"job_id":   job.ID,
+		"job_type": string(executor.JobType()),
+		"status":   "failed",
+		"url":      job.URL,
+		"error":    errInfo.UserMessage,
+		"category": errInfo.Category,
+	}, opts.EphemeralWebhook)
+
+	s.logger.Warn("job failed",
+		"job_id", job.ID,
+		"job_type", executor.JobType(),
+		"error_category", errInfo.Category,
+		"error_message", errInfo.UserMessage,
+	)
+}
+
+// sendWebhooksForJob sends webhooks for a job event.
+// Handles both ephemeral (per-request) and persistent (saved) webhooks.
+func (s *JobService) sendWebhooksForJob(ctx context.Context, job *models.Job, eventType string, data map[string]any, ephemeral *WebhookConfig) {
+	if s.webhookSvc == nil {
+		return
+	}
+
+	s.webhookSvc.SendForJob(ctx, job.UserID, eventType, job.ID, data, ephemeral)
+}
+
+// GetJobID returns the job ID from a RunJobOptions, or empty string if not set.
+func (opts *RunJobOptions) GetJobID() string {
+	if opts == nil {
+		return ""
+	}
+	return opts.JobID
 }
 
 // CrawlOptions represents crawl job options.

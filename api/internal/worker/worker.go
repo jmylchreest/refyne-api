@@ -228,7 +228,7 @@ func (w *Worker) processExtractJob(ctx context.Context, job *models.Job) {
 		FetchMode: "auto",
 	})
 	if err != nil {
-		w.failJob(ctx, job, err.Error())
+		w.failJobWithError(ctx, job, err, job.IsBYOK)
 		return
 	}
 
@@ -294,9 +294,12 @@ func (w *Worker) processExtractJob(ctx context.Context, job *models.Job) {
 		}
 	}
 	w.webhookSvc.SendForJob(ctx, job.UserID, string(models.WebhookEventJobCompleted), job.ID, map[string]any{
-		"job_id": job.ID,
-		"status": "completed",
-		"data":   result.Data,
+		"job_id":     job.ID,
+		"job_type":   string(job.Type),
+		"status":     "completed",
+		"page_count": 1,
+		"data":       result.Data,
+		"cost_usd":   result.Usage.CostUSD,
 	}, ephemeralConfig)
 
 	w.logger.Info("completed job", "job_id", job.ID)
@@ -515,7 +518,7 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 		OnURLsQueued: urlsQueuedCallback,
 	})
 	if err != nil {
-		w.failJob(ctx, job, err.Error())
+		w.failJobWithError(ctx, job, err, job.IsBYOK)
 		return
 	}
 
@@ -610,24 +613,34 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 		}
 	}
 	w.webhookSvc.SendForJob(ctx, job.UserID, string(models.WebhookEventJobCompleted), job.ID, map[string]any{
-		"job_id":       job.ID,
-		"status":       "completed",
-		"page_count":   result.PageCount,
-		"results":      result.Results,
-		"cost_usd":     result.TotalCostUSD,
+		"job_id":     job.ID,
+		"job_type":   string(job.Type),
+		"status":     "completed",
+		"page_count": result.PageCount,
+		"results":    result.Results,
+		"cost_usd":   result.TotalCostUSD,
 	}, ephemeralConfig)
 
 	w.logger.Info("completed crawl job", "job_id", job.ID, "page_count", result.PageCount)
 }
 
 func (w *Worker) failJob(ctx context.Context, job *models.Job, errMsg string) {
+	w.failJobWithError(ctx, job, fmt.Errorf("%s", errMsg), job.IsBYOK)
+}
+
+func (w *Worker) failJobWithError(ctx context.Context, job *models.Job, err error, isBYOK bool) {
 	now := time.Now()
+
+	// Use shared error classification for consistent error handling
+	errInfo := service.ClassifyError(err, isBYOK)
+
 	job.Status = models.JobStatusFailed
-	job.ErrorMessage = errMsg
+	job.ErrorMessage = errInfo.UserMessage
+	job.ErrorCategory = errInfo.Category
 	job.CompletedAt = &now
 
-	if err := w.jobRepo.Update(ctx, job); err != nil {
-		w.logger.Error("failed to update job", "job_id", job.ID, "error", err)
+	if updateErr := w.jobRepo.Update(ctx, job); updateErr != nil {
+		w.logger.Error("failed to update job", "job_id", job.ID, "error", updateErr)
 	}
 
 	// Send webhooks (both ephemeral if configured, and user's saved webhooks)
@@ -639,10 +652,12 @@ func (w *Worker) failJob(ctx context.Context, job *models.Job, errMsg string) {
 		}
 	}
 	w.webhookSvc.SendForJob(ctx, job.UserID, string(models.WebhookEventJobFailed), job.ID, map[string]any{
-		"job_id": job.ID,
-		"status": "failed",
-		"error":  errMsg,
+		"job_id":   job.ID,
+		"job_type": string(job.Type),
+		"status":   "failed",
+		"error":    errInfo.UserMessage,
+		"category": errInfo.Category,
 	}, ephemeralConfig)
 
-	w.logger.Error("job failed", "job_id", job.ID, "error", errMsg)
+	w.logger.Error("job failed", "job_id", job.ID, "error", errInfo.UserMessage, "category", errInfo.Category)
 }

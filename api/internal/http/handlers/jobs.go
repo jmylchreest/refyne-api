@@ -191,29 +191,8 @@ func (h *JobHandler) CreateCrawlJob(ctx context.Context, input *CreateCrawlJobIn
 		return nil, huma.Error500InternalServerError("failed to resolve LLM configuration")
 	}
 
-	// Convert cleaner chain from handler input to service input
-	var cleanerChain []service.CleanerConfig
-	if len(input.Body.CleanerChain) > 0 {
-		cleanerChain = make([]service.CleanerConfig, len(input.Body.CleanerChain))
-		for i, c := range input.Body.CleanerChain {
-			cleanerChain[i] = service.CleanerConfig{
-				Name: c.Name,
-			}
-			if c.Options != nil {
-				cleanerChain[i].Options = &service.CleanerOptions{
-					Output:             c.Options.Output,
-					BaseURL:            c.Options.BaseURL,
-					Preset:             c.Options.Preset,
-					RemoveSelectors:    c.Options.RemoveSelectors,
-					KeepSelectors:      c.Options.KeepSelectors,
-					IncludeFrontmatter: c.Options.IncludeFrontmatter,
-					ExtractImages:      c.Options.ExtractImages,
-					ExtractHeadings:    c.Options.ExtractHeadings,
-					ResolveURLs:        c.Options.ResolveURLs,
-				}
-			}
-		}
-	}
+	// Convert cleaner chain from handler input to service input using shared utility
+	cleanerChain := ConvertJobCleanerChain(input.Body.CleanerChain)
 
 	result, err := h.jobSvc.CreateCrawlJob(ctx, uc.UserID, service.CreateCrawlJobInput{
 		URL:    input.Body.URL,
