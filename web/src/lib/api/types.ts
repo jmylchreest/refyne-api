@@ -190,7 +190,6 @@ export interface LLMConfigInput {
 
 export interface ServiceKey {
   provider: string;
-  default_model: string;
   is_enabled: boolean;
   has_key: boolean;
   created_at: string;
@@ -200,7 +199,6 @@ export interface ServiceKey {
 export interface ServiceKeyInput {
   provider: 'openrouter' | 'anthropic' | 'openai';
   api_key: string;
-  default_model: string;
   is_enabled: boolean;
 }
 

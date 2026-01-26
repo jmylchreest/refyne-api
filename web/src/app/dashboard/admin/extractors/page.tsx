@@ -23,7 +23,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { ModelSelector } from '@/components/model-selector';
 import { FallbackChainEditor, ChainEntry, SavedChainEntry } from '@/components/fallback-chain-editor';
 import { toast } from 'sonner';
 
@@ -32,13 +31,6 @@ const PROVIDER_LABELS: Record<string, string> = {
   anthropic: 'Anthropic',
   openai: 'OpenAI',
   ollama: 'Ollama',
-};
-
-const DEFAULT_MODELS: Record<string, string> = {
-  openrouter: 'google/gemini-2.0-flash-001',
-  anthropic: 'claude-sonnet-4-5-20250514',
-  openai: 'gpt-4o-mini',
-  ollama: 'llama3.2',
 };
 
 type ModelStatusMap = Map<string, ModelValidationResult>;
@@ -155,7 +147,6 @@ export default function ExtractorsPage() {
       await upsertServiceKey({
         provider,
         api_key: formData.api_key || '', // Empty string preserves existing key on backend
-        default_model: formData.default_model || DEFAULT_MODELS[provider],
         is_enabled: formData.is_enabled ?? true,
       });
       toast.success(`${PROVIDER_LABELS[provider]} key saved`);
@@ -185,7 +176,6 @@ export default function ExtractorsPage() {
     const existing = keys.find(k => k.provider === provider);
     setEditingProvider(provider);
     setFormData({
-      default_model: existing?.default_model || DEFAULT_MODELS[provider],
       is_enabled: existing?.is_enabled ?? true,
       api_key: '',
     });
@@ -337,7 +327,6 @@ export default function ExtractorsPage() {
 
                 {key && !isEditing && (
                   <div className="text-sm text-zinc-500 space-y-1">
-                    <p>Model: <code className="bg-zinc-100 dark:bg-zinc-800 px-1 rounded">{key.default_model}</code></p>
                     <p>Updated: {new Date(key.updated_at).toLocaleString()}</p>
                   </div>
                 )}
@@ -368,14 +357,6 @@ export default function ExtractorsPage() {
                           )}
                         </button>
                       </div>
-                    </div>
-                    <div>
-                      <Label htmlFor={`${provider}-model`}>Default Model</Label>
-                      <ModelSelector
-                        provider={provider}
-                        value={formData.default_model || DEFAULT_MODELS[provider]}
-                        onValueChange={(model) => setFormData({ ...formData, default_model: model })}
-                      />
                     </div>
                     <div className="flex items-center gap-2">
                       <input

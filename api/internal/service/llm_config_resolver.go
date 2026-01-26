@@ -569,7 +569,14 @@ func (r *LLMConfigResolver) GetDefaultConfigsForTier(ctx context.Context, tier s
 
 		if err == nil && len(chain) > 0 {
 			serviceKeys := r.GetServiceKeys(ctx)
+			r.logger.Debug("service keys status for fallback chain",
+				"has_openrouter", serviceKeys.OpenRouterKey != "",
+				"has_anthropic", serviceKeys.AnthropicKey != "",
+				"has_openai", serviceKeys.OpenAIKey != "",
+				"chain_entries", len(chain),
+			)
 			configs := make([]*LLMConfigInput, 0, len(chain))
+			skippedNoKey := 0
 
 			for _, entry := range chain {
 				config := &LLMConfigInput{
@@ -590,11 +597,27 @@ func (r *LLMConfigResolver) GetDefaultConfigsForTier(ctx context.Context, tier s
 
 				if config.APIKey != "" || entry.Provider == llm.ProviderOllama {
 					configs = append(configs, config)
+				} else {
+					skippedNoKey++
+					r.logger.Debug("skipping fallback chain entry - no service key configured",
+						"provider", entry.Provider,
+						"model", entry.Model,
+					)
 				}
 			}
 
 			if len(configs) > 0 {
 				return configs
+			}
+
+			// Chain exists but no usable configs (service keys not configured)
+			if skippedNoKey > 0 {
+				r.logger.Warn("fallback chain exists but no service keys configured",
+					"tier", normalizedTier,
+					"chain_entries", len(chain),
+					"skipped_no_key", skippedNoKey,
+				)
+				return nil
 			}
 		}
 	}

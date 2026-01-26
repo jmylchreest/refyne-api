@@ -29,14 +29,13 @@ func (r *SQLiteServiceKeyRepository) Upsert(ctx context.Context, key *models.Ser
 	}
 
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO service_keys (id, provider, api_key_encrypted, default_model, is_enabled, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO service_keys (id, provider, api_key_encrypted, is_enabled, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(provider) DO UPDATE SET
 			api_key_encrypted = excluded.api_key_encrypted,
-			default_model = excluded.default_model,
 			is_enabled = excluded.is_enabled,
 			updated_at = excluded.updated_at
-	`, key.ID, key.Provider, key.APIKeyEncrypted, key.DefaultModel, key.IsEnabled, now, now)
+	`, key.ID, key.Provider, key.APIKeyEncrypted, key.IsEnabled, now, now)
 
 	return err
 }
@@ -44,7 +43,7 @@ func (r *SQLiteServiceKeyRepository) Upsert(ctx context.Context, key *models.Ser
 // GetByProvider retrieves a service key by provider.
 func (r *SQLiteServiceKeyRepository) GetByProvider(ctx context.Context, provider string) (*models.ServiceKey, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, provider, api_key_encrypted, default_model, is_enabled, created_at, updated_at
+		SELECT id, provider, api_key_encrypted, is_enabled, created_at, updated_at
 		FROM service_keys
 		WHERE provider = ?
 	`, provider)
@@ -55,7 +54,7 @@ func (r *SQLiteServiceKeyRepository) GetByProvider(ctx context.Context, provider
 // GetAll retrieves all service keys.
 func (r *SQLiteServiceKeyRepository) GetAll(ctx context.Context) ([]*models.ServiceKey, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, provider, api_key_encrypted, default_model, is_enabled, created_at, updated_at
+		SELECT id, provider, api_key_encrypted, is_enabled, created_at, updated_at
 		FROM service_keys
 		ORDER BY provider
 	`)
@@ -70,7 +69,7 @@ func (r *SQLiteServiceKeyRepository) GetAll(ctx context.Context) ([]*models.Serv
 // GetEnabled retrieves all enabled service keys.
 func (r *SQLiteServiceKeyRepository) GetEnabled(ctx context.Context) ([]*models.ServiceKey, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, provider, api_key_encrypted, default_model, is_enabled, created_at, updated_at
+		SELECT id, provider, api_key_encrypted, is_enabled, created_at, updated_at
 		FROM service_keys
 		WHERE is_enabled = 1
 		ORDER BY provider
@@ -98,7 +97,6 @@ func (r *SQLiteServiceKeyRepository) scanKey(row *sql.Row) (*models.ServiceKey, 
 		&key.ID,
 		&key.Provider,
 		&key.APIKeyEncrypted,
-		&key.DefaultModel,
 		&key.IsEnabled,
 		&createdAt,
 		&updatedAt,
@@ -128,7 +126,6 @@ func (r *SQLiteServiceKeyRepository) scanKeys(rows *sql.Rows) ([]*models.Service
 			&key.ID,
 			&key.Provider,
 			&key.APIKeyEncrypted,
-			&key.DefaultModel,
 			&key.IsEnabled,
 			&createdAt,
 			&updatedAt,

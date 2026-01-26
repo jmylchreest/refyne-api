@@ -100,7 +100,6 @@ func (s *AdminService) UpsertServiceKey(ctx context.Context, input ServiceKeyInp
 	key := &models.ServiceKey{
 		Provider:        input.Provider,
 		APIKeyEncrypted: encryptedKey,
-		DefaultModel:    "", // Deprecated - models come from fallback chain
 		IsEnabled:       input.IsEnabled,
 	}
 
