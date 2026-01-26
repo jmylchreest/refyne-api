@@ -147,6 +147,10 @@ export default function WebhooksPage() {
       toast.error('Please enter a URL for the webhook');
       return;
     }
+    if (formData.events.length === 0) {
+      toast.error('Please select at least one event type');
+      return;
+    }
 
     setIsSaving(true);
     try {
@@ -426,6 +430,9 @@ export default function WebhooksPage() {
                 onValueChange={(value) => {
                   if (value === '*') {
                     setFormData(prev => ({ ...prev, events: ['*'] }));
+                  } else if (value === 'custom') {
+                    // Switch to custom mode - start with no events selected
+                    setFormData(prev => ({ ...prev, events: [] }));
                   }
                 }}
               >
