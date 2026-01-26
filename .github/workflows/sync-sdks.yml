@@ -4,11 +4,11 @@
 name: Sync SDKs
 
 on:
-  push:
+  # Trigger after deploy workflow completes successfully
+  workflow_run:
+    workflows: ["Deploy"]
+    types: [completed]
     branches: [main]
-    paths:
-      - 'api/cmd/refyne-api/**'
-      - 'api/internal/http/**'
   workflow_dispatch:
     inputs:
       sdk:
@@ -19,6 +19,8 @@ on:
 jobs:
   prepare:
     runs-on: ubuntu-latest
+    # Only run if deploy succeeded or if manually triggered
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     outputs:
       api_version: ${{ steps.version.outputs.version }}
       api_major: ${{ steps.version.outputs.major }}
@@ -70,7 +72,7 @@ jobs:
               echo "should_run=false" >> $GITHUB_OUTPUT
             fi
           else
-            # Push event - trigger all
+            # workflow_run event (deploy completed) - trigger all
             echo "should_run=true" >> $GITHUB_OUTPUT
           fi
 

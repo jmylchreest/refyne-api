@@ -2,10 +2,18 @@ package mw
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"runtime/debug"
 	"strings"
 	"time"
 )
+
+// panicWithStack captures a panic value along with its stack trace.
+type panicWithStack struct {
+	value interface{}
+	stack []byte
+}
 
 // TimeoutConfig defines timeout behavior for different path patterns.
 type TimeoutConfig struct {
@@ -49,12 +57,16 @@ func Timeout(cfg TimeoutConfig) func(http.Handler) http.Handler {
 
 			// Create a channel to signal completion
 			done := make(chan struct{})
-			panicChan := make(chan interface{}, 1)
+			panicChan := make(chan *panicWithStack, 1)
 
 			go func() {
 				defer func() {
 					if p := recover(); p != nil {
-						panicChan <- p
+						// Capture the stack trace at the point of panic
+						panicChan <- &panicWithStack{
+							value: p,
+							stack: debug.Stack(),
+						}
 					}
 				}()
 				next.ServeHTTP(w, r.WithContext(ctx))
@@ -65,7 +77,8 @@ func Timeout(cfg TimeoutConfig) func(http.Handler) http.Handler {
 			case <-done:
 				return
 			case p := <-panicChan:
-				panic(p)
+				// Re-panic with the original value and stack trace for proper error reporting
+				panic(fmt.Sprintf("%v\n\nOriginal stack trace:\n%s", p.value, p.stack))
 			case <-ctx.Done():
 				if ctx.Err() == context.DeadlineExceeded {
 					w.WriteHeader(http.StatusGatewayTimeout)
@@ -75,4 +88,3 @@ func Timeout(cfg TimeoutConfig) func(http.Handler) http.Handler {
 		})
 	}
 }
-

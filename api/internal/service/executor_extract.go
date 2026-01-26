@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/jmylchreest/refyne-api/internal/models"
@@ -34,6 +35,11 @@ func NewExtractExecutor(extractionSvc *ExtractionService, input ExtractInput, ec
 // Execute runs the extraction and returns the result.
 func (e *ExtractExecutor) Execute(ctx context.Context) (*JobExecutionResult, error) {
 	startTime := time.Now()
+
+	// Defensive nil check for extraction context
+	if e.ectx == nil {
+		return nil, fmt.Errorf("extraction context is nil")
+	}
 
 	result, err := e.extractionSvc.ExtractWithContext(ctx, e.ectx.UserID, e.input, e.ectx)
 	if err != nil {
