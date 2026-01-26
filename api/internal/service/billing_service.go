@@ -81,7 +81,8 @@ func (s *BillingService) DeductUsage(ctx context.Context, userID string, amountU
 
 	// Get current balance
 	balance, err := s.repos.Balance.Get(ctx, userID)
-	if err != nil {
+	if err != nil || balance == nil {
+		// No existing balance record - initialize with zero balance
 		balance = &models.UserBalance{
 			UserID:    userID,
 			UpdatedAt: time.Now(),
