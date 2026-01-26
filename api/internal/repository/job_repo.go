@@ -158,13 +158,14 @@ func (r *SQLiteJobRepository) Update(ctx context.Context, job *models.Job) error
 }
 
 func (r *SQLiteJobRepository) GetPending(ctx context.Context, limit int) ([]*models.Job, error) {
+	// Only return crawl jobs - extract/analyze are synchronous and shouldn't be queued
 	query := `
 		SELECT id, user_id, type, status, url, schema_json, crawl_options_json,
 			result_json, error_message, error_details, error_category,
 			llm_configs_json, tier, is_byok, llm_provider, llm_model, discovery_method, urls_queued, page_count,
 			token_usage_input, token_usage_output, cost_usd, llm_cost_usd, capture_debug, webhook_url, webhook_status,
 			webhook_attempts, started_at, completed_at, created_at, updated_at
-		FROM jobs WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?
+		FROM jobs WHERE status = 'pending' AND type = 'crawl' ORDER BY created_at ASC LIMIT ?
 	`
 	rows, err := r.db.QueryContext(ctx, query, limit)
 	if err != nil {
@@ -292,6 +293,8 @@ func (r *SQLiteJobRepository) ClaimPendingWithLimits(ctx context.Context, tierLi
 		WHERE id = (
 			SELECT p.id FROM jobs p
 			WHERE p.status = 'pending'
+			-- Only claim crawl jobs (extract/analyze are synchronous)
+			AND p.type = 'crawl'
 			-- Per-user concurrent job limit check
 			AND (
 				SELECT COUNT(*) FROM jobs r
