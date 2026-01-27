@@ -297,53 +297,6 @@ func TestResolveRelativeURLs_NilAndEmpty(t *testing.T) {
 }
 
 // ========================================
-// BuildCrawlOptions Tests
-// ========================================
-
-func TestBuildCrawlOptions(t *testing.T) {
-	svc := &ExtractionService{
-		logger: slog.Default(),
-	}
-
-	// Test with empty options
-	opts := svc.buildCrawlOptions(CrawlOptions{})
-	if len(opts) != 0 {
-		t.Errorf("expected 0 options for empty CrawlOptions, got %d", len(opts))
-	}
-
-	// Test with some options set
-	opts = svc.buildCrawlOptions(CrawlOptions{
-		FollowSelector: "a.next",
-		MaxDepth:       3,
-		MaxPages:       10,
-		Delay:          "1s",
-		Concurrency:    2,
-		SameDomainOnly: true,
-	})
-
-	// We expect options to be added (can't easily inspect refyne.CrawlOption values)
-	if len(opts) == 0 {
-		t.Error("expected options to be added")
-	}
-}
-
-func TestBuildCrawlOptions_InvalidDelay(t *testing.T) {
-	svc := &ExtractionService{
-		logger: slog.Default(),
-	}
-
-	// Invalid delay should be ignored (not cause panic)
-	opts := svc.buildCrawlOptions(CrawlOptions{
-		Delay: "invalid",
-	})
-
-	// Should still work, just with no delay option added
-	if opts == nil {
-		t.Error("expected non-nil options slice")
-	}
-}
-
-// ========================================
 // ExtractContext Tests
 // ========================================
 
@@ -400,21 +353,8 @@ func TestLLMConfigInput_Fields(t *testing.T) {
 }
 
 // ========================================
-// Default Config Resolution Tests
+// Strict Mode Tests
 // ========================================
-
-func TestGetDefaultLLMConfig_NoResolver(t *testing.T) {
-	svc := &ExtractionService{
-		logger: slog.Default(),
-	}
-	ctx := context.Background()
-
-	// Without a resolver, should return nil (no hardcoded fallback)
-	cfg := svc.getDefaultLLMConfig(ctx)
-	if cfg != nil {
-		t.Errorf("expected nil config without resolver, got %+v", cfg)
-	}
-}
 
 func TestGetStrictMode_NoResolver(t *testing.T) {
 	svc := &ExtractionService{

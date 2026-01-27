@@ -2,10 +2,7 @@ package service
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
+	"errors"
 	"strings"
 	"time"
 
@@ -16,6 +13,7 @@ import (
 
 // extractWithPrompt performs extraction using natural language instructions instead of a schema.
 // This allows users to describe what they want extracted in plain text.
+// Uses PromptPageExtractor which handles dynamic retry for bot protection and insufficient content.
 func (s *ExtractionService) extractWithPrompt(ctx context.Context, userID string, input ExtractInput, ectx *ExtractContext, startTime time.Time) (*ExtractOutput, error) {
 	// Extract prompt text from Schema field (which contains the freeform text)
 	promptText := strings.TrimSpace(string(input.Schema))
@@ -58,22 +56,11 @@ func (s *ExtractionService) extractWithPrompt(ctx context.Context, userID string
 		}
 	}
 
-	// Fetch and clean page content
-	fetchStart := time.Now()
-	pageContent, fetchedURL, err := s.fetchAndCleanContent(ctx, input.URL, input.FetchMode, input.CleanerChain)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch page content: %w", err)
+	// Use JobID if available, otherwise fall back to SchemaID for tracking
+	jobIDForTracking := ectx.JobID
+	if jobIDForTracking == "" {
+		jobIDForTracking = ectx.SchemaID
 	}
-	fetchDuration := time.Since(fetchStart)
-
-	// Truncate content if too long (similar to analyzer service)
-	maxContentLen := 100000 // ~25k tokens roughly
-	if len(pageContent) > maxContentLen {
-		pageContent = pageContent[:maxContentLen] + "\n\n[Content truncated...]"
-	}
-
-	// Build the extraction prompt
-	extractPrompt := s.buildPromptExtractionPrompt(pageContent, promptText)
 
 	// Try each LLM config until one succeeds
 	var lastErr error
@@ -121,34 +108,30 @@ func (s *ExtractionService) extractWithPrompt(ctx context.Context, userID string
 			"of", total,
 		)
 
-		// Call LLM using shared client
-		llmClient := NewLLMClient(s.logger)
-		result, err := llmClient.Call(ctx, llmCfg, extractPrompt, LLMCallOptions{
-			Temperature: 0.1,  // Low temperature for extraction
-			MaxTokens:   8192,
-			Timeout:     180 * time.Second,
-			JSONMode:    true, // Request JSON response
+		// Create page extractor - handles dynamic retry internally
+		extractor := NewPromptPageExtractor(s, PromptExtractorOptions{
+			PromptText:            promptText,
+			LLMConfig:             llmCfg,
+			CleanerChain:          input.CleanerChain,
+			IsBYOK:                llmChain.IsBYOK(),
+			ContentDynamicAllowed: ectx.ContentDynamicAllowed,
+			UserID:                userID,
+			Tier:                  ectx.Tier,
+			JobID:                 jobIDForTracking,
 		})
-		if err == nil && result != nil {
-			// Success - parse response and return
-			extractDuration := time.Since(startTime) - fetchDuration
 
-			// Parse the LLM response as JSON
-			var extractedData any
-			if err := json.Unmarshal([]byte(result.Content), &extractedData); err != nil {
-				// If JSON parsing fails, return the raw content wrapped
-				extractedData = map[string]any{
-					"raw_response": result.Content,
-					"parse_error":  "Response was not valid JSON",
-				}
-			}
+		// Perform extraction (dynamic retry happens inside Extract)
+		pageResult, err := extractor.Extract(ctx, input.URL)
+
+		if err == nil && pageResult != nil && pageResult.Error == nil {
+			// Success - calculate costs and return
 
 			// Calculate costs and record usage
 			var costs CostResult
 			if s.billing != nil {
 				costs = s.billing.CalculateCosts(ctx, CostInput{
-					TokensInput:  result.InputTokens,
-					TokensOutput: result.OutputTokens,
+					TokensInput:  pageResult.TokensInput,
+					TokensOutput: pageResult.TokensOutput,
 					Model:        llmCfg.Model,
 					Provider:     llmCfg.Provider,
 					Tier:         ectx.Tier,
@@ -158,8 +141,8 @@ func (s *ExtractionService) extractWithPrompt(ctx context.Context, userID string
 					UserID:          userID,
 					JobType:         models.JobTypeExtract,
 					Status:          "completed",
-					TokensInput:     result.InputTokens,
-					TokensOutput:    result.OutputTokens,
+					TokensInput:     pageResult.TokensInput,
+					TokensOutput:    pageResult.TokensOutput,
 					TotalChargedUSD: costs.UserCostUSD,
 					LLMCostUSD:      costs.LLMCostUSD,
 					IsBYOK:          llmChain.IsBYOK(),
@@ -170,36 +153,52 @@ func (s *ExtractionService) extractWithPrompt(ctx context.Context, userID string
 			}
 
 			return &ExtractOutput{
-				Data:        extractedData,
-				URL:         fetchedURL,
+				Data:        pageResult.Data,
+				URL:         pageResult.URL,
 				FetchedAt:   startTime,
 				InputFormat: InputFormatPrompt,
 				Usage: UsageInfo{
-					InputTokens:  result.InputTokens,
-					OutputTokens: result.OutputTokens,
+					InputTokens:  pageResult.TokensInput,
+					OutputTokens: pageResult.TokensOutput,
 					CostUSD:      costs.UserCostUSD,
 					LLMCostUSD:   costs.LLMCostUSD,
 					IsBYOK:       llmChain.IsBYOK(),
 				},
 				Metadata: ExtractMeta{
-					FetchDurationMs:   int(fetchDuration.Milliseconds()),
-					ExtractDurationMs: int(extractDuration.Milliseconds()),
+					FetchDurationMs:   pageResult.FetchDurationMs,
+					ExtractDurationMs: pageResult.ExtractDurationMs,
 					Model:             llmCfg.Model,
 					Provider:          llmCfg.Provider,
 					BudgetSkips:       budgetSkips,
 				},
-				RawContent: pageContent,
+				RawContent: pageResult.RawContent,
 			}, nil
 		}
 
-		// Failed - try next provider
-		lastErr = err
-		lastLLMErr = llm.WrapError(err, llmCfg.Provider, llmCfg.Model, llmChain.IsBYOK())
+		// Failed - classify error
+		if err != nil {
+			lastErr = err
+		} else if pageResult != nil && pageResult.Error != nil {
+			lastErr = pageResult.Error
+		}
+
+		// Check for config errors that shouldn't trigger fallback
+		if errors.Is(lastErr, ErrDynamicFetchNotAllowed) || errors.Is(lastErr, ErrDynamicFetchNotConfigured) {
+			return nil, lastErr
+		}
+
+		// Check for bot protection (extractor already tried dynamic if allowed)
+		var protectionErr *ErrBotProtectionDetected
+		if errors.As(lastErr, &protectionErr) {
+			return nil, protectionErr
+		}
+
+		lastLLMErr = llm.WrapError(lastErr, llmCfg.Provider, llmCfg.Model, llmChain.IsBYOK())
 
 		s.logger.Warn("prompt extraction failed",
 			"provider", llmCfg.Provider,
 			"model", llmCfg.Model,
-			"error", err,
+			"error", lastErr,
 		)
 
 		if lastLLMErr != nil && !lastLLMErr.ShouldFallback {
@@ -258,54 +257,5 @@ IMPORTANT INSTRUCTIONS:
 Respond with ONLY valid JSON, no markdown formatting or explanation.`)
 
 	return b.String()
-}
-
-// fetchAndCleanContent fetches a URL and cleans the content using the configured cleaner chain.
-func (s *ExtractionService) fetchAndCleanContent(ctx context.Context, targetURL, fetchMode string, cleanerChain []CleanerConfig) (string, string, error) {
-	// Create cleaner chain
-	factory := NewCleanerFactory()
-	contentCleaner, err := factory.CreateChainWithDefault(cleanerChain, DefaultExtractionCleanerChain)
-	if err != nil {
-		return "", "", fmt.Errorf("invalid cleaner chain: %w", err)
-	}
-
-	// Fetch using HTTP client (similar to analyzer service approach)
-	client := &http.Client{Timeout: 60 * time.Second}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.5")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to fetch page: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", "", fmt.Errorf("page returned status %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to read response: %w", err)
-	}
-
-	// Clean the content
-	cleanedContent, err := contentCleaner.Clean(string(body))
-	if err != nil {
-		// If cleaning fails, use raw content
-		s.logger.Warn("content cleaning failed, using raw HTML", "error", err)
-		cleanedContent = string(body)
-	}
-
-	// Get final URL (in case of redirects)
-	finalURL := resp.Request.URL.String()
-
-	return cleanedContent, finalURL, nil
 }
 

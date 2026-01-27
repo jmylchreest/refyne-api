@@ -5,9 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
-
-	"github.com/jmylchreest/refyne/pkg/refyne"
 
 	"github.com/jmylchreest/refyne-api/internal/llm"
 )
@@ -83,6 +80,9 @@ type CrawlCallbacks struct {
 }
 
 // Crawl performs a multi-page crawl extraction.
+// Uses SchemaPageExtractor for each page, which handles dynamic retry for bot protection
+// and insufficient content. This is a simplified version of CrawlWithCallback without
+// callbacks or mid-crawl balance checking.
 func (s *ExtractionService) Crawl(ctx context.Context, userID string, input CrawlInput) (*CrawlResult, error) {
 	// Use pre-resolved LLM configs from input
 	if len(input.LLMConfigs) == 0 {
@@ -90,6 +90,12 @@ func (s *ExtractionService) Crawl(ctx context.Context, userID string, input Craw
 	}
 	llmCfg := input.LLMConfigs[0]
 	isBYOK := input.IsBYOK
+
+	// Build seed URLs list - use SeedURLs if provided (from sitemap), otherwise just the main URL
+	seedURLs := input.SeedURLs
+	if len(seedURLs) == 0 {
+		seedURLs = []string{input.URL}
+	}
 
 	// Detect input format - prompts use a different extraction path
 	inputFormat, sch, err := DetectInputFormat(input.Schema)
@@ -109,39 +115,78 @@ func (s *ExtractionService) Crawl(ctx context.Context, userID string, input Craw
 		input.Options.NextSelector,
 	)
 
-	// Create refyne instance with configured cleaner and fetch mode
-	r, cleanerName, err := s.createRefyneInstanceWithFetchMode(llmCfg, enrichedCleanerChain, FetchModeConfig{
-		Mode:                  input.Options.FetchMode,
+	s.logger.Info("crawl starting",
+		"job_id", input.JobID,
+		"user_id", userID,
+		"url", input.URL,
+		"seed_count", len(seedURLs),
+		"provider", llmCfg.Provider,
+		"model", llmCfg.Model,
+	)
+
+	// Phase 1: URL Discovery
+	// If we have seed URLs (from sitemap), use those directly.
+	// Otherwise, discover URLs using Colly-based URL discovery.
+	var urlsToExtract []DiscoveredURL
+
+	if len(seedURLs) > 1 {
+		// Multiple seeds provided (from sitemap discovery) - use them directly
+		for i, url := range seedURLs {
+			urlsToExtract = append(urlsToExtract, DiscoveredURL{
+				URL:       url,
+				Depth:     0,
+				ParentURL: "",
+			})
+			// Respect max pages limit
+			if input.Options.MaxPages > 0 && i+1 >= input.Options.MaxPages {
+				break
+			}
+		}
+		s.logger.Info("using provided seed URLs",
+			"job_id", input.JobID,
+			"url_count", len(urlsToExtract),
+		)
+	} else if input.Options.FollowSelector != "" || input.Options.FollowPattern != "" || input.Options.NextSelector != "" {
+		// Need to discover URLs - use URLDiscoverer
+		discoverer := NewURLDiscoverer(s.logger)
+		discovered, err := discoverer.Discover(ctx, seedURLs, URLDiscoveryOptions{
+			FollowSelector: input.Options.FollowSelector,
+			FollowPattern:  input.Options.FollowPattern,
+			MaxPages:       input.Options.MaxPages,
+			MaxDepth:       input.Options.MaxDepth,
+			MaxURLs:        input.Options.MaxURLs,
+			SameDomainOnly: input.Options.SameDomainOnly,
+			NextSelector:   input.Options.NextSelector,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("URL discovery failed: %w", err)
+		}
+		urlsToExtract = discovered
+		s.logger.Info("URL discovery completed",
+			"job_id", input.JobID,
+			"urls_discovered", len(urlsToExtract),
+		)
+	} else {
+		// No follow selectors - just extract the seed URL
+		urlsToExtract = []DiscoveredURL{{
+			URL:       input.URL,
+			Depth:     0,
+			ParentURL: "",
+		}}
+	}
+
+	// Phase 2: Per-page extraction using SchemaPageExtractor
+	// This gives us dynamic retry for each page individually.
+
+	// Create SchemaPageExtractor - handles dynamic retry for all pages
+	extractor := NewSchemaPageExtractor(s, sch, SchemaExtractorOptions{
+		LLMConfig:             llmCfg,
+		CleanerChain:          enrichedCleanerChain,
 		ContentDynamicAllowed: input.Options.ContentDynamicAllowed,
 		UserID:                userID,
 		Tier:                  input.Tier,
 		JobID:                 input.JobID,
 	})
-	if err != nil {
-		return nil, s.handleLLMError(err, llmCfg, isBYOK)
-	}
-	defer func() { _ = r.Close() }()
-
-	s.logger.Info("crawl starting",
-		"job_id", input.JobID,
-		"user_id", userID,
-		"url", input.URL,
-		"cleaner", cleanerName,
-		"provider", llmCfg.Provider,
-		"model", llmCfg.Model,
-	)
-
-	// Build crawl options
-	crawlOpts := s.buildCrawlOptions(input.Options)
-
-	// Perform crawl - Crawl returns a channel of results
-	results := r.Crawl(ctx, input.URL, sch, crawlOpts...)
-
-	// Aggregate results
-	// Track URLs we've seen to determine depth (seed URL = depth 0, others = depth 1+)
-	seedURL := input.URL
-	seenURLs := make(map[string]int) // URL -> depth
-	seenURLs[seedURL] = 0
 
 	var (
 		data              []any
@@ -150,114 +195,109 @@ func (s *ExtractionService) Crawl(ctx context.Context, userID string, input Craw
 		totalTokensOutput int
 		pageCount         int
 		lastError         error
+		cancelled         bool
 	)
 
-	for result := range results {
-		// Determine depth and parent URL based on whether this is the seed
-		var parentURL *string
-		depth := 0
-		if result.URL != seedURL {
-			// Non-seed URL - set parent to seed and depth based on discovery order
-			parentURL = &seedURL
-			// If we haven't seen this URL yet, assign next depth level
-			if existingDepth, seen := seenURLs[result.URL]; seen {
-				depth = existingDepth
-			} else {
-				// URLs discovered during crawl get depth = 1 (directly linked from seed)
-				// Note: refyne doesn't expose actual depth, so we approximate
-				depth = 1
-				seenURLs[result.URL] = depth
-			}
+	// Process each URL using the extractor (gets dynamic retry for free!)
+	for _, discoveredURL := range urlsToExtract {
+		select {
+		case <-ctx.Done():
+			cancelled = true
+		default:
 		}
 
-		if result.Error != nil {
-			// Log with job/user/model/provider/cleaner info for debugging
+		if cancelled {
+			break
+		}
+
+		var parentURL *string
+		if discoveredURL.ParentURL != "" {
+			parentURL = &discoveredURL.ParentURL
+		}
+
+		pageResult := PageResult{
+			URL:         discoveredURL.URL,
+			ParentURL:   parentURL,
+			Depth:       discoveredURL.Depth,
+			IsBYOK:      isBYOK,
+			LLMProvider: llmCfg.Provider,
+			LLMModel:    llmCfg.Model,
+		}
+
+		// Extract using SchemaPageExtractor (handles dynamic retry internally)
+		extractResult, err := extractor.Extract(ctx, discoveredURL.URL)
+
+		if err != nil || (extractResult != nil && extractResult.Error != nil) {
+			// Handle error
+			errToUse := err
+			if errToUse == nil && extractResult != nil {
+				errToUse = extractResult.Error
+			}
+			lastError = errToUse
+
+			errInfo := llm.WrapError(errToUse, llmCfg.Provider, llmCfg.Model, isBYOK)
+			pageResult.Error = errInfo.UserMessage
+			pageResult.ErrorCategory = errInfo.Category
+			if isBYOK {
+				pageResult.ErrorDetails = errToUse.Error()
+			}
+			if extractResult != nil {
+				pageResult.FetchDurationMs = extractResult.FetchDurationMs
+				pageResult.ExtractDurationMs = extractResult.ExtractDurationMs
+				pageResult.RetryCount = extractResult.RetryCount
+			}
 			s.logger.Warn("crawl page error",
 				"job_id", input.JobID,
 				"user_id", userID,
-				"url", result.URL,
-				"cleaner", cleanerName,
-				"provider", llmCfg.Provider,
-				"model", llmCfg.Model,
-				"error", result.Error,
+				"url", discoveredURL.URL,
+				"error", errToUse,
+				"used_dynamic", extractResult != nil && extractResult.UsedDynamicMode,
 			)
-			lastError = result.Error
+		} else {
+			// Success
+			pageResult.URL = extractResult.URL
+			pageResult.Data = extractResult.Data
+			pageResult.TokenUsageInput = extractResult.TokensInput
+			pageResult.TokenUsageOutput = extractResult.TokensOutput
+			pageResult.FetchDurationMs = extractResult.FetchDurationMs
+			pageResult.ExtractDurationMs = extractResult.ExtractDurationMs
+			pageResult.GenerationID = extractResult.GenerationID
+			pageResult.RetryCount = extractResult.RetryCount
+			pageResult.RawContent = extractResult.RawContent
 
-			// Wrap error for user-friendly messaging
-			llmErr := llm.WrapError(result.Error, llmCfg.Provider, llmCfg.Model, isBYOK)
-			userMsg := result.Error.Error()
-			category := "unknown"
-			if llmErr != nil {
-				userMsg = llmErr.UserMessage
-				category = llmErr.Category
+			data = append(data, extractResult.Data)
+			totalTokensInput += extractResult.TokensInput
+			totalTokensOutput += extractResult.TokensOutput
+			pageCount++
+
+			// Calculate costs for logging
+			var pageCosts CostResult
+			if s.billing != nil {
+				pageCosts = s.billing.CalculateCosts(ctx, CostInput{
+					TokensInput:  extractResult.TokensInput,
+					TokensOutput: extractResult.TokensOutput,
+					Model:        llmCfg.Model,
+					Provider:     llmCfg.Provider,
+					Tier:         input.Tier,
+					IsBYOK:       isBYOK,
+					GenerationID: extractResult.GenerationID,
+					APIKey:       llmCfg.APIKey,
+				})
 			}
-			// Still track failed pages for SSE streaming and crawl map
-			pageResults = append(pageResults, PageResult{
-				URL:           result.URL,
-				ParentURL:     parentURL,
-				Depth:         depth,
-				Error:         userMsg,
-				ErrorDetails:  result.Error.Error(), // Full error for BYOK/admin
-				ErrorCategory: category,
-				LLMProvider:   llmCfg.Provider,
-				LLMModel:      llmCfg.Model,
-				IsBYOK:        isBYOK,
-			})
-			continue
+
+			s.logger.Info("extracted page",
+				"job_id", input.JobID,
+				"url", extractResult.URL,
+				"input_tokens", extractResult.TokensInput,
+				"output_tokens", extractResult.TokensOutput,
+				"llm_cost_usd", pageCosts.LLMCostUSD,
+				"user_cost_usd", pageCosts.UserCostUSD,
+				"used_dynamic", extractResult.UsedDynamicMode,
+				"retry_count", extractResult.RetryCount,
+			)
 		}
 
-		// Calculate per-page cost for logging - use actual cost from provider when available
-		var pageCosts CostResult
-		if s.billing != nil {
-			pageCosts = s.billing.CalculateCosts(ctx, CostInput{
-				TokensInput:  result.TokenUsage.InputTokens,
-				TokensOutput: result.TokenUsage.OutputTokens,
-				Model:        llmCfg.Model,
-				Provider:     llmCfg.Provider,
-				Tier:         input.Tier,
-				IsBYOK:       isBYOK,
-				GenerationID: result.GenerationID,
-				APIKey:       llmCfg.APIKey,
-			})
-		}
-
-		// Log successful extraction
-		s.logger.Info("extracted",
-			"job_id", input.JobID,
-			"user_id", userID,
-			"url", result.URL,
-			"cleaner", cleanerName,
-			"provider", llmCfg.Provider,
-			"model", llmCfg.Model,
-			"fetch_ms", result.FetchDuration.Milliseconds(),
-			"extract_ms", result.ExtractDuration.Milliseconds(),
-			"input_tokens", result.TokenUsage.InputTokens,
-			"output_tokens", result.TokenUsage.OutputTokens,
-			"llm_cost_usd", pageCosts.LLMCostUSD,
-			"user_cost_usd", pageCosts.UserCostUSD,
-			"is_byok", isBYOK,
-		)
-
-		// Apply shared post-extraction processing (URL resolution, etc.)
-		processedData := s.processExtractionResult(result.Data, result.URL)
-
-		data = append(data, processedData)
-		pageResults = append(pageResults, PageResult{
-			URL:               result.URL,
-			ParentURL:         parentURL,
-			Depth:             depth,
-			Data:              processedData,
-			TokenUsageInput:   result.TokenUsage.InputTokens,
-			TokenUsageOutput:  result.TokenUsage.OutputTokens,
-			FetchDurationMs:   int(result.FetchDuration.Milliseconds()),
-			ExtractDurationMs: int(result.ExtractDuration.Milliseconds()),
-			LLMProvider:       result.Provider,
-			LLMModel:          result.Model,
-			RawContent:        result.RawContent,
-		})
-		totalTokensInput += result.TokenUsage.InputTokens
-		totalTokensOutput += result.TokenUsage.OutputTokens
-		pageCount++
+		pageResults = append(pageResults, pageResult)
 	}
 
 	// If no results and we have an error, return the error
@@ -282,7 +322,6 @@ func (s *ExtractionService) Crawl(ctx context.Context, userID string, input Craw
 		"job_id", input.JobID,
 		"user_id", userID,
 		"url", input.URL,
-		"cleaner", cleanerName,
 		"provider", llmCfg.Provider,
 		"model", llmCfg.Model,
 		"page_count", pageCount,
@@ -310,6 +349,8 @@ func (s *ExtractionService) Crawl(ctx context.Context, userID string, input Craw
 // CrawlWithCallback performs a multi-page crawl extraction with callbacks for events.
 // This allows incremental processing of results (e.g., saving to database as they come in)
 // and tracking of URL discovery for progress reporting.
+// Uses SchemaPageExtractor for each page, which handles dynamic retry for bot protection
+// and insufficient content.
 func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string, input CrawlInput, callbacks CrawlCallbacks) (*CrawlResult, error) {
 	// Use pre-resolved LLM configs from input
 	if len(input.LLMConfigs) == 0 {
@@ -335,10 +376,6 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 		}
 	}
 
-	// Create a cancellable context so we can stop the crawler if balance is exhausted
-	crawlCtx, cancelCrawl := context.WithCancel(ctx)
-	defer cancelCrawl()
-
 	// Build seed URLs list - use SeedURLs if provided (from sitemap), otherwise just the main URL
 	seedURLs := input.SeedURLs
 	if len(seedURLs) == 0 {
@@ -363,58 +400,83 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 		input.Options.NextSelector,
 	)
 
-	// Create refyne instance with configured cleaner and fetch mode
-	r, cleanerName, err := s.createRefyneInstanceWithFetchMode(llmCfg, enrichedCleanerChain, FetchModeConfig{
-		Mode:                  input.Options.FetchMode,
-		ContentDynamicAllowed: input.Options.ContentDynamicAllowed,
-		UserID:                userID,
-		Tier:                  input.Tier,
-		JobID:                 input.JobID,
-	})
-	if err != nil {
-		return nil, s.handleLLMError(err, llmCfg, isBYOK)
-	}
-	defer func() { _ = r.Close() }()
-
 	s.logger.Info("crawl starting",
 		"job_id", input.JobID,
 		"user_id", userID,
 		"url", input.URL,
 		"seed_count", len(seedURLs),
-		"cleaner", cleanerName,
 		"provider", llmCfg.Provider,
 		"model", llmCfg.Model,
 	)
 
-	// Build crawl options
-	crawlOpts := s.buildCrawlOptions(input.Options)
-	crawlOpts = s.addURLsQueuedCallback(crawlOpts, callbacks.OnURLsQueued)
+	// Phase 1: URL Discovery
+	// If we have seed URLs (from sitemap), use those directly.
+	// Otherwise, discover URLs using Colly-based URL discovery.
+	var urlsToExtract []DiscoveredURL
 
-	s.logger.Debug("initiating crawler",
-		"job_id", input.JobID,
-		"seed_count", len(seedURLs),
-		"options", fmt.Sprintf("%+v", input.Options),
-	)
-
-	// Perform crawl - use CrawlMany for multiple seeds (from sitemap), single Crawl otherwise
-	// Use crawlCtx so we can cancel if balance is exhausted
-	var results <-chan *refyne.Result
 	if len(seedURLs) > 1 {
-		results = r.CrawlMany(crawlCtx, seedURLs, sch, crawlOpts...)
+		// Multiple seeds provided (from sitemap discovery) - use them directly
+		for i, url := range seedURLs {
+			urlsToExtract = append(urlsToExtract, DiscoveredURL{
+				URL:       url,
+				Depth:     0,
+				ParentURL: "",
+			})
+			// Respect max pages limit
+			if input.Options.MaxPages > 0 && i+1 >= input.Options.MaxPages {
+				break
+			}
+		}
+		s.logger.Info("using provided seed URLs",
+			"job_id", input.JobID,
+			"url_count", len(urlsToExtract),
+		)
+	} else if input.Options.FollowSelector != "" || input.Options.FollowPattern != "" || input.Options.NextSelector != "" {
+		// Need to discover URLs - use URLDiscoverer
+		discoverer := NewURLDiscoverer(s.logger)
+		discovered, err := discoverer.Discover(ctx, seedURLs, URLDiscoveryOptions{
+			FollowSelector: input.Options.FollowSelector,
+			FollowPattern:  input.Options.FollowPattern,
+			MaxPages:       input.Options.MaxPages,
+			MaxDepth:       input.Options.MaxDepth,
+			MaxURLs:        input.Options.MaxURLs,
+			SameDomainOnly: input.Options.SameDomainOnly,
+			NextSelector:   input.Options.NextSelector,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("URL discovery failed: %w", err)
+		}
+		urlsToExtract = discovered
+		s.logger.Info("URL discovery completed",
+			"job_id", input.JobID,
+			"urls_discovered", len(urlsToExtract),
+		)
 	} else {
-		results = r.Crawl(crawlCtx, input.URL, sch, crawlOpts...)
+		// No follow selectors - just extract the seed URL
+		urlsToExtract = []DiscoveredURL{{
+			URL:       input.URL,
+			Depth:     0,
+			ParentURL: "",
+		}}
 	}
 
-	s.logger.Debug("crawler channel ready, waiting for results",
-		"job_id", input.JobID,
-	)
-
-	// Aggregate results while calling callback for each
-	seedURL := input.URL
-	seenURLs := make(map[string]int)
-	for _, url := range seedURLs {
-		seenURLs[url] = 0 // All seed URLs start at depth 0
+	// Notify about queued URLs
+	if callbacks.OnURLsQueued != nil {
+		callbacks.OnURLsQueued(len(urlsToExtract))
 	}
+
+	// Phase 2: Per-page extraction using SchemaPageExtractor
+	// This gives us dynamic retry for each page individually.
+
+	// Create SchemaPageExtractor - handles dynamic retry for all pages
+	extractor := NewSchemaPageExtractor(s, sch, SchemaExtractorOptions{
+		LLMConfig:             llmCfg,
+		CleanerChain:          enrichedCleanerChain,
+		ContentDynamicAllowed: input.Options.ContentDynamicAllowed,
+		UserID:                userID,
+		Tier:                  input.Tier,
+		JobID:                 input.JobID,
+	})
 
 	var (
 		data              []any
@@ -422,146 +484,134 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 		totalTokensInput  int
 		totalTokensOutput int
 		pageCount         int
+		cumulativeCostUSD float64
+		stoppedEarly      bool
+		stopReason        string
 		lastError         error
-		cumulativeCostUSD float64 // Running total of costs (for balance tracking)
-		stoppedEarly      bool    // True if we stopped due to balance or other limit
-		stopReason        string  // Reason for early stop
 	)
 
-	for result := range results {
-		// Determine depth and parent URL based on whether this is the seed
-		var parentURL *string
-		depth := 0
-		if result.URL != seedURL {
-			parentURL = &seedURL
-			if existingDepth, seen := seenURLs[result.URL]; seen {
-				depth = existingDepth
-			} else {
-				depth = 1
-				seenURLs[result.URL] = depth
-			}
+	// Process each URL using the extractor (gets dynamic retry for free!)
+	for _, discoveredURL := range urlsToExtract {
+		select {
+		case <-ctx.Done():
+			stoppedEarly = true
+			stopReason = "context_cancelled"
+		default:
 		}
 
-		var pageResult PageResult
-		if result.Error != nil {
-			// Log with job/user/model/provider/cleaner info for debugging
+		if stoppedEarly {
+			break
+		}
+
+		var parentURL *string
+		if discoveredURL.ParentURL != "" {
+			parentURL = &discoveredURL.ParentURL
+		}
+
+		pageResult := PageResult{
+			URL:         discoveredURL.URL,
+			ParentURL:   parentURL,
+			Depth:       discoveredURL.Depth,
+			IsBYOK:      isBYOK,
+			LLMProvider: llmCfg.Provider,
+			LLMModel:    llmCfg.Model,
+		}
+
+		// Extract using SchemaPageExtractor (handles dynamic retry internally)
+		extractResult, err := extractor.Extract(ctx, discoveredURL.URL)
+
+		if err != nil || (extractResult != nil && extractResult.Error != nil) {
+			// Handle error
+			errToUse := err
+			if errToUse == nil && extractResult != nil {
+				errToUse = extractResult.Error
+			}
+			lastError = errToUse
+
+			errInfo := llm.WrapError(errToUse, llmCfg.Provider, llmCfg.Model, isBYOK)
+			pageResult.Error = errInfo.UserMessage
+			pageResult.ErrorCategory = errInfo.Category
+			if isBYOK {
+				pageResult.ErrorDetails = errToUse.Error()
+			}
+			if extractResult != nil {
+				pageResult.FetchDurationMs = extractResult.FetchDurationMs
+				pageResult.ExtractDurationMs = extractResult.ExtractDurationMs
+				pageResult.RetryCount = extractResult.RetryCount
+			}
 			s.logger.Warn("crawl page error",
 				"job_id", input.JobID,
 				"user_id", userID,
-				"url", result.URL,
-				"cleaner", cleanerName,
-				"provider", llmCfg.Provider,
-				"model", llmCfg.Model,
-				"error", result.Error,
+				"url", discoveredURL.URL,
+				"error", errToUse,
+				"used_dynamic", extractResult != nil && extractResult.UsedDynamicMode,
 			)
-			lastError = result.Error
-
-			// Wrap error for user-friendly messaging
-			llmErr := llm.WrapError(result.Error, llmCfg.Provider, llmCfg.Model, isBYOK)
-			userMsg := result.Error.Error()
-			category := "unknown"
-			if llmErr != nil {
-				userMsg = llmErr.UserMessage
-				category = llmErr.Category
-			}
-			pageResult = PageResult{
-				URL:           result.URL,
-				ParentURL:     parentURL,
-				Depth:         depth,
-				Error:         userMsg,
-				ErrorDetails:  result.Error.Error(), // Full error for BYOK/admin
-				ErrorCategory: category,
-				LLMProvider:   llmCfg.Provider,
-				LLMModel:      llmCfg.Model,
-				IsBYOK:        isBYOK,
-			}
 		} else {
-			// Calculate per-page cost for logging - use actual cost from provider when available
-			var pageCosts CostResult
+			// Success
+			pageResult.URL = extractResult.URL
+			pageResult.Data = extractResult.Data
+			pageResult.TokenUsageInput = extractResult.TokensInput
+			pageResult.TokenUsageOutput = extractResult.TokensOutput
+			pageResult.FetchDurationMs = extractResult.FetchDurationMs
+			pageResult.ExtractDurationMs = extractResult.ExtractDurationMs
+			pageResult.GenerationID = extractResult.GenerationID
+			pageResult.RetryCount = extractResult.RetryCount
+			pageResult.RawContent = extractResult.RawContent
+
+			data = append(data, extractResult.Data)
+			totalTokensInput += extractResult.TokensInput
+			totalTokensOutput += extractResult.TokensOutput
+			pageCount++
+
+			// Calculate costs
 			if s.billing != nil {
-				pageCosts = s.billing.CalculateCosts(ctx, CostInput{
-					TokensInput:  result.TokenUsage.InputTokens,
-					TokensOutput: result.TokenUsage.OutputTokens,
+				pageCosts := s.billing.CalculateCosts(ctx, CostInput{
+					TokensInput:  extractResult.TokensInput,
+					TokensOutput: extractResult.TokensOutput,
 					Model:        llmCfg.Model,
 					Provider:     llmCfg.Provider,
 					Tier:         input.Tier,
 					IsBYOK:       isBYOK,
-					GenerationID: result.GenerationID,
+					GenerationID: extractResult.GenerationID,
 					APIKey:       llmCfg.APIKey,
 				})
-			}
+				cumulativeCostUSD += pageCosts.UserCostUSD
 
-			// Track cumulative cost for balance enforcement
-			cumulativeCostUSD += pageCosts.UserCostUSD
-
-			// Log successful extraction
-			s.logger.Info("extracted",
-				"job_id", input.JobID,
-				"user_id", userID,
-				"url", result.URL,
-				"cleaner", cleanerName,
-				"provider", llmCfg.Provider,
-				"model", llmCfg.Model,
-				"fetch_ms", result.FetchDuration.Milliseconds(),
-				"extract_ms", result.ExtractDuration.Milliseconds(),
-				"input_tokens", result.TokenUsage.InputTokens,
-				"output_tokens", result.TokenUsage.OutputTokens,
-				"llm_cost_usd", pageCosts.LLMCostUSD,
-				"user_cost_usd", pageCosts.UserCostUSD,
-				"cumulative_cost_usd", cumulativeCostUSD,
-				"is_byok", isBYOK,
-			)
-
-			// Apply shared post-extraction processing (URL resolution, etc.)
-			processedData := s.processExtractionResult(result.Data, result.URL)
-
-			data = append(data, processedData)
-			pageResult = PageResult{
-				URL:               result.URL,
-				ParentURL:         parentURL,
-				Depth:             depth,
-				Data:              processedData,
-				TokenUsageInput:   result.TokenUsage.InputTokens,
-				TokenUsageOutput:  result.TokenUsage.OutputTokens,
-				FetchDurationMs:   int(result.FetchDuration.Milliseconds()),
-				ExtractDurationMs: int(result.ExtractDuration.Milliseconds()),
-				LLMProvider:       result.Provider,
-				LLMModel:          result.Model,
-				GenerationID:      result.GenerationID,
-				RawContent:        result.RawContent,
-			}
-			totalTokensInput += result.TokenUsage.InputTokens
-			totalTokensOutput += result.TokenUsage.OutputTokens
-			pageCount++
-
-			// Check if we have enough balance for the next page (non-BYOK only)
-			// Use the cost of this page as estimate for the next page
-			if checkBalance && pageCosts.UserCostUSD > 0 {
-				remainingBalance := availableBalance - cumulativeCostUSD
-				if remainingBalance < pageCosts.UserCostUSD {
-					s.logger.Warn("insufficient balance for next page, stopping crawl",
-						"job_id", input.JobID,
-						"user_id", userID,
-						"available_balance", availableBalance,
-						"cumulative_cost", cumulativeCostUSD,
-						"remaining_balance", remainingBalance,
-						"estimated_next_page_cost", pageCosts.UserCostUSD,
-						"pages_completed", pageCount,
-					)
-					stoppedEarly = true
-					stopReason = "insufficient_balance"
-					cancelCrawl() // Stop the crawler
-					// Continue processing to drain any remaining results from the channel
+				// Check balance for next page
+				if checkBalance && pageCosts.UserCostUSD > 0 {
+					remaining := availableBalance - cumulativeCostUSD
+					if remaining < pageCosts.UserCostUSD {
+						s.logger.Warn("insufficient balance for next page, stopping crawl",
+							"job_id", input.JobID,
+							"user_id", userID,
+							"available_balance", availableBalance,
+							"cumulative_cost", cumulativeCostUSD,
+							"remaining_balance", remaining,
+							"estimated_next_page_cost", pageCosts.UserCostUSD,
+							"pages_completed", pageCount,
+						)
+						stoppedEarly = true
+						stopReason = "insufficient_balance"
+					}
 				}
 			}
+
+			s.logger.Info("extracted page",
+				"job_id", input.JobID,
+				"url", extractResult.URL,
+				"input_tokens", extractResult.TokensInput,
+				"output_tokens", extractResult.TokensOutput,
+				"used_dynamic", extractResult.UsedDynamicMode,
+				"retry_count", extractResult.RetryCount,
+			)
 		}
 
 		pageResults = append(pageResults, pageResult)
 
-		// Call the result callback
+		// Call result callback
 		if callbacks.OnResult != nil {
-			if err := callbacks.OnResult(pageResult); err != nil {
-				s.logger.Error("callback error, stopping crawl", "error", err)
+			if cbErr := callbacks.OnResult(pageResult); cbErr != nil {
+				s.logger.Error("callback error, stopping crawl", "error", cbErr)
 				stoppedEarly = true
 				stopReason = "callback_error"
 				break
@@ -574,7 +624,7 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 		return nil, s.handleLLMError(lastError, llmCfg, isBYOK)
 	}
 
-	// Calculate actual costs
+	// Calculate final costs
 	var totalCosts CostResult
 	if s.billing != nil {
 		totalCosts = s.billing.CalculateCosts(ctx, CostInput{
@@ -591,7 +641,6 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 		"job_id", input.JobID,
 		"user_id", userID,
 		"url", input.URL,
-		"cleaner", cleanerName,
 		"provider", llmCfg.Provider,
 		"model", llmCfg.Model,
 		"page_count", pageCount,
@@ -618,56 +667,9 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 	}, nil
 }
 
-// addURLsQueuedCallback adds the OnURLsQueued callback to crawl options.
-func (s *ExtractionService) addURLsQueuedCallback(opts []refyne.CrawlOption, callback URLsQueuedCallback) []refyne.CrawlOption {
-	if callback == nil {
-		return opts
-	}
-	return append(opts, refyne.WithOnURLsQueued(callback))
-}
-
-// buildCrawlOptions converts CrawlOptions to refyne.CrawlOption slice.
-func (s *ExtractionService) buildCrawlOptions(opts CrawlOptions) []refyne.CrawlOption {
-	crawlOpts := []refyne.CrawlOption{}
-
-	if opts.FollowSelector != "" {
-		crawlOpts = append(crawlOpts, refyne.WithFollowSelector(opts.FollowSelector))
-	}
-	if opts.FollowPattern != "" {
-		crawlOpts = append(crawlOpts, refyne.WithFollowPattern(opts.FollowPattern))
-	}
-	if opts.MaxDepth > 0 {
-		crawlOpts = append(crawlOpts, refyne.WithMaxDepth(opts.MaxDepth))
-	}
-	if opts.NextSelector != "" {
-		crawlOpts = append(crawlOpts, refyne.WithNextSelector(opts.NextSelector))
-	}
-	if opts.MaxPages > 0 {
-		crawlOpts = append(crawlOpts, refyne.WithMaxPages(opts.MaxPages))
-	}
-	if opts.MaxURLs > 0 {
-		crawlOpts = append(crawlOpts, refyne.WithMaxURLs(opts.MaxURLs))
-	}
-	if opts.Delay != "" {
-		if d, err := time.ParseDuration(opts.Delay); err == nil {
-			crawlOpts = append(crawlOpts, refyne.WithDelay(d))
-		}
-	}
-	if opts.Concurrency > 0 {
-		crawlOpts = append(crawlOpts, refyne.WithConcurrency(opts.Concurrency))
-	}
-	if opts.SameDomainOnly {
-		crawlOpts = append(crawlOpts, refyne.WithSameDomainOnly(true))
-	}
-	if opts.ExtractFromSeeds {
-		crawlOpts = append(crawlOpts, refyne.WithExtractFromSeeds(true))
-	}
-
-	return crawlOpts
-}
-
 // crawlWithPrompt performs a multi-page extraction using a freeform prompt instead of a schema.
 // This iterates through URLs (from seeds, sitemap, or single URL) and extracts each page using the prompt.
+// Uses PromptPageExtractor which handles dynamic retry for bot protection and insufficient content.
 func (s *ExtractionService) crawlWithPrompt(ctx context.Context, userID string, input CrawlInput, callbacks *CrawlCallbacks) (*CrawlResult, error) {
 	if len(input.LLMConfigs) == 0 {
 		return nil, fmt.Errorf("no LLM configs provided")
@@ -726,7 +728,19 @@ func (s *ExtractionService) crawlWithPrompt(ctx context.Context, userID string, 
 		callbacks.OnURLsQueued(len(urls))
 	}
 
-	// Process each URL
+	// Create PromptPageExtractor - handles dynamic retry for all pages
+	extractor := NewPromptPageExtractor(s, PromptExtractorOptions{
+		PromptText:            promptText,
+		LLMConfig:             llmCfg,
+		CleanerChain:          input.CleanerChain,
+		IsBYOK:                isBYOK,
+		ContentDynamicAllowed: input.Options.ContentDynamicAllowed,
+		UserID:                userID,
+		Tier:                  input.Tier,
+		JobID:                 input.JobID,
+	})
+
+	// Process each URL using the extractor (gets dynamic retry for free!)
 	for i, pageURL := range urls {
 		select {
 		case <-ctx.Done():
@@ -739,7 +753,6 @@ func (s *ExtractionService) crawlWithPrompt(ctx context.Context, userID string, 
 			break
 		}
 
-		pageStart := time.Now()
 		pageResult := PageResult{
 			URL:         pageURL,
 			Depth:       0, // All seed URLs are depth 0
@@ -748,98 +761,83 @@ func (s *ExtractionService) crawlWithPrompt(ctx context.Context, userID string, 
 			LLMModel:    llmCfg.Model,
 		}
 
-		// Fetch and clean content
-		fetchStart := time.Now()
-		pageContent, fetchedURL, err := s.fetchAndCleanContent(ctx, pageURL, "", input.CleanerChain)
-		fetchDuration := time.Since(fetchStart)
-		pageResult.FetchDurationMs = int(fetchDuration.Milliseconds())
+		// Extract using PromptPageExtractor (handles dynamic retry internally)
+		extractResult, err := extractor.Extract(ctx, pageURL)
 
-		if err != nil {
-			pageResult.Error = fmt.Sprintf("failed to fetch page: %v", err)
-			pageResult.ErrorCategory = "fetch_error"
-			s.logger.Warn("prompt crawl fetch error",
+		if err != nil || (extractResult != nil && extractResult.Error != nil) {
+			// Handle error
+			errToUse := err
+			if errToUse == nil && extractResult != nil {
+				errToUse = extractResult.Error
+			}
+
+			errInfo := llm.WrapError(errToUse, llmCfg.Provider, llmCfg.Model, isBYOK)
+			pageResult.Error = errInfo.UserMessage
+			pageResult.ErrorCategory = errInfo.Category
+			if isBYOK {
+				pageResult.ErrorDetails = errToUse.Error()
+			}
+			if extractResult != nil {
+				pageResult.FetchDurationMs = extractResult.FetchDurationMs
+				pageResult.ExtractDurationMs = extractResult.ExtractDurationMs
+				pageResult.RetryCount = extractResult.RetryCount
+			}
+			s.logger.Warn("prompt crawl extraction error",
 				"job_id", input.JobID,
 				"url", pageURL,
-				"error", err,
+				"error", errToUse,
+				"used_dynamic", extractResult != nil && extractResult.UsedDynamicMode,
 			)
 		} else {
-			// Truncate content if too long
-			maxContentLen := 100000
-			if len(pageContent) > maxContentLen {
-				pageContent = pageContent[:maxContentLen] + "\n\n[Content truncated...]"
-			}
+			// Success
+			pageResult.URL = extractResult.URL
+			pageResult.Data = extractResult.Data
+			pageResult.TokenUsageInput = extractResult.TokensInput
+			pageResult.TokenUsageOutput = extractResult.TokensOutput
+			pageResult.FetchDurationMs = extractResult.FetchDurationMs
+			pageResult.ExtractDurationMs = extractResult.ExtractDurationMs
+			pageResult.RetryCount = extractResult.RetryCount
+			pageResult.RawContent = extractResult.RawContent
 
-			// Build and call LLM with prompt
-			extractPrompt := s.buildPromptExtractionPrompt(pageContent, promptText)
-			llmClient := NewLLMClient(s.logger)
-			result, llmErr := llmClient.Call(ctx, llmCfg, extractPrompt, LLMCallOptions{
-				Temperature: 0.1,
-				MaxTokens:   8192,
-				Timeout:     180 * time.Second,
-				JSONMode:    true,
-			})
+			totalTokensInput += extractResult.TokensInput
+			totalTokensOutput += extractResult.TokensOutput
+			allData = append(allData, extractResult.Data)
 
-			extractDuration := time.Since(pageStart) - fetchDuration
-			pageResult.ExtractDurationMs = int(extractDuration.Milliseconds())
-			pageResult.URL = fetchedURL // Use final URL after redirects
+			// Calculate costs
+			if s.billing != nil {
+				pageCosts := s.billing.CalculateCosts(ctx, CostInput{
+					TokensInput:  extractResult.TokensInput,
+					TokensOutput: extractResult.TokensOutput,
+					Model:        llmCfg.Model,
+					Provider:     llmCfg.Provider,
+					Tier:         input.Tier,
+					IsBYOK:       isBYOK,
+				})
+				cumulativeCostUSD += pageCosts.UserCostUSD
 
-			if llmErr != nil {
-				errInfo := llm.WrapError(llmErr, llmCfg.Provider, llmCfg.Model, isBYOK)
-				pageResult.Error = errInfo.UserMessage
-				pageResult.ErrorCategory = errInfo.Category
-				if isBYOK {
-					pageResult.ErrorDetails = llmErr.Error()
-				}
-				s.logger.Warn("prompt crawl extraction error",
-					"job_id", input.JobID,
-					"url", pageURL,
-					"error", llmErr,
-				)
-			} else {
-				// Parse response
-				var extractedData any
-				if jsonErr := json.Unmarshal([]byte(result.Content), &extractedData); jsonErr != nil {
-					extractedData = map[string]any{
-						"raw_response": result.Content,
-						"parse_error":  "Response was not valid JSON",
-					}
-				}
-
-				pageResult.Data = extractedData
-				pageResult.TokenUsageInput = result.InputTokens
-				pageResult.TokenUsageOutput = result.OutputTokens
-
-				totalTokensInput += result.InputTokens
-				totalTokensOutput += result.OutputTokens
-				allData = append(allData, extractedData)
-
-				// Calculate costs
-				if s.billing != nil {
-					pageCosts := s.billing.CalculateCosts(ctx, CostInput{
-						TokensInput:  result.InputTokens,
-						TokensOutput: result.OutputTokens,
-						Model:        llmCfg.Model,
-						Provider:     llmCfg.Provider,
-						Tier:         input.Tier,
-						IsBYOK:       isBYOK,
-					})
-					cumulativeCostUSD += pageCosts.UserCostUSD
-
-					// Check balance for next page
-					if checkBalance && pageCosts.UserCostUSD > 0 {
-						remaining := availableBalance - cumulativeCostUSD
-						if remaining < pageCosts.UserCostUSD {
-							s.logger.Warn("insufficient balance for next page",
-								"job_id", input.JobID,
-								"remaining", remaining,
-								"pages_completed", i+1,
-							)
-							stoppedEarly = true
-							stopReason = "insufficient_balance"
-						}
+				// Check balance for next page
+				if checkBalance && pageCosts.UserCostUSD > 0 {
+					remaining := availableBalance - cumulativeCostUSD
+					if remaining < pageCosts.UserCostUSD {
+						s.logger.Warn("insufficient balance for next page",
+							"job_id", input.JobID,
+							"remaining", remaining,
+							"pages_completed", i+1,
+						)
+						stoppedEarly = true
+						stopReason = "insufficient_balance"
 					}
 				}
 			}
+
+			s.logger.Info("extracted page",
+				"job_id", input.JobID,
+				"url", extractResult.URL,
+				"input_tokens", extractResult.TokensInput,
+				"output_tokens", extractResult.TokensOutput,
+				"used_dynamic", extractResult.UsedDynamicMode,
+				"retry_count", extractResult.RetryCount,
+			)
 		}
 
 		pageResults = append(pageResults, pageResult)

@@ -360,112 +360,53 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 			"fetch_mode", input.FetchMode,
 		)
 
-		// Determine effective fetch mode - keep "auto" to enable protection detection
-		effectiveFetchMode := input.FetchMode
-		if effectiveFetchMode == "" {
-			effectiveFetchMode = "auto"
-		}
-
-		// Track if we're on a dynamic retry (to avoid infinite loops)
-		dynamicRetryAttempted := false
-
-	extractAttempt:
-		// Create refyne instance with configured cleaner and fetch mode
 		// Use JobID if available, otherwise fall back to SchemaID for tracking
 		jobIDForTracking := ectx.JobID
 		if jobIDForTracking == "" {
 			jobIDForTracking = ectx.SchemaID
 		}
-		r, _, err := s.createRefyneInstanceWithFetchMode(llmCfg, input.CleanerChain, FetchModeConfig{
-			Mode:                  effectiveFetchMode,
+
+		// Create page extractor - handles dynamic retry internally
+		extractor := NewSchemaPageExtractor(s, sch, SchemaExtractorOptions{
+			LLMConfig:             llmCfg,
+			CleanerChain:          input.CleanerChain,
 			ContentDynamicAllowed: ectx.ContentDynamicAllowed,
 			UserID:                userID,
 			Tier:                  ectx.Tier,
 			JobID:                 jobIDForTracking,
 		})
-		if err != nil {
-			// Check for permission/configuration errors that shouldn't be retried
-			if errors.Is(err, ErrDynamicFetchNotAllowed) || errors.Is(err, ErrDynamicFetchNotConfigured) {
-				s.logger.Warn("fetch mode configuration error",
-					"fetch_mode", effectiveFetchMode,
-					"error", err,
-				)
-				return nil, err // Return immediately - this is a user/config error, not retryable
-			}
 
-			s.logger.Warn("failed to create LLM instance",
-				"provider", llmCfg.Provider,
-				"model", llmCfg.Model,
-				"error", err,
-			)
-			lastErr = err
-			lastLLMErr = llm.WrapError(err, llmCfg.Provider, llmCfg.Model, llmChain.IsBYOK())
-			continue // Try next provider in chain
-		}
-
-		// Perform extraction
-		result, err := r.Extract(ctx, input.URL, sch)
-		_ = r.Close()
+		// Perform extraction (dynamic retry happens inside Extract)
+		pageResult, err := extractor.Extract(ctx, input.URL)
 
 		// Check for success
-		if err == nil && result != nil && result.Error == nil {
-			// Success! Handle billing and return
-			return s.handleSuccessfulExtraction(ctx, userID, input, ectx, llmCfg, result, llmChain.IsBYOK(), startTime, budgetSkips)
+		if err == nil && pageResult != nil && pageResult.Error == nil {
+			// Convert PageExtractionResult to refyne.Result for existing billing handler
+			refyneResult := s.pageResultToRefyneResult(pageResult)
+			return s.handleSuccessfulExtraction(ctx, userID, input, ectx, llmCfg, refyneResult, llmChain.IsBYOK(), startTime, budgetSkips)
 		}
 
 		// Extraction failed - classify the error
 		if err != nil {
 			lastErr = err
-		} else if result != nil && result.Error != nil {
-			lastErr = result.Error
+		} else if pageResult != nil && pageResult.Error != nil {
+			lastErr = pageResult.Error
 		}
 
-		// Check if this is a bot protection error that we can retry with dynamic mode
+		// Check for config errors that shouldn't trigger fallback
+		if errors.Is(lastErr, ErrDynamicFetchNotAllowed) || errors.Is(lastErr, ErrDynamicFetchNotConfigured) {
+			return nil, lastErr
+		}
+
+		// Check if this is a bot protection error (extractor already tried dynamic if allowed)
 		var protectionErr *ErrBotProtectionDetected
 		if errors.As(lastErr, &protectionErr) {
-			s.logger.Info("bot protection detected during extraction",
-				"url", input.URL,
-				"protection_type", protectionErr.ProtectionType,
-				"fetch_mode", effectiveFetchMode,
-			)
-
-			// If we haven't tried dynamic yet and user has the feature, retry with dynamic
-			if !dynamicRetryAttempted && ectx.ContentDynamicAllowed && s.captchaSvc != nil {
-				s.logger.Info("auto-retrying extraction with browser rendering",
-					"url", input.URL,
-					"provider", llmCfg.Provider,
-				)
-				effectiveFetchMode = "dynamic"
-				dynamicRetryAttempted = true
-				goto extractAttempt
-			}
-
-			// Can't retry with dynamic - return the protection error as-is
 			return nil, protectionErr
 		}
 
-		// Check if this is an insufficient content error (page needs JavaScript rendering)
+		// Check if this is an insufficient content error (extractor already tried dynamic if allowed)
 		var insufficientErr *refyne.InsufficientContentError
 		if errors.As(lastErr, &insufficientErr) {
-			s.logger.Info("insufficient content detected during extraction",
-				"url", input.URL,
-				"content_size", insufficientErr.ContentSize,
-				"min_required", insufficientErr.MinRequired,
-				"fetch_mode", effectiveFetchMode,
-			)
-
-			// If we haven't tried dynamic yet and user has the feature, retry with dynamic
-			if !dynamicRetryAttempted && ectx.ContentDynamicAllowed && s.captchaSvc != nil {
-				s.logger.Info("auto-retrying extraction with browser rendering due to insufficient content",
-					"url", input.URL,
-					"provider", llmCfg.Provider,
-				)
-				effectiveFetchMode = "dynamic"
-				dynamicRetryAttempted = true
-				goto extractAttempt
-			}
-
-			// Can't retry with dynamic - return a helpful error
 			if !ectx.ContentDynamicAllowed {
 				return nil, fmt.Errorf("page has insufficient content (%d bytes) - likely requires JavaScript rendering which needs the content_dynamic feature", insufficientErr.ContentSize)
 			}
@@ -779,13 +720,6 @@ type FetchModeConfig struct {
 	JobID                 string // For tracking in dynamic fetcher
 }
 
-// createRefyneInstance creates a new refyne instance with the given LLM config.
-// Returns the refyne instance and the cleaner chain name for logging.
-// The cleanerChain parameter specifies which cleaners to use (empty uses default).
-func (s *ExtractionService) createRefyneInstance(llmCfg *LLMConfigInput, cleanerChain []CleanerConfig) (*refyne.Refyne, string, error) {
-	return s.createRefyneInstanceWithFetchMode(llmCfg, cleanerChain, FetchModeConfig{Mode: "static"})
-}
-
 // createRefyneInstanceWithFetchMode creates a new refyne instance with configurable fetch mode.
 // When fetchMode is "dynamic", uses browser rendering via the captcha service.
 // Returns the refyne instance and the cleaner chain name for logging.
@@ -914,16 +848,6 @@ func (s *ExtractionService) handleLLMError(err error, llmCfg *LLMConfigInput, is
 	)
 
 	return llmErr
-}
-
-// getDefaultLLMConfig returns the first available LLM configuration (for backward compatibility).
-func (s *ExtractionService) getDefaultLLMConfig(ctx context.Context) *LLMConfigInput {
-	if s.resolver != nil {
-		return s.resolver.GetDefaultConfig(ctx, "")
-	}
-	// Fallback if resolver not set - return nil (no hardcoded defaults)
-	s.logger.Error("resolver not set, no default LLM config available")
-	return nil
 }
 
 // ========================================
@@ -1186,4 +1110,28 @@ func resolveURL(rawURL string, baseURL *url.URL) string {
 
 	resolved := baseURL.ResolveReference(parsed)
 	return resolved.String()
+}
+
+// pageResultToRefyneResult converts a PageExtractionResult to a refyne.Result for compatibility
+// with existing billing handlers. This bridges the new PageExtractor interface with the existing code.
+func (s *ExtractionService) pageResultToRefyneResult(pr *PageExtractionResult) *refyne.Result {
+	if pr == nil {
+		return nil
+	}
+	return &refyne.Result{
+		URL:        pr.URL,
+		Data:       pr.Data,
+		RawContent: pr.RawContent,
+		FetchedAt:  time.Now(),
+		TokenUsage: refyne.TokenUsage{
+			InputTokens:  pr.TokensInput,
+			OutputTokens: pr.TokensOutput,
+		},
+		FetchDuration:   time.Duration(pr.FetchDurationMs) * time.Millisecond,
+		ExtractDuration: time.Duration(pr.ExtractDurationMs) * time.Millisecond,
+		Provider:        pr.Provider,
+		Model:           pr.Model,
+		GenerationID:    pr.GenerationID,
+		Error:           pr.Error,
+	}
 }
