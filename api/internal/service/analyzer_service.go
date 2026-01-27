@@ -944,7 +944,9 @@ func (s *AnalyzerService) analyzeWithLLM(ctx context.Context, mainURL string, ma
 
 	// Call LLM API using shared client
 	llmClient := NewLLMClient(s.logger)
-	llmResult, err := llmClient.Call(ctx, llmConfig, prompt, DefaultLLMCallOptions())
+	opts := DefaultLLMCallOptions()
+	opts.JSONMode = true // Request JSON response format for structured output
+	llmResult, err := llmClient.Call(ctx, llmConfig, prompt, opts)
 	if err != nil {
 		return nil, err
 	}
