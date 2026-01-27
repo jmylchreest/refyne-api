@@ -78,18 +78,23 @@ func NewServices(cfg *config.Config, repos *repository.Repositories, logger *slo
 	// Create shared LLM config resolver (used by extraction and analyzer services)
 	llmResolver := NewLLMConfigResolver(cfg, repos, encryptor, logger)
 
-	// Update pricing service with OpenRouter key from resolver (DB takes precedence over env)
+	// Set up dynamic key resolver for pricing service
+	// This allows pricing service to get fresh keys from DB on each refresh attempt
+	pricingSvc.SetKeyResolver(func(ctx context.Context) string {
+		keys := llmResolver.GetServiceKeys(ctx)
+		return keys.OpenRouterKey
+	})
+
+	// Also try to set static key now as initial value (may be empty at startup)
 	serviceKeys := llmResolver.GetServiceKeys(context.Background())
 	if serviceKeys.OpenRouterKey != "" {
 		pricingSvc.SetOpenRouterAPIKey(serviceKeys.OpenRouterKey)
-		logger.Info("pricing service initialized with OpenRouter key from resolver",
+		logger.Info("pricing service initialized with OpenRouter key",
 			"key_source", "resolver (DB or env)",
 			"key_length", len(serviceKeys.OpenRouterKey),
 		)
 	} else {
-		logger.Warn("pricing service has no OpenRouter key - cost lookups will require key from resolved LLM config",
-			"env_key_set", cfg.ServiceOpenRouterKey != "",
-		)
+		logger.Info("pricing service will resolve OpenRouter key dynamically on first use")
 	}
 
 	// Create extraction and analyzer services with resolver dependency

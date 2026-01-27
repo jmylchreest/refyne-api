@@ -444,6 +444,34 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 			return nil, protectionErr
 		}
 
+		// Check if this is an insufficient content error (page needs JavaScript rendering)
+		var insufficientErr *refyne.InsufficientContentError
+		if errors.As(lastErr, &insufficientErr) {
+			s.logger.Info("insufficient content detected during extraction",
+				"url", input.URL,
+				"content_size", insufficientErr.ContentSize,
+				"min_required", insufficientErr.MinRequired,
+				"fetch_mode", effectiveFetchMode,
+			)
+
+			// If we haven't tried dynamic yet and user has the feature, retry with dynamic
+			if !dynamicRetryAttempted && ectx.ContentDynamicAllowed && s.captchaSvc != nil {
+				s.logger.Info("auto-retrying extraction with browser rendering due to insufficient content",
+					"url", input.URL,
+					"provider", llmCfg.Provider,
+				)
+				effectiveFetchMode = "dynamic"
+				dynamicRetryAttempted = true
+				goto extractAttempt
+			}
+
+			// Can't retry with dynamic - return a helpful error
+			if !ectx.ContentDynamicAllowed {
+				return nil, fmt.Errorf("page has insufficient content (%d bytes) - likely requires JavaScript rendering which needs the content_dynamic feature", insufficientErr.ContentSize)
+			}
+			return nil, fmt.Errorf("page has insufficient content (%d bytes) - browser rendering failed or not configured", insufficientErr.ContentSize)
+		}
+
 		lastLLMErr = llm.WrapError(lastErr, llmCfg.Provider, llmCfg.Model, llmChain.IsBYOK())
 
 		s.logger.Warn("extraction failed",

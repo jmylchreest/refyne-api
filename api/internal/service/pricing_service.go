@@ -24,13 +24,18 @@ type ModelPricing struct {
 	Capabilities        llm.ModelCapabilities `json:"capabilities"`          // What features the model supports
 }
 
+// KeyResolverFunc is a function that resolves API keys dynamically.
+// This allows the pricing service to get fresh keys from the database/resolver.
+type KeyResolverFunc func(ctx context.Context) (openRouterKey string)
+
 // PricingService manages model pricing data from LLM providers.
 // Uses refyne's provider interfaces for cost tracking, estimation, and model listing.
 type PricingService struct {
 	logger *slog.Logger
 
 	// OpenRouter pricing cache
-	openRouterAPIKey string
+	openRouterAPIKey string      // Static fallback key (from config at startup)
+	keyResolver      KeyResolverFunc // Dynamic key resolver (preferred)
 	openRouterPrices map[string]*ModelPricing
 	openRouterMu     sync.RWMutex
 	lastRefresh      time.Time
@@ -52,10 +57,30 @@ func (s *PricingService) SetCapabilitiesCache(cache llm.CapabilitiesCache) {
 	s.capCache = cache
 }
 
-// SetOpenRouterAPIKey sets/updates the OpenRouter API key.
+// SetOpenRouterAPIKey sets/updates the static OpenRouter API key fallback.
 // This is called after initialization when keys are resolved from the database.
+// Prefer using SetKeyResolver for dynamic key resolution.
 func (s *PricingService) SetOpenRouterAPIKey(key string) {
 	s.openRouterAPIKey = key
+}
+
+// SetKeyResolver sets the dynamic key resolver function.
+// When set, this is used to get the current API key on each pricing refresh.
+// This ensures the pricing service picks up key changes from the database.
+func (s *PricingService) SetKeyResolver(resolver KeyResolverFunc) {
+	s.keyResolver = resolver
+}
+
+// getOpenRouterKey returns the OpenRouter API key, preferring dynamic resolution.
+func (s *PricingService) getOpenRouterKey(ctx context.Context) string {
+	// Try dynamic resolver first (gets current key from DB)
+	if s.keyResolver != nil {
+		if key := s.keyResolver(ctx); key != "" {
+			return key
+		}
+	}
+	// Fall back to static key
+	return s.openRouterAPIKey
 }
 
 // NewPricingService creates a new pricing service.
@@ -143,10 +168,13 @@ func (s *PricingService) ensureFresh(ctx context.Context) {
 
 // RefreshOpenRouterPricing fetches current pricing from OpenRouter using refyne's provider.
 func (s *PricingService) RefreshOpenRouterPricing(ctx context.Context) error {
+	// Get API key dynamically (allows picking up DB updates)
+	apiKey := s.getOpenRouterKey(ctx)
+
 	// Create an OpenRouter provider using refyne
-	// API key is optional for models endpoint but may provide more data
+	// API key is required for models endpoint
 	provider, err := refynellm.NewOpenRouterProvider(refynellm.ProviderConfig{
-		APIKey: s.openRouterAPIKey,
+		APIKey: apiKey,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create OpenRouter provider: %w", err)
@@ -271,7 +299,7 @@ func (s *PricingService) estimateCostViaRefyne(provider, model string, inputToke
 	// Get the API key for the provider (needed to create provider instance)
 	var apiKey string
 	if provider == "openrouter" {
-		apiKey = s.openRouterAPIKey
+		apiKey = s.getOpenRouterKey(context.Background())
 	}
 
 	// Create a refyne provider

@@ -13,13 +13,12 @@ require (
 	github.com/go-chi/httprate v0.15.0
 	github.com/gocolly/colly/v2 v2.3.0
 	github.com/golang-jwt/jwt/v5 v5.3.0
-	github.com/jmylchreest/refyne v0.1.6
+	github.com/jmylchreest/refyne v0.1.7
 	github.com/jmylchreest/slog-logfilter v0.0.1
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/stripe/stripe-go/v78 v78.12.0
 	github.com/svix/svix-webhooks v1.84.1
 	github.com/tursodatabase/go-libsql v0.0.0-20251219133454-43644db490ff
-	golang.org/x/crypto v0.47.0
 	golang.org/x/net v0.49.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -72,6 +71,7 @@ require (
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect
+	golang.org/x/crypto v0.47.0 // indirect
 	golang.org/x/exp v0.0.0-20260112195511-716be5621a96 // indirect
 	golang.org/x/sys v0.40.0 // indirect
 	golang.org/x/text v0.33.0 // indirect
