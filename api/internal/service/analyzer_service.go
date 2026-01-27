@@ -51,6 +51,16 @@ func (s *AnalyzerService) getStrictMode(ctx context.Context, provider, model str
 	return strictMode
 }
 
+// supportsResponseFormat checks if a model supports the response_format parameter.
+// Used to determine if JSON mode can be enabled for better structured output.
+func (s *AnalyzerService) supportsResponseFormat(ctx context.Context, provider, model string) bool {
+	if s.resolver != nil {
+		return s.resolver.SupportsResponseFormat(ctx, provider, model)
+	}
+	// Assume support for OpenAI-compatible providers
+	return provider == "openai" || provider == "openrouter"
+}
+
 // NewAnalyzerService creates a new analyzer service (legacy constructor).
 func NewAnalyzerService(cfg *config.Config, repos *repository.Repositories, logger *slog.Logger) *AnalyzerService {
 	return NewAnalyzerServiceWithBilling(cfg, repos, nil, nil, logger)
@@ -945,7 +955,9 @@ func (s *AnalyzerService) analyzeWithLLM(ctx context.Context, mainURL string, ma
 	// Call LLM API using shared client
 	llmClient := NewLLMClient(s.logger)
 	opts := DefaultLLMCallOptions()
-	opts.JSONMode = true // Request JSON response format for structured output
+	// Enable JSON mode if the model supports response_format parameter
+	// This hints the model to output JSON, improving structured output compliance
+	opts.JSONMode = s.supportsResponseFormat(ctx, llmConfig.Provider, llmConfig.Model)
 	llmResult, err := llmClient.Call(ctx, llmConfig, prompt, opts)
 	if err != nil {
 		return nil, err

@@ -135,6 +135,18 @@ func (r *LLMConfigResolver) GetStrictMode(ctx context.Context, provider, model s
 	return strictMode
 }
 
+// SupportsResponseFormat checks if a model supports the response_format parameter.
+// This is weaker than strict structured outputs - it just hints JSON output.
+// Uses cached capabilities from OpenRouter when available.
+func (r *LLMConfigResolver) SupportsResponseFormat(ctx context.Context, provider, model string) bool {
+	if r.registry != nil {
+		caps := r.registry.GetModelCapabilities(ctx, provider, model)
+		return caps.SupportsResponseFormat
+	}
+	// Assume support for OpenAI-compatible providers
+	return provider == "openai" || provider == "openrouter"
+}
+
 // GetMaxTokens returns the recommended max tokens for a model.
 // Priority: 1) chain config override (S3), 2) OpenRouter API max_completion_tokens, 3) provider defaults
 // If chainMaxTokens is provided (from S3 fallback chain), it takes highest precedence.
