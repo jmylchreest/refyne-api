@@ -316,6 +316,7 @@ type CrawlOptions struct {
 	UseSitemap            bool            `json:"use_sitemap,omitempty"`
 	FetchMode             string          `json:"fetch_mode,omitempty"`              // auto, static, or dynamic
 	ContentDynamicAllowed bool            `json:"content_dynamic_allowed,omitempty"` // Whether user has content_dynamic feature (set at job creation)
+	SkipCreditCheck       bool            `json:"skip_credit_check,omitempty"`       // Whether user has skip_credit_check feature (disables mid-crawl balance check)
 	CleanerChain          []CleanerConfig `json:"cleaner_chain,omitempty"`
 }
 

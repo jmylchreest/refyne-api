@@ -512,6 +512,7 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 			UseSitemap:            options.UseSitemap,
 			FetchMode:             options.FetchMode,
 			ContentDynamicAllowed: options.ContentDynamicAllowed,
+			SkipCreditCheck:       options.SkipCreditCheck,
 		},
 	}, service.CrawlCallbacks{
 		OnResult:     resultCallback,

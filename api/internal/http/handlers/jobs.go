@@ -210,6 +210,7 @@ func (h *JobHandler) CreateCrawlJob(ctx context.Context, input *CreateCrawlJobIn
 			UseSitemap:            input.Body.Options.UseSitemap,
 			FetchMode:             input.Body.Options.FetchMode,
 			ContentDynamicAllowed: uc.ContentDynamicAllowed,
+			SkipCreditCheck:       uc.SkipCreditCheckAllowed,
 		},
 		CleanerChain: cleanerChain,
 		WebhookURL:   input.Body.WebhookURL,

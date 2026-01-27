@@ -319,10 +319,11 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 	isBYOK := input.IsBYOK
 
 	// Get available balance for non-BYOK users (for mid-crawl balance enforcement)
+	// Skip balance check if user has skip_credit_check feature enabled
 	var availableBalance float64
 	var checkBalance bool
 	var err error
-	if !isBYOK && s.billing != nil {
+	if !isBYOK && !input.Options.SkipCreditCheck && s.billing != nil {
 		checkBalance = true
 		availableBalance, err = s.billing.GetAvailableBalance(ctx, userID)
 		if err != nil {
@@ -707,9 +708,10 @@ func (s *ExtractionService) crawlWithPrompt(ctx context.Context, userID string, 
 	var stopReason string
 
 	// Get available balance for non-BYOK users
+	// Skip balance check if user has skip_credit_check feature enabled
 	var availableBalance float64
 	var checkBalance bool
-	if !isBYOK && s.billing != nil {
+	if !isBYOK && !input.Options.SkipCreditCheck && s.billing != nil {
 		var err error
 		availableBalance, err = s.billing.GetAvailableBalance(ctx, userID)
 		if err != nil {
