@@ -1071,7 +1071,7 @@ The suggested_schema MUST be a YAML string with this structure:
 name: SchemaName
 description: What this schema extracts
 fields:
-  - name: [category_name]
+  - name: first_category
     type: array
     items:
       type: object
@@ -1082,7 +1082,19 @@ fields:
         - name: url
           type: string
           required: true
-        # Add category-specific fields as needed
+  - name: second_category
+    type: array
+    items:
+      type: object
+      properties:
+        - name: title
+          type: string
+          required: true
+        - name: url
+          type: string
+          required: true
+
+**CRITICAL**: Each content category (e.g., jobs, products, recipes) MUST be a SEPARATE top-level item in the fields array. Do NOT nest one category inside another. The dash (-) for each category must align at the same indentation level under "fields:".
 `)
 
 	// Add contextual examples based on detected content types
