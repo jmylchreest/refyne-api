@@ -299,12 +299,3 @@ func normalizeDiscoveredURL(rawURL string) string {
 
 	return parsed.String()
 }
-
-// GetURLStrings extracts just the URL strings from discovered URLs.
-func GetURLStrings(discovered []DiscoveredURL) []string {
-	urls := make([]string, len(discovered))
-	for i, d := range discovered {
-		urls[i] = d.URL
-	}
-	return urls
-}

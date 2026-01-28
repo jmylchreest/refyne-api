@@ -127,12 +127,8 @@ func (d *Detector) checkHeaders(headers http.Header) DetectionResult {
 		}
 	}
 
-	// Server header indicating protection services
-	server := strings.ToLower(headers.Get("server"))
-	if strings.Contains(server, "cloudflare") {
-		// Just having cloudflare doesn't mean blocked, but note it
-		// We'll rely on content detection for actual challenges
-	}
+	// Note: Server header containing "cloudflare" alone doesn't indicate blocking.
+	// We rely on content detection for actual challenges (handled by DetectFromContent).
 
 	return DetectionResult{Detected: false}
 }
