@@ -57,7 +57,7 @@ func (h *SolveHandler) Handle(ctx context.Context, req *models.SolveRequest) *mo
 
 	// Wait for pool to be ready (warmup to complete)
 	// This blocks requests during startup but ensures they succeed
-	if !h.pool.Ready() {
+	if h.pool != nil && !h.pool.Ready() {
 		h.logger.Info("waiting for browser pool warmup...")
 		if err := h.pool.WaitReady(ctx); err != nil {
 			return models.NewErrorResponse("service starting up, please retry", startTime, time.Now().UnixMilli(), ver, "")
