@@ -1,10 +1,11 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useCallback, useState, useEffect } from 'react';
 import yaml from 'js-yaml';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Textarea } from '@/components/ui/textarea';
+import { CodeEditor } from '@/components/ui/code-editor';
+import { FormatToggle, type FormatType } from '@/components/ui/format-toggle';
 import {
   Select,
   SelectContent,
@@ -12,6 +13,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { Loader2, Play, Save, BookOpen, Copy, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Schema } from '@/lib/api';
@@ -50,16 +57,19 @@ export function SchemaEditor({
   extractionMode,
   canCrawl,
 }: SchemaEditorProps) {
-  // Detect input format for visual indicator
-  const detectedInputFormat = useMemo((): InputFormat => {
-    const trimmed = schema.trim();
-    if (!trimmed) return 'YAML'; // Default when empty
+  // Track preferred format for display
+  const [displayFormat, setDisplayFormat] = useState<FormatType>('json');
 
-    // Try JSON first
+  // Detect if content is a structured schema or freeform prompt
+  const contentType = useMemo((): 'schema' | 'prompt' => {
+    const trimmed = schema.trim();
+    if (!trimmed) return 'schema';
+
+    // Try JSON
     try {
       const parsed = JSON.parse(trimmed);
       if (typeof parsed === 'object' && parsed !== null) {
-        return 'JSON';
+        return 'schema';
       }
     } catch {
       // Not JSON
@@ -69,14 +79,77 @@ export function SchemaEditor({
     try {
       const parsed = yaml.load(trimmed);
       if (typeof parsed === 'object' && parsed !== null) {
-        return 'YAML';
+        return 'schema';
       }
     } catch {
-      // Not valid YAML object either
+      // Not YAML
     }
 
-    // If neither parsed as an object, it's a freeform prompt
-    return 'PROMPT';
+    return 'prompt';
+  }, [schema]);
+
+  // Detect current format of schema content
+  const currentFormat = useMemo((): FormatType => {
+    const trimmed = schema.trim();
+    if (!trimmed) return displayFormat;
+
+    try {
+      JSON.parse(trimmed);
+      return 'json';
+    } catch {
+      return 'yaml';
+    }
+  }, [schema, displayFormat]);
+
+  // Convert schema between formats
+  const convertSchema = useCallback(
+    (targetFormat: FormatType) => {
+      const trimmed = schema.trim();
+      if (!trimmed || contentType === 'prompt') {
+        setDisplayFormat(targetFormat);
+        return;
+      }
+
+      try {
+        // Parse current content
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(trimmed);
+        } catch {
+          parsed = yaml.load(trimmed);
+        }
+
+        if (typeof parsed !== 'object' || parsed === null) {
+          setDisplayFormat(targetFormat);
+          return;
+        }
+
+        // Convert to target format
+        if (targetFormat === 'json') {
+          onSchemaChange(JSON.stringify(parsed, null, 2));
+        } else {
+          onSchemaChange(yaml.dump(parsed, { indent: 2, lineWidth: -1 }));
+        }
+        setDisplayFormat(targetFormat);
+      } catch {
+        // If conversion fails, just change the display preference
+        setDisplayFormat(targetFormat);
+      }
+    },
+    [schema, contentType, onSchemaChange]
+  );
+
+  // Update display format when schema changes from external source (e.g., analyze result)
+  useEffect(() => {
+    const trimmed = schema.trim();
+    if (!trimmed) return;
+
+    try {
+      JSON.parse(trimmed);
+      setDisplayFormat('json');
+    } catch {
+      // Keep current format preference for YAML
+    }
   }, [schema]);
 
   const getButtonLabel = () => {
@@ -89,37 +162,48 @@ export function SchemaEditor({
     return 'Extract';
   };
 
-  const getButtonClass = () => {
+  const getButtonVariant = () => {
     if (extractionMode === 'crawl' && canCrawl) {
-      return 'bg-amber-600 hover:bg-amber-700';
+      return 'bg-amber-600 hover:bg-amber-700 text-white';
     }
     if (extractionMode === 'sitemap' && canCrawl) {
-      return 'bg-emerald-600 hover:bg-emerald-700';
+      return 'bg-emerald-600 hover:bg-emerald-700 text-white';
     }
     return '';
   };
 
+  const editorLanguage = contentType === 'prompt' ? 'text' : currentFormat;
+
   return (
-    <div className="flex-1 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm flex flex-col min-h-0">
-      {/* Schema Header */}
-      <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 px-4 py-2">
-        <div className="flex items-center gap-3">
-          <span className="text-sm font-medium">Schema</span>
-          <Badge
-            variant={detectedInputFormat === 'PROMPT' ? 'default' : 'secondary'}
-            className={`text-[10px] px-1.5 py-0 ${
-              detectedInputFormat === 'PROMPT'
-                ? 'bg-violet-500 hover:bg-violet-600 text-white'
-                : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'
-            }`}
-          >
-            {detectedInputFormat}
-          </Badge>
+    <div className="flex-1 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm flex flex-col min-h-0 overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 px-3 py-2 gap-2 shrink-0">
+        {/* Left side: Title, Format Toggle, Schema Select */}
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-sm font-medium shrink-0">Schema</span>
+
+          {contentType === 'schema' ? (
+            <FormatToggle
+              value={displayFormat}
+              onChange={convertSchema}
+              disabled={isLoading}
+            />
+          ) : (
+            <Badge
+              variant="default"
+              className="bg-violet-500 hover:bg-violet-600 text-white text-[10px] px-1.5 py-0"
+            >
+              PROMPT
+            </Badge>
+          )}
+
+          <div className="w-px h-4 bg-zinc-200 dark:bg-zinc-700 shrink-0" />
+
           <Select value={selectedSchemaId} onValueChange={onSchemaSelect}>
-            <SelectTrigger className="h-8 w-[160px] text-xs">
+            <SelectTrigger className="h-7 w-[140px] text-xs">
               <BookOpen className="h-3 w-3 mr-1.5 shrink-0" />
               <span className="truncate">
-                <SelectValue placeholder="Load schema..." />
+                <SelectValue placeholder="Load..." />
               </span>
             </SelectTrigger>
             <SelectContent>
@@ -128,7 +212,7 @@ export function SchemaEditor({
                   <div className="flex items-center gap-2">
                     {s.name}
                     {s.is_platform && (
-                      <Badge variant="secondary" className="text-xs">
+                      <Badge variant="secondary" className="text-[10px] px-1">
                         Platform
                       </Badge>
                     )}
@@ -137,59 +221,84 @@ export function SchemaEditor({
               ))}
               {schemas.length === 0 && (
                 <SelectItem value="none" disabled>
-                  No schemas available
+                  No schemas
                 </SelectItem>
               )}
             </SelectContent>
           </Select>
+        </div>
+
+        {/* Right side: Actions */}
+        <div className="flex items-center gap-1 shrink-0">
+          <TooltipProvider delayDuration={300}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={onSave}
+                  className="h-7 w-7"
+                  disabled={isLoading}
+                >
+                  <Save className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Save schema</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+
+          <TooltipProvider delayDuration={300}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={onCopy}
+                  className="h-7 w-7"
+                  disabled={isLoading}
+                >
+                  {isCopied ? (
+                    <Check className="h-3.5 w-3.5 text-green-500" />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5" />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                {isCopied ? 'Copied!' : 'Copy schema'}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+
+          <div className="w-px h-4 bg-zinc-200 dark:bg-zinc-700" />
+
           <Button
-            variant="ghost"
             size="sm"
-            onClick={onSave}
-            className="h-8 text-xs"
+            onClick={onExtract}
+            disabled={isLoading || disabled}
+            className={cn('h-7 text-xs px-3', getButtonVariant())}
           >
-            <Save className="h-3 w-3 mr-1" />
-            Save
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onCopy}
-            className="h-8 w-8"
-            title="Copy schema"
-          >
-            {isCopied ? (
-              <Check className="h-3 w-3 text-green-500" />
+            {isLoading ? (
+              <Loader2 className="h-3 w-3 animate-spin mr-1.5" />
             ) : (
-              <Copy className="h-3 w-3" />
+              <Play className="h-3 w-3 mr-1.5" />
             )}
+            {getButtonLabel()}
           </Button>
         </div>
-        <Button
-          size="sm"
-          onClick={onExtract}
-          disabled={isLoading || disabled}
-          className={cn('h-8', getButtonClass())}
-        >
-          {isLoading ? (
-            <Loader2 className="h-3 w-3 animate-spin mr-1" />
-          ) : (
-            <Play className="h-3 w-3 mr-1" />
-          )}
-          {getButtonLabel()}
-        </Button>
       </div>
 
-      {/* Schema Editor */}
-      <form onSubmit={onExtract} className="flex-1 min-h-0 flex flex-col">
-        <Textarea
-          placeholder="Enter a schema (YAML/JSON) or natural language prompt..."
+      {/* Editor */}
+      <div className="flex-1 min-h-0">
+        <CodeEditor
           value={schema}
-          onChange={(e) => onSchemaChange(e.target.value)}
-          className="flex-1 font-mono text-sm border-0 rounded-none resize-none focus-visible:ring-0 focus-visible:ring-offset-0"
+          onChange={onSchemaChange}
+          language={editorLanguage}
+          placeholder="Enter a schema (YAML/JSON) or natural language prompt..."
           disabled={isLoading}
+          className="h-full"
         />
-      </form>
+      </div>
     </div>
   );
 }
