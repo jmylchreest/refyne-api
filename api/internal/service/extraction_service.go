@@ -258,9 +258,15 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 	llmChain := s.resolveLLMConfigChain(ctx, userID, input.LLMConfig, ectx.Tier, ectx.BYOKAllowed, ectx.ModelsCustomAllowed, ectx.LLMProvider, ectx.LLMModel)
 	ectx.IsBYOK = llmChain.IsBYOK()
 
-	s.logger.Debug("LLM config chain resolved",
+	// Log the full chain for debugging fallback issues
+	chainModels := make([]string, 0, llmChain.Len())
+	for _, cfg := range llmChain.All() {
+		chainModels = append(chainModels, cfg.Model)
+	}
+	s.logger.Info("LLM config chain resolved",
 		"chain_length", llmChain.Len(),
 		"is_byok", llmChain.IsBYOK(),
+		"models", chainModels,
 	)
 
 	// For models_premium users, get available balance for per-model budget checking
@@ -432,16 +438,38 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 			break
 		}
 
-		// Brief delay before trying next provider
-		s.logger.Info("falling back to next provider",
-			"provider", llmCfg.Provider,
-			"category", lastLLMErr.Category,
-		)
+		// Brief delay before trying next provider (if there is one)
+		pos, total = llmChain.Position()
+		if pos >= total {
+			s.logger.Warn("no more models in fallback chain",
+				"failed_provider", llmCfg.Provider,
+				"failed_model", llmCfg.Model,
+				"category", lastLLMErr.Category,
+				"chain_position", pos,
+				"chain_total", total,
+			)
+		} else {
+			s.logger.Info("falling back to next provider",
+				"failed_provider", llmCfg.Provider,
+				"failed_model", llmCfg.Model,
+				"category", lastLLMErr.Category,
+				"chain_position", pos,
+				"chain_total", total,
+			)
+		}
 		time.Sleep(constants.ProviderFallbackDelay)
 	}
 
 	// All attempts failed - record the failure with detailed error info
 	if lastErr != nil {
+		pos, total := llmChain.Position()
+		s.logger.Warn("all providers exhausted",
+			"last_provider", lastCfg.Provider,
+			"last_model", lastCfg.Model,
+			"chain_position", pos,
+			"chain_total", total,
+			"error", lastErr,
+		)
 		s.recordFailedExtractionWithDetails(ctx, userID, input, ectx, lastCfg, llmChain.IsBYOK(), lastErr, lastLLMErr, llmChain.Len(), startTime, budgetSkips)
 		return nil, s.handleLLMError(lastErr, lastCfg, llmChain.IsBYOK())
 	}
