@@ -99,7 +99,7 @@ type AnalysisResult struct {
 	SiteSummary          string            `json:"site_summary"`
 	PageType             PageType          `json:"page_type"`
 	DetectedElements     []DetectedElement `json:"detected_elements"`
-	SuggestedSchema      string            `json:"suggested_schema"` // YAML
+	SuggestedSchema      any               `json:"suggested_schema"` // JSON object or YAML string
 	FollowPatterns       []FollowPattern   `json:"follow_patterns"`
 	SampleLinks          []string          `json:"sample_links"`
 	RecommendedFetchMode FetchMode         `json:"recommended_fetch_mode"`

@@ -142,7 +142,7 @@ type AnalyzeOutput struct {
 	SiteSummary          string                   `json:"site_summary"`
 	PageType             models.PageType          `json:"page_type"`
 	DetectedElements     []models.DetectedElement `json:"detected_elements"`
-	SuggestedSchema      string                   `json:"suggested_schema"` // YAML
+	SuggestedSchema      any                      `json:"suggested_schema"` // JSON object matching schema.Schema structure
 	FollowPatterns       []models.FollowPattern   `json:"follow_patterns"`
 	SampleLinks          []string                 `json:"sample_links"`
 	RecommendedFetchMode models.FetchMode         `json:"recommended_fetch_mode"`
@@ -1062,39 +1062,38 @@ Generate a schema that works across listing AND detail pages. Fields should be o
   "site_summary": "Brief description",
   "page_type": "listing|detail|article|product|unknown",
   "detected_elements": [{"name": "...", "type": "string|number|array", "count": N}],
-  "suggested_schema": "<YAML schema - see structure below>",
+  "suggested_schema": {
+    "name": "SchemaName",
+    "description": "What this schema extracts",
+    "fields": [
+      {
+        "name": "first_category",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": [
+            {"name": "title", "type": "string", "required": true},
+            {"name": "url", "type": "string", "required": true}
+          ]
+        }
+      },
+      {
+        "name": "second_category",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": [
+            {"name": "title", "type": "string", "required": true},
+            {"name": "url", "type": "string", "required": true}
+          ]
+        }
+      }
+    ]
+  },
   "follow_patterns": [{"pattern": "a[href*='/path/']", "description": "..."}]
 }
 
-The suggested_schema MUST be a YAML string with this structure:
-
-name: SchemaName
-description: What this schema extracts
-fields:
-  - name: first_category
-    type: array
-    items:
-      type: object
-      properties:
-        - name: title
-          type: string
-          required: true
-        - name: url
-          type: string
-          required: true
-  - name: second_category
-    type: array
-    items:
-      type: object
-      properties:
-        - name: title
-          type: string
-          required: true
-        - name: url
-          type: string
-          required: true
-
-**CRITICAL**: Each content category (e.g., jobs, products, recipes) MUST be a SEPARATE top-level item in the fields array. Do NOT nest one category inside another. The dash (-) for each category must align at the same indentation level under "fields:".
+The suggested_schema MUST be a JSON object (not a string). Each content category (e.g., jobs, products, recipes) MUST be a SEPARATE object in the "fields" array.
 `)
 
 	// Add contextual examples based on detected content types
@@ -1131,12 +1130,12 @@ func (s *AnalyzerService) parseAnalysisResponse(response string) (*AnalyzeOutput
 		SiteSummary      string `json:"site_summary"`
 		PageType         string `json:"page_type"`
 		DetectedElements []struct {
-			Name        string          `json:"name"`
-			Type        string          `json:"type"`
-			Count       models.FlexInt  `json:"count"`
-			Description string          `json:"description"`
+			Name        string         `json:"name"`
+			Type        string         `json:"type"`
+			Count       models.FlexInt `json:"count"`
+			Description string         `json:"description"`
 		} `json:"detected_elements"`
-		SuggestedSchema string `json:"suggested_schema"`
+		SuggestedSchema any `json:"suggested_schema"` // JSON object (preferred) or string (legacy)
 		FollowPatterns  []struct {
 			Pattern     string   `json:"pattern"`
 			Description string   `json:"description"`

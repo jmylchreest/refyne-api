@@ -49,7 +49,7 @@ type AnalysisResultOutput struct {
 	SiteSummary          string                  `json:"site_summary" doc:"Brief site description"`
 	PageType             string                  `json:"page_type" doc:"Detected page type"`
 	DetectedElements     []DetectedElementOutput `json:"detected_elements" doc:"Detected data elements"`
-	SuggestedSchema      string                  `json:"suggested_schema" doc:"Suggested YAML schema"`
+	SuggestedSchema      any                     `json:"suggested_schema" doc:"Schema suggestion (JSON object)"`
 	FollowPatterns       []FollowPatternOutput   `json:"follow_patterns" doc:"Follow patterns"`
 	SampleLinks          []string                `json:"sample_links" doc:"Sample links found"`
 	RecommendedFetchMode string                  `json:"recommended_fetch_mode" doc:"Recommended fetch mode"`
@@ -117,13 +117,13 @@ func (h *SavedSitesHandler) GetSavedSite(ctx context.Context, input *GetSavedSit
 
 // AnalysisResultInput represents analysis result in request body.
 type AnalysisResultInput struct {
-	SiteSummary          string                  `json:"site_summary,omitempty" doc:"Brief site description"`
-	PageType             string                  `json:"page_type,omitempty" doc:"Detected page type"`
-	DetectedElements     []DetectedElementInput  `json:"detected_elements,omitempty" doc:"Detected data elements"`
-	SuggestedSchema      string                  `json:"suggested_schema,omitempty" doc:"Suggested YAML schema"`
-	FollowPatterns       []FollowPatternInput    `json:"follow_patterns,omitempty" doc:"Follow patterns"`
-	SampleLinks          []string                `json:"sample_links,omitempty" doc:"Sample links found"`
-	RecommendedFetchMode string                  `json:"recommended_fetch_mode,omitempty" doc:"Recommended fetch mode"`
+	SiteSummary          string                 `json:"site_summary,omitempty" doc:"Brief site description"`
+	PageType             string                 `json:"page_type,omitempty" doc:"Detected page type"`
+	DetectedElements     []DetectedElementInput `json:"detected_elements,omitempty" doc:"Detected data elements"`
+	SuggestedSchema      any                    `json:"suggested_schema,omitempty" doc:"Schema (JSON object or YAML string)"`
+	FollowPatterns       []FollowPatternInput   `json:"follow_patterns,omitempty" doc:"Follow patterns"`
+	SampleLinks          []string               `json:"sample_links,omitempty" doc:"Sample links found"`
+	RecommendedFetchMode string                 `json:"recommended_fetch_mode,omitempty" doc:"Recommended fetch mode"`
 }
 
 // DetectedElementInput represents a detected element in request body.
