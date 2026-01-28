@@ -147,12 +147,29 @@ func (r *LLMConfigResolver) SupportsResponseFormat(ctx context.Context, provider
 	return provider == "openai" || provider == "openrouter"
 }
 
+// MaxOutputTokensCap is the maximum output tokens we'll request from any model.
+// This prevents requesting more output tokens than the model can handle when
+// max_completion_tokens is very high (e.g., 131072 for some models where it
+// matches the context window size, causing input+output > context_length errors).
+// 32768 is reasonable for extraction tasks and well within most models' capabilities.
+const MaxOutputTokensCap = 32768
+
 // GetMaxTokens returns the recommended max tokens for a model.
 // Priority: 1) chain config override (S3), 2) OpenRouter API max_completion_tokens, 3) provider defaults
 // If chainMaxTokens is provided (from S3 fallback chain), it takes highest precedence.
+// All values are capped to MaxOutputTokensCap to prevent context overflow errors.
 func (r *LLMConfigResolver) GetMaxTokens(ctx context.Context, provider, model string, chainMaxTokens *int) int {
 	// If chain config explicitly sets MaxTokens, use that (highest priority)
+	// Chain config is intentional so we respect it, but still cap to prevent errors
 	if chainMaxTokens != nil && *chainMaxTokens > 0 {
+		if *chainMaxTokens > MaxOutputTokensCap {
+			r.logger.Debug("capping chain max_tokens to prevent context overflow",
+				"model", model,
+				"requested", *chainMaxTokens,
+				"capped_to", MaxOutputTokensCap,
+			)
+			return MaxOutputTokensCap
+		}
 		return *chainMaxTokens
 	}
 
@@ -160,6 +177,16 @@ func (r *LLMConfigResolver) GetMaxTokens(ctx context.Context, provider, model st
 	// This provides dynamic, auto-updating token limits without S3 config
 	if provider == llm.ProviderOpenRouter && r.pricing != nil {
 		if apiMaxTokens := r.pricing.GetMaxCompletionTokens(provider, model); apiMaxTokens > 0 {
+			// Cap to prevent context overflow (e.g., GLM 4.5 Air reports 131072 which
+			// equals its context window, causing input+output > context_length errors)
+			if apiMaxTokens > MaxOutputTokensCap {
+				r.logger.Debug("capping OpenRouter API max_completion_tokens to prevent context overflow",
+					"model", model,
+					"api_max_completion_tokens", apiMaxTokens,
+					"capped_to", MaxOutputTokensCap,
+				)
+				return MaxOutputTokensCap
+			}
 			r.logger.Debug("using OpenRouter API max_completion_tokens",
 				"model", model,
 				"max_completion_tokens", apiMaxTokens,
