@@ -557,11 +557,8 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 		)
 	}
 
-	if err := w.jobRepo.Update(ctx, job); err != nil {
-		w.logger.Error("failed to update job", "job_id", job.ID, "error", err)
-	}
-
-	// Store results to object storage (Tigris) for later retrieval
+	// Store results to object storage (Tigris) BEFORE marking job complete
+	// This prevents race condition where client polls, sees "completed", but results aren't in S3 yet
 	if w.storageSvc != nil && w.storageSvc.IsEnabled() {
 		jobResults := &service.JobResults{
 			JobID:       job.ID,
@@ -603,6 +600,11 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 				)
 			}
 		}
+	}
+
+	// Mark job as completed in DB AFTER results are stored to S3
+	if err := w.jobRepo.Update(ctx, job); err != nil {
+		w.logger.Error("failed to update job", "job_id", job.ID, "error", err)
 	}
 
 	// Send webhooks (both ephemeral if configured, and user's saved webhooks)
