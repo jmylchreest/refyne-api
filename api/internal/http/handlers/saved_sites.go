@@ -49,7 +49,7 @@ type AnalysisResultOutput struct {
 	SiteSummary          string                  `json:"site_summary" doc:"Brief site description"`
 	PageType             string                  `json:"page_type" doc:"Detected page type"`
 	DetectedElements     []DetectedElementOutput `json:"detected_elements" doc:"Detected data elements"`
-	SuggestedSchema      any                     `json:"suggested_schema" doc:"Schema suggestion (JSON object)"`
+	SuggestedSchema      string                  `json:"suggested_schema" doc:"Schema suggestion (JSON format)"`
 	FollowPatterns       []FollowPatternOutput   `json:"follow_patterns" doc:"Follow patterns"`
 	SampleLinks          []string                `json:"sample_links" doc:"Sample links found"`
 	RecommendedFetchMode string                  `json:"recommended_fetch_mode" doc:"Recommended fetch mode"`
@@ -120,7 +120,7 @@ type AnalysisResultInput struct {
 	SiteSummary          string                 `json:"site_summary,omitempty" doc:"Brief site description"`
 	PageType             string                 `json:"page_type,omitempty" doc:"Detected page type"`
 	DetectedElements     []DetectedElementInput `json:"detected_elements,omitempty" doc:"Detected data elements"`
-	SuggestedSchema      any                    `json:"suggested_schema,omitempty" doc:"Schema (JSON object or YAML string)"`
+	SuggestedSchema      string                 `json:"suggested_schema,omitempty" doc:"Schema (JSON or YAML format)"`
 	FollowPatterns       []FollowPatternInput   `json:"follow_patterns,omitempty" doc:"Follow patterns"`
 	SampleLinks          []string               `json:"sample_links,omitempty" doc:"Sample links found"`
 	RecommendedFetchMode string                 `json:"recommended_fetch_mode,omitempty" doc:"Recommended fetch mode"`

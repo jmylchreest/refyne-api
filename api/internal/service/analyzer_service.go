@@ -142,7 +142,7 @@ type AnalyzeOutput struct {
 	SiteSummary          string                   `json:"site_summary"`
 	PageType             models.PageType          `json:"page_type"`
 	DetectedElements     []models.DetectedElement `json:"detected_elements"`
-	SuggestedSchema      any                      `json:"suggested_schema"` // JSON object matching schema.Schema structure
+	SuggestedSchema      string                   `json:"suggested_schema"` // JSON string (pretty-printed)
 	FollowPatterns       []models.FollowPattern   `json:"follow_patterns"`
 	SampleLinks          []string                 `json:"sample_links"`
 	RecommendedFetchMode models.FetchMode         `json:"recommended_fetch_mode"`
@@ -1157,11 +1157,27 @@ func (s *AnalyzerService) parseAnalysisResponse(response string) (*AnalyzeOutput
 		}
 	}
 
+	// Convert schema to pretty-printed JSON string for client compatibility
+	// The LLM returns a JSON object, but the client expects a string
+	var schemaString string
+	if parsed.SuggestedSchema != nil {
+		if str, ok := parsed.SuggestedSchema.(string); ok {
+			// Already a string (legacy format)
+			schemaString = str
+		} else {
+			// JSON object - serialize to pretty-printed JSON string
+			schemaBytes, err := json.MarshalIndent(parsed.SuggestedSchema, "", "  ")
+			if err == nil {
+				schemaString = string(schemaBytes)
+			}
+		}
+	}
+
 	// Convert to output format
 	output := &AnalyzeOutput{
 		SiteSummary:     parsed.SiteSummary,
 		PageType:        s.parsePageType(parsed.PageType),
-		SuggestedSchema: parsed.SuggestedSchema,
+		SuggestedSchema: schemaString,
 	}
 
 	for _, elem := range parsed.DetectedElements {

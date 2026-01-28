@@ -43,7 +43,7 @@ type AnalyzeResponseBody struct {
 	SiteSummary          string                  `json:"site_summary" doc:"Brief description of what the site/page is about"`
 	PageType             string                  `json:"page_type" doc:"Detected page type: listing, detail, article, product, recipe, unknown"`
 	DetectedElements     []DetectedElementOutput `json:"detected_elements" doc:"Data elements detected on the page"`
-	SuggestedSchema      any                     `json:"suggested_schema" doc:"Schema suggestion for extraction (JSON object)"`
+	SuggestedSchema      string                  `json:"suggested_schema" doc:"Schema suggestion for extraction (JSON format)"`
 	FollowPatterns       []FollowPatternOutput   `json:"follow_patterns" doc:"URL/selector patterns for crawling"`
 	SampleLinks          []string                `json:"sample_links" doc:"Sample links found on the page"`
 	RecommendedFetchMode string                  `json:"recommended_fetch_mode" doc:"Recommended fetch mode: static or dynamic"`
