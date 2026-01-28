@@ -352,11 +352,11 @@ func (s *ExtractionService) Crawl(ctx context.Context, userID string, input Craw
 // Uses SchemaPageExtractor for each page, which handles dynamic retry for bot protection
 // and insufficient content.
 func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string, input CrawlInput, callbacks CrawlCallbacks) (*CrawlResult, error) {
-	// Use pre-resolved LLM configs from input
+	// Use pre-resolved LLM configs from input (supports fallback chain)
 	if len(input.LLMConfigs) == 0 {
 		return nil, fmt.Errorf("no LLM configs provided")
 	}
-	llmCfg := input.LLMConfigs[0]
+	llmConfigs := input.LLMConfigs // Full fallback chain for per-page retries
 	isBYOK := input.IsBYOK
 
 	// Get available balance for non-BYOK users (for mid-crawl balance enforcement)
@@ -405,8 +405,9 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 		"user_id", userID,
 		"url", input.URL,
 		"seed_count", len(seedURLs),
-		"provider", llmCfg.Provider,
-		"model", llmCfg.Model,
+		"provider", llmConfigs[0].Provider,
+		"model", llmConfigs[0].Model,
+		"fallback_chain_size", len(llmConfigs),
 	)
 
 	// Phase 1: URL Discovery
@@ -465,18 +466,8 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 		callbacks.OnURLsQueued(len(urlsToExtract))
 	}
 
-	// Phase 2: Per-page extraction using SchemaPageExtractor
-	// This gives us dynamic retry for each page individually.
-
-	// Create SchemaPageExtractor - handles dynamic retry for all pages
-	extractor := NewSchemaPageExtractor(s, sch, SchemaExtractorOptions{
-		LLMConfig:             llmCfg,
-		CleanerChain:          enrichedCleanerChain,
-		ContentDynamicAllowed: input.Options.ContentDynamicAllowed,
-		UserID:                userID,
-		Tier:                  input.Tier,
-		JobID:                 input.JobID,
-	})
+	// Phase 2: Per-page extraction with LLM fallback chain
+	// Each page tries the full llmConfigs chain until one succeeds or all fail.
 
 	var (
 		data              []any
@@ -488,9 +479,10 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 		stoppedEarly      bool
 		stopReason        string
 		lastError         error
+		lastUsedConfig    *LLMConfigInput
 	)
 
-	// Process each URL using the extractor (gets dynamic retry for free!)
+	// Process each URL with fallback chain support
 	for _, discoveredURL := range urlsToExtract {
 		select {
 		case <-ctx.Done():
@@ -508,46 +500,82 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 			parentURL = &discoveredURL.ParentURL
 		}
 
-		pageResult := PageResult{
-			URL:         discoveredURL.URL,
-			ParentURL:   parentURL,
-			Depth:       discoveredURL.Depth,
-			IsBYOK:      isBYOK,
-			LLMProvider: llmCfg.Provider,
-			LLMModel:    llmCfg.Model,
-		}
+		// Try each LLM config in the fallback chain for this page
+		var pageResult PageResult
+		var pageSuccess bool
 
-		// Extract using SchemaPageExtractor (handles dynamic retry internally)
-		extractResult, err := extractor.Extract(ctx, discoveredURL.URL)
+		for cfgIdx, llmCfg := range llmConfigs {
+			lastUsedConfig = llmCfg
 
-		if err != nil || (extractResult != nil && extractResult.Error != nil) {
-			// Handle error
-			errToUse := err
-			if errToUse == nil && extractResult != nil {
-				errToUse = extractResult.Error
+			pageResult = PageResult{
+				URL:         discoveredURL.URL,
+				ParentURL:   parentURL,
+				Depth:       discoveredURL.Depth,
+				IsBYOK:      isBYOK,
+				LLMProvider: llmCfg.Provider,
+				LLMModel:    llmCfg.Model,
 			}
-			lastError = errToUse
 
-			errInfo := llm.WrapError(errToUse, llmCfg.Provider, llmCfg.Model, isBYOK)
-			pageResult.Error = errInfo.UserMessage
-			pageResult.ErrorCategory = errInfo.Category
-			if isBYOK {
-				pageResult.ErrorDetails = errToUse.Error()
+			// Create extractor for this config
+			extractor := NewSchemaPageExtractor(s, sch, SchemaExtractorOptions{
+				LLMConfig:             llmCfg,
+				CleanerChain:          enrichedCleanerChain,
+				ContentDynamicAllowed: input.Options.ContentDynamicAllowed,
+				UserID:                userID,
+				Tier:                  input.Tier,
+				JobID:                 input.JobID,
+			})
+
+			// Extract using SchemaPageExtractor (handles dynamic retry internally)
+			extractResult, err := extractor.Extract(ctx, discoveredURL.URL)
+
+			if err != nil || (extractResult != nil && extractResult.Error != nil) {
+				// Handle error
+				errToUse := err
+				if errToUse == nil && extractResult != nil {
+					errToUse = extractResult.Error
+				}
+				lastError = errToUse
+
+				errInfo := llm.WrapError(errToUse, llmCfg.Provider, llmCfg.Model, isBYOK)
+				pageResult.Error = errInfo.UserMessage
+				pageResult.ErrorCategory = errInfo.Category
+				if isBYOK {
+					pageResult.ErrorDetails = errToUse.Error()
+				}
+				if extractResult != nil {
+					pageResult.FetchDurationMs = extractResult.FetchDurationMs
+					pageResult.ExtractDurationMs = extractResult.ExtractDurationMs
+					pageResult.RetryCount = extractResult.RetryCount
+				}
+
+				// Check if we should try the next model in the chain
+				if errInfo.ShouldFallback && cfgIdx < len(llmConfigs)-1 {
+					s.logger.Info("crawl page error, trying fallback model",
+						"job_id", input.JobID,
+						"url", discoveredURL.URL,
+						"failed_model", llmCfg.Model,
+						"next_model", llmConfigs[cfgIdx+1].Model,
+						"error_category", errInfo.Category,
+					)
+					continue // Try next model in chain
+				}
+
+				// No more fallbacks or error not retryable
+				s.logger.Warn("crawl page error",
+					"job_id", input.JobID,
+					"user_id", userID,
+					"url", discoveredURL.URL,
+					"error", errToUse,
+					"model", llmCfg.Model,
+					"fallback_attempted", cfgIdx > 0,
+					"used_dynamic", extractResult != nil && extractResult.UsedDynamicMode,
+				)
+				break // Stop trying for this page
 			}
-			if extractResult != nil {
-				pageResult.FetchDurationMs = extractResult.FetchDurationMs
-				pageResult.ExtractDurationMs = extractResult.ExtractDurationMs
-				pageResult.RetryCount = extractResult.RetryCount
-			}
-			s.logger.Warn("crawl page error",
-				"job_id", input.JobID,
-				"user_id", userID,
-				"url", discoveredURL.URL,
-				"error", errToUse,
-				"used_dynamic", extractResult != nil && extractResult.UsedDynamicMode,
-			)
-		} else {
-			// Success
+
+			// Success!
+			pageSuccess = true
 			pageResult.URL = extractResult.URL
 			pageResult.Data = extractResult.Data
 			pageResult.TokenUsageInput = extractResult.TokensInput
@@ -601,14 +629,17 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 				"url", extractResult.URL,
 				"input_tokens", extractResult.TokensInput,
 				"output_tokens", extractResult.TokensOutput,
+				"model", llmCfg.Model,
+				"fallback_used", cfgIdx > 0,
 				"used_dynamic", extractResult.UsedDynamicMode,
 				"retry_count", extractResult.RetryCount,
 			)
+			break // Success - don't try more models
 		}
 
 		pageResults = append(pageResults, pageResult)
 
-		// Call result callback
+		// Call result callback (even for failed pages)
 		if callbacks.OnResult != nil {
 			if cbErr := callbacks.OnResult(pageResult); cbErr != nil {
 				s.logger.Error("callback error, stopping crawl", "error", cbErr)
@@ -617,21 +648,25 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 				break
 			}
 		}
+
+		// Don't continue if we had no success and there was an error (unless we want partial results)
+		_ = pageSuccess // Currently we continue to next page even on failure
 	}
 
 	// If no results and we have an error, return the error
 	if pageCount == 0 && lastError != nil {
-		return nil, s.handleLLMError(lastError, llmCfg, isBYOK)
+		return nil, s.handleLLMError(lastError, lastUsedConfig, isBYOK)
 	}
 
-	// Calculate final costs
+	// Calculate final costs (use primary model for estimation)
+	primaryConfig := llmConfigs[0]
 	var totalCosts CostResult
 	if s.billing != nil {
 		totalCosts = s.billing.CalculateCosts(ctx, CostInput{
 			TokensInput:  totalTokensInput,
 			TokensOutput: totalTokensOutput,
-			Model:        llmCfg.Model,
-			Provider:     llmCfg.Provider,
+			Model:        primaryConfig.Model,
+			Provider:     primaryConfig.Provider,
 			Tier:         input.Tier,
 			IsBYOK:       isBYOK,
 		})
@@ -641,8 +676,8 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 		"job_id", input.JobID,
 		"user_id", userID,
 		"url", input.URL,
-		"provider", llmCfg.Provider,
-		"model", llmCfg.Model,
+		"provider", primaryConfig.Provider,
+		"model", primaryConfig.Model,
 		"page_count", pageCount,
 		"total_input_tokens", totalTokensInput,
 		"total_output_tokens", totalTokensOutput,
@@ -660,8 +695,8 @@ func (s *ExtractionService) CrawlWithCallback(ctx context.Context, userID string
 		TotalTokensOutput: totalTokensOutput,
 		TotalCostUSD:      totalCosts.UserCostUSD,
 		TotalLLMCostUSD:   totalCosts.LLMCostUSD,
-		LLMProvider:       llmCfg.Provider,
-		LLMModel:          llmCfg.Model,
+		LLMProvider:       primaryConfig.Provider,
+		LLMModel:          primaryConfig.Model,
 		StoppedEarly:      stoppedEarly,
 		StopReason:        stopReason,
 	}, nil
