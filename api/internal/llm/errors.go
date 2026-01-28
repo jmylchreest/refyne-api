@@ -252,6 +252,14 @@ func containsFeatureUnsupported(errStr string) bool {
 func classifyByErrorMessage(llmErr *LLMError, errStr string, isFreeTier bool) *LLMError {
 	// OpenRouter-specific error patterns
 	switch {
+	case strings.Contains(errStr, "output truncated") || strings.Contains(errStr, "llm output truncated"):
+		// Output truncation - model hit max_tokens limit
+		llmErr.Category = "llm_truncation"
+		llmErr.ShouldFallback = true
+		llmErr.Retryable = false
+		llmErr.UserMessage = "The extraction result was too large for the model's output limit. Trying next model with higher capacity."
+		return llmErr
+
 	case strings.Contains(errStr, "rate limit") || strings.Contains(errStr, "ratelimit"):
 		llmErr.Category = "rate_limit"
 		llmErr.ShouldFallback = true

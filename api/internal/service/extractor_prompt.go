@@ -127,9 +127,16 @@ extractAttempt:
 	// 4. Build prompt and call LLM
 	extractPrompt := e.svc.buildPromptExtractionPrompt(pageContent, e.promptText)
 	llmClient := NewLLMClient(e.svc.logger)
+
+	// Use configured max tokens from LLM config
+	maxTokens := e.llmCfg.MaxTokens
+	if maxTokens == 0 {
+		maxTokens = 8192 // Default fallback
+	}
+
 	llmResult, err := llmClient.Call(ctx, e.llmCfg, extractPrompt, LLMCallOptions{
 		Temperature: 0.1,
-		MaxTokens:   8192,
+		MaxTokens:   maxTokens,
 		Timeout:     180 * time.Second,
 		JSONMode:    true,
 	})
@@ -145,7 +152,25 @@ extractAttempt:
 		return result, err
 	}
 
-	// 5. Parse JSON response
+	// Populate token usage
+	result.TokensInput = llmResult.InputTokens
+	result.TokensOutput = llmResult.OutputTokens
+
+	// 5. Check for output truncation - this should trigger fallback to a model with higher limits
+	if llmResult.IsTruncated() {
+		truncErr := llmResult.TruncationError()
+		result.Error = truncErr
+		result.ErrorCategory = "llm_truncation"
+		e.svc.logger.Warn("LLM output was truncated, will fallback to next model",
+			"url", pageURL,
+			"model", e.llmCfg.Model,
+			"output_tokens", llmResult.OutputTokens,
+			"max_tokens", maxTokens,
+		)
+		return result, truncErr
+	}
+
+	// 6. Parse JSON response
 	var extractedData any
 	if jsonErr := json.Unmarshal([]byte(llmResult.Content), &extractedData); jsonErr != nil {
 		extractedData = map[string]any{
@@ -155,8 +180,6 @@ extractAttempt:
 	}
 
 	result.Data = extractedData
-	result.TokensInput = llmResult.InputTokens
-	result.TokensOutput = llmResult.OutputTokens
 
 	return result, nil
 }

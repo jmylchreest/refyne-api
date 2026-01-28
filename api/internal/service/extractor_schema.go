@@ -98,6 +98,34 @@ extractAttempt:
 		lastErr = refyneResult.Error
 	}
 
+	// Populate token usage even on error (for truncation detection)
+	if refyneResult != nil {
+		result.TokensInput = refyneResult.TokenUsage.InputTokens
+		result.TokensOutput = refyneResult.TokenUsage.OutputTokens
+		result.Provider = refyneResult.Provider
+		result.Model = refyneResult.Model
+
+		// Check for output truncation using refyne's FinishReason
+		// "length" means the model hit max_tokens and the output was cut off
+		if refyneResult.IsTruncated() {
+			truncErr := &ErrOutputTruncated{
+				OutputTokens: result.TokensOutput,
+				MaxTokens:    e.llmCfg.MaxTokens,
+				Model:        e.llmCfg.Model,
+			}
+			result.Error = truncErr
+			result.ErrorCategory = "llm_truncation"
+			e.svc.logger.Warn("schema extraction truncated, will fallback to next model",
+				"url", pageURL,
+				"model", e.llmCfg.Model,
+				"output_tokens", result.TokensOutput,
+				"max_tokens", e.llmCfg.MaxTokens,
+				"finish_reason", refyneResult.FinishReason,
+			)
+			return result, truncErr
+		}
+	}
+
 	// Check for bot protection - retry with dynamic if allowed
 	var protectionErr *ErrBotProtectionDetected
 	if errors.As(lastErr, &protectionErr) && !dynamicRetryAttempted && e.contentDynamicAllowed && e.svc.captchaSvc != nil {

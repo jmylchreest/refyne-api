@@ -4,12 +4,33 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"time"
 )
+
+// ErrOutputTruncated is returned when the LLM response was truncated due to hitting
+// the max_tokens limit. This error triggers fallback to the next model in the chain
+// which may have a higher output token limit.
+type ErrOutputTruncated struct {
+	OutputTokens int    // Actual tokens generated before truncation
+	MaxTokens    int    // The max_tokens limit that was hit
+	Model        string // The model that was truncated
+	Content      string // The truncated content (may be useful for debugging)
+}
+
+func (e *ErrOutputTruncated) Error() string {
+	return fmt.Sprintf("LLM output truncated: generated %d tokens (limit: %d) for model %s", e.OutputTokens, e.MaxTokens, e.Model)
+}
+
+// IsOutputTruncated returns true if the error is an output truncation error.
+func IsOutputTruncated(err error) bool {
+	var truncErr *ErrOutputTruncated
+	return errors.As(err, &truncErr)
+}
 
 // LLMCallOptions configures an LLM API call.
 type LLMCallOptions struct {
@@ -34,6 +55,27 @@ type LLMCallResult struct {
 	Content      string
 	InputTokens  int
 	OutputTokens int
+	FinishReason string // "stop", "length", "end_turn", etc. - "length" indicates truncation
+	Model        string // The model used (for error context)
+	MaxTokens    int    // The max_tokens limit used (for error context)
+}
+
+// IsTruncated returns true if the response was truncated due to hitting max_tokens.
+func (r *LLMCallResult) IsTruncated() bool {
+	return r.FinishReason == "length"
+}
+
+// TruncationError returns an ErrOutputTruncated if the response was truncated, nil otherwise.
+func (r *LLMCallResult) TruncationError() error {
+	if !r.IsTruncated() {
+		return nil
+	}
+	return &ErrOutputTruncated{
+		OutputTokens: r.OutputTokens,
+		MaxTokens:    r.MaxTokens,
+		Model:        r.Model,
+		Content:      r.Content,
+	}
 }
 
 // LLMClient handles direct LLM API calls.
@@ -149,7 +191,27 @@ func (c *LLMClient) Call(ctx context.Context, config *LLMConfigInput, prompt str
 	}
 
 	// Parse response based on provider
-	return c.ParseResponse(config.Provider, body)
+	result, err := c.ParseResponse(config.Provider, body)
+	if err != nil {
+		return nil, err
+	}
+
+	// Add context for truncation error reporting
+	result.Model = config.Model
+	result.MaxTokens = opts.MaxTokens
+
+	// Log if response was truncated
+	if result.IsTruncated() && c.logger != nil {
+		c.logger.Warn("LLM output truncated",
+			"provider", config.Provider,
+			"model", config.Model,
+			"output_tokens", result.OutputTokens,
+			"max_tokens", opts.MaxTokens,
+			"finish_reason", result.FinishReason,
+		)
+	}
+
+	return result, nil
 }
 
 // getAPIURL returns the API endpoint for a provider.
@@ -198,7 +260,8 @@ func (c *LLMClient) ParseResponse(provider string, body []byte) (*LLMCallResult,
 			Content []struct {
 				Text string `json:"text"`
 			} `json:"content"`
-			Usage struct {
+			StopReason string `json:"stop_reason"` // "end_turn", "max_tokens", "stop_sequence"
+			Usage      struct {
 				InputTokens  int `json:"input_tokens"`
 				OutputTokens int `json:"output_tokens"`
 			} `json:"usage"`
@@ -212,14 +275,24 @@ func (c *LLMClient) ParseResponse(provider string, body []byte) (*LLMCallResult,
 		result.Content = resp.Content[0].Text
 		result.InputTokens = resp.Usage.InputTokens
 		result.OutputTokens = resp.Usage.OutputTokens
+		// Normalize Anthropic's stop_reason to OpenAI-style finish_reason
+		switch resp.StopReason {
+		case "max_tokens":
+			result.FinishReason = "length"
+		case "end_turn", "stop_sequence":
+			result.FinishReason = "stop"
+		default:
+			result.FinishReason = resp.StopReason
+		}
 
 	case "ollama":
 		var resp struct {
 			Message struct {
 				Content string `json:"content"`
 			} `json:"message"`
-			PromptEvalCount int `json:"prompt_eval_count"`
-			EvalCount       int `json:"eval_count"`
+			DoneReason      string `json:"done_reason"` // "stop", "length"
+			PromptEvalCount int    `json:"prompt_eval_count"`
+			EvalCount       int    `json:"eval_count"`
 		}
 		if err := json.Unmarshal(body, &resp); err != nil {
 			return nil, fmt.Errorf("failed to parse Ollama response: %w", err)
@@ -227,6 +300,7 @@ func (c *LLMClient) ParseResponse(provider string, body []byte) (*LLMCallResult,
 		result.Content = resp.Message.Content
 		result.InputTokens = resp.PromptEvalCount
 		result.OutputTokens = resp.EvalCount
+		result.FinishReason = resp.DoneReason
 
 	default: // OpenAI-compatible (OpenRouter, OpenAI)
 		var resp struct {
@@ -234,6 +308,7 @@ func (c *LLMClient) ParseResponse(provider string, body []byte) (*LLMCallResult,
 				Message struct {
 					Content string `json:"content"`
 				} `json:"message"`
+				FinishReason string `json:"finish_reason"` // "stop", "length", "content_filter"
 			} `json:"choices"`
 			Usage struct {
 				PromptTokens     int `json:"prompt_tokens"`
@@ -249,6 +324,7 @@ func (c *LLMClient) ParseResponse(provider string, body []byte) (*LLMCallResult,
 		result.Content = resp.Choices[0].Message.Content
 		result.InputTokens = resp.Usage.PromptTokens
 		result.OutputTokens = resp.Usage.CompletionTokens
+		result.FinishReason = resp.Choices[0].FinishReason
 	}
 
 	return result, nil
