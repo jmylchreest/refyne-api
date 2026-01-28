@@ -148,9 +148,11 @@ func (d *URLDiscoverer) Discover(ctx context.Context, seedURLs []string, opts UR
 	}
 
 	// Determine which selector to use for links
+	// Normalize selector: convert newline-separated selectors to comma-separated
+	// CSS requires comma-separation, but users may provide newline-separated lists
 	linkSelector := "a[href]"
 	if opts.FollowSelector != "" {
-		linkSelector = opts.FollowSelector
+		linkSelector = normalizeSelector(opts.FollowSelector)
 	}
 
 	d.logger.Debug("URL discovery configured",
@@ -346,6 +348,27 @@ func (d *URLDiscoverer) Discover(ctx context.Context, seedURLs []string, opts UR
 	}
 
 	return discovered, nil
+}
+
+// normalizeSelector converts newline-separated CSS selectors to comma-separated.
+// Users may provide selectors like:
+//
+//	a[href*='/jobs/']
+//	a[href*='/products/']
+//
+// But CSS requires comma separation: "a[href*='/jobs/'], a[href*='/products/']"
+func normalizeSelector(selector string) string {
+	// Split by newlines
+	lines := strings.Split(selector, "\n")
+	var selectors []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" {
+			selectors = append(selectors, trimmed)
+		}
+	}
+	// Join with comma and space (standard CSS format)
+	return strings.Join(selectors, ", ")
 }
 
 // normalizeDiscoveredURL normalizes a URL for deduplication.
