@@ -263,7 +263,7 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 	for _, cfg := range llmChain.All() {
 		chainModels = append(chainModels, cfg.Model)
 	}
-	s.logger.Info("LLM config chain resolved",
+	s.logger.Debug("LLM config chain resolved",
 		"chain_length", llmChain.Len(),
 		"is_byok", llmChain.IsBYOK(),
 		"models", chainModels,
@@ -441,7 +441,7 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 		// Brief delay before trying next provider (if there is one)
 		pos, total = llmChain.Position()
 		if pos >= total {
-			s.logger.Warn("no more models in fallback chain",
+			s.logger.Debug("no more models in fallback chain",
 				"failed_provider", llmCfg.Provider,
 				"failed_model", llmCfg.Model,
 				"category", lastLLMErr.Category,
@@ -449,7 +449,7 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 				"chain_total", total,
 			)
 		} else {
-			s.logger.Info("falling back to next provider",
+			s.logger.Debug("falling back to next provider",
 				"failed_provider", llmCfg.Provider,
 				"failed_model", llmCfg.Model,
 				"category", lastLLMErr.Category,
@@ -463,7 +463,7 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 	// All attempts failed - record the failure with detailed error info
 	if lastErr != nil {
 		pos, total := llmChain.Position()
-		s.logger.Warn("all providers exhausted",
+		s.logger.Debug("all providers exhausted",
 			"last_provider", lastCfg.Provider,
 			"last_model", lastCfg.Model,
 			"chain_position", pos,
