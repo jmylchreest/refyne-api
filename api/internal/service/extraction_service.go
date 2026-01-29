@@ -672,12 +672,13 @@ func (s *ExtractionService) handleSuccessfulExtraction(
 	}
 
 	return &ExtractOutput{
-		Data:        processedData,
-		URL:         result.URL,
-		FetchedAt:   result.FetchedAt,
-		InputFormat: InputFormatSchema,
-		Usage:       usageInfo,
-		RawContent:  result.RawContent,
+		Data:           processedData,
+		URL:            result.URL,
+		FetchedAt:      result.FetchedAt,
+		InputFormat:    InputFormatSchema,
+		Usage:          usageInfo,
+		RawContent:     result.RawContent,
+		RawLLMResponse: result.Raw, // Raw LLM output for debug capture
 		Metadata: ExtractMeta{
 			FetchDurationMs:   int(result.FetchDuration.Milliseconds()),
 			ExtractDurationMs: int(result.ExtractDuration.Milliseconds()),
@@ -1196,6 +1197,7 @@ func (s *ExtractionService) pageResultToRefyneResult(pr *PageExtractionResult) *
 	return &refyne.Result{
 		URL:        pr.URL,
 		Data:       pr.Data,
+		Raw:        pr.RawLLMResponse, // Raw LLM output for debug capture
 		RawContent: pr.RawContent,
 		FetchedAt:  time.Now(),
 		TokenUsage: refyne.TokenUsage{
