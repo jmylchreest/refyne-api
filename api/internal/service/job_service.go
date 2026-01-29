@@ -195,21 +195,30 @@ func (s *JobService) handleJobSuccess(ctx context.Context, job *models.Job, exec
 					URL:       result.DebugCapture.URL,
 					Timestamp: now,
 					JobType:   string(executor.JobType()),
-					Request: LLMRequestMeta{
-						Provider:    result.LLMProvider,
-						Model:       result.LLMModel,
-						FetchMode:   result.DebugCapture.FetchMode,
-						ContentSize: len(result.DebugCapture.RawContent),
-						PromptSize:  len(result.DebugCapture.Prompt),
+					Request: LLMRequestSection{
+						Metadata: LLMRequestMeta{
+							Provider:    result.LLMProvider,
+							Model:       result.LLMModel,
+							FetchMode:   result.DebugCapture.FetchMode,
+							ContentSize: len(result.DebugCapture.RawContent),
+							PromptSize:  len(result.DebugCapture.Prompt),
+						},
+						Payload: LLMRequestPayload{
+							Prompt:      result.DebugCapture.Prompt,
+							PageContent: result.DebugCapture.RawContent,
+						},
 					},
-					Response: LLMResponseMeta{
-						InputTokens:  result.TokensInput,
-						OutputTokens: result.TokensOutput,
-						DurationMs:   result.DebugCapture.DurationMs,
-						Success:      true,
+					Response: LLMResponseSection{
+						Metadata: LLMResponseMeta{
+							InputTokens:  result.TokensInput,
+							OutputTokens: result.TokensOutput,
+							DurationMs:   result.DebugCapture.DurationMs,
+							Success:      true,
+						},
+						Payload: LLMResponsePayload{
+							RawOutput: result.DebugCapture.RawLLMResponse,
+						},
 					},
-					Prompt:     result.DebugCapture.Prompt,
-					RawContent: result.DebugCapture.RawContent,
 				},
 			},
 		}
@@ -413,6 +422,15 @@ func (s *JobService) GetJob(ctx context.Context, userID, jobID string) (*models.
 	return job, nil
 }
 
+// GetJobAdmin retrieves a job by ID without ownership check (for superadmin use).
+func (s *JobService) GetJobAdmin(ctx context.Context, jobID string) (*models.Job, error) {
+	job, err := s.repos.Job.GetByID(ctx, jobID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get job: %w", err)
+	}
+	return job, nil
+}
+
 // ListJobs retrieves jobs for a user.
 func (s *JobService) ListJobs(ctx context.Context, userID string, limit, offset int) ([]*models.Job, error) {
 	if limit <= 0 {
@@ -436,6 +454,15 @@ func (s *JobService) GetJobResults(ctx context.Context, userID, jobID string) ([
 	}
 
 	// All job types now use S3 storage for full results
+	return s.getJobResultsFromStorage(ctx, job)
+}
+
+// GetJobResultsAdmin retrieves results for a job without ownership check (for superadmin use).
+func (s *JobService) GetJobResultsAdmin(ctx context.Context, jobID string) ([]*models.JobResult, error) {
+	job, err := s.GetJobAdmin(ctx, jobID)
+	if err != nil || job == nil {
+		return nil, err
+	}
 	return s.getJobResultsFromStorage(ctx, job)
 }
 

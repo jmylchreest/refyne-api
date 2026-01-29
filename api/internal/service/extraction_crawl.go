@@ -43,6 +43,7 @@ type PageResult struct {
 	FetchDurationMs   int     `json:"fetch_duration_ms,omitempty"`
 	ExtractDurationMs int     `json:"extract_duration_ms,omitempty"`
 	RawContent        string  `json:"-"` // Raw page content (not serialized, for debug capture only)
+	RawLLMResponse    string  `json:"-"` // Raw LLM output (not serialized, for debug capture only)
 }
 
 // CrawlResult represents the result of a crawl operation.

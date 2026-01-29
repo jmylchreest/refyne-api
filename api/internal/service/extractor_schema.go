@@ -79,6 +79,7 @@ extractAttempt:
 		result.Data = e.svc.processExtractionResult(refyneResult.Data, refyneResult.URL)
 		result.URL = refyneResult.URL
 		result.RawContent = refyneResult.RawContent
+		result.RawLLMResponse = refyneResult.Raw // Capture raw LLM output for debug
 		result.TokensInput = refyneResult.TokenUsage.InputTokens
 		result.TokensOutput = refyneResult.TokenUsage.OutputTokens
 		result.FetchDurationMs = int(refyneResult.FetchDuration.Milliseconds())

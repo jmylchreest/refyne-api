@@ -92,17 +92,27 @@ type JobResultData struct {
 }
 
 // LLMRequestCapture captures details of an LLM request for debugging.
+// Structured with clear separation between metadata and payloads for readability.
 type LLMRequestCapture struct {
-	ID         string            `json:"id"`
-	URL        string            `json:"url"`
-	Timestamp  time.Time         `json:"timestamp"`
-	JobType    string            `json:"job_type"` // "analyze", "extract", "crawl"
-	Request    LLMRequestMeta    `json:"request"`
-	Response   LLMResponseMeta   `json:"response"`
-	Prompt     string            `json:"prompt,omitempty"`       // Full prompt for analyze jobs
-	RawContent string            `json:"raw_content,omitempty"`  // Page content for extract/crawl
-	Schema     string            `json:"schema,omitempty"`       // Schema used (for extract/crawl)
-	Hints      map[string]string `json:"hints_applied,omitempty"`
+	// === Capture Metadata ===
+	ID        string    `json:"id"`
+	URL       string    `json:"url"`
+	Timestamp time.Time `json:"timestamp"`
+	JobType   string    `json:"job_type"` // "analyze", "extract", "crawl"
+
+	// === Request Section ===
+	Request LLMRequestSection `json:"request"`
+
+	// === Response Section ===
+	Response LLMResponseSection `json:"response"`
+}
+
+// LLMRequestSection contains the request metadata and payload.
+type LLMRequestSection struct {
+	// Metadata about the request
+	Metadata LLMRequestMeta `json:"metadata"`
+	// Payload contains the actual content sent to the LLM
+	Payload LLMRequestPayload `json:"payload"`
 }
 
 // LLMRequestMeta contains metadata about the LLM request.
@@ -114,6 +124,22 @@ type LLMRequestMeta struct {
 	PromptSize  int    `json:"prompt_size"`
 }
 
+// LLMRequestPayload contains the actual content sent to the LLM.
+type LLMRequestPayload struct {
+	Schema     string            `json:"schema,omitempty"`       // Schema used (for extract/crawl)
+	Prompt     string            `json:"prompt,omitempty"`       // Full prompt for analyze jobs
+	PageContent string           `json:"page_content,omitempty"` // Cleaned page content sent to LLM
+	Hints      map[string]string `json:"hints_applied,omitempty"`
+}
+
+// LLMResponseSection contains the response metadata and payload.
+type LLMResponseSection struct {
+	// Metadata about the response
+	Metadata LLMResponseMeta `json:"metadata"`
+	// Payload contains the actual LLM output
+	Payload LLMResponsePayload `json:"payload"`
+}
+
 // LLMResponseMeta contains metadata about the LLM response.
 type LLMResponseMeta struct {
 	InputTokens  int    `json:"input_tokens"`
@@ -121,6 +147,11 @@ type LLMResponseMeta struct {
 	DurationMs   int64  `json:"duration_ms"`
 	Success      bool   `json:"success"`
 	Error        string `json:"error,omitempty"`
+}
+
+// LLMResponsePayload contains the actual LLM output.
+type LLMResponsePayload struct {
+	RawOutput string `json:"raw_output,omitempty"` // Raw LLM response text
 }
 
 // JobDebugCapture holds all debug captures for a job.

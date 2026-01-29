@@ -79,11 +79,12 @@ func (e *AnalyzeExecutor) Execute(ctx context.Context) (*JobExecutionResult, err
 	var debugCapture *DebugCaptureData
 	if result.DebugCapture != nil {
 		debugCapture = &DebugCaptureData{
-			URL:        e.input.URL,
-			FetchMode:  result.DebugCapture.FetchMode,
-			RawContent: result.DebugCapture.RawContent,
-			Prompt:     result.DebugCapture.Prompt,
-			DurationMs: time.Since(startTime).Milliseconds(),
+			URL:            e.input.URL,
+			FetchMode:      result.DebugCapture.FetchMode,
+			RawContent:     result.DebugCapture.RawContent,
+			RawLLMResponse: result.DebugCapture.LLMResponse,
+			Prompt:         result.DebugCapture.Prompt,
+			DurationMs:     time.Since(startTime).Milliseconds(),
 		}
 	}
 

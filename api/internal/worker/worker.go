@@ -259,19 +259,28 @@ func (w *Worker) processExtractJob(ctx context.Context, job *models.Job) {
 			URL:       result.URL,
 			Timestamp: now,
 			JobType:   string(job.Type),
-			Request: service.LLMRequestMeta{
-				Provider:    result.Metadata.Provider,
-				Model:       result.Metadata.Model,
-				ContentSize: len(result.RawContent),
+			Request: service.LLMRequestSection{
+				Metadata: service.LLMRequestMeta{
+					Provider:    result.Metadata.Provider,
+					Model:       result.Metadata.Model,
+					ContentSize: len(result.RawContent),
+				},
+				Payload: service.LLMRequestPayload{
+					Schema:      job.SchemaJSON,
+					PageContent: result.RawContent,
+				},
 			},
-			Response: service.LLMResponseMeta{
-				InputTokens:  result.Usage.InputTokens,
-				OutputTokens: result.Usage.OutputTokens,
-				DurationMs:   int64(result.Metadata.ExtractDurationMs),
-				Success:      true,
+			Response: service.LLMResponseSection{
+				Metadata: service.LLMResponseMeta{
+					InputTokens:  result.Usage.InputTokens,
+					OutputTokens: result.Usage.OutputTokens,
+					DurationMs:   int64(result.Metadata.ExtractDurationMs),
+					Success:      true,
+				},
+				Payload: service.LLMResponsePayload{
+					RawOutput: result.RawLLMResponse,
+				},
 			},
-			RawContent: result.RawContent,
-			Schema:     job.SchemaJSON,
 		}
 		jobDebugCapture := &service.JobDebugCapture{
 			JobID:    job.ID,
@@ -443,20 +452,29 @@ func (w *Worker) processCrawlJob(ctx context.Context, job *models.Job) {
 				URL:       pageResult.URL,
 				Timestamp: now,
 				JobType:   string(job.Type),
-				Request: service.LLMRequestMeta{
-					Provider:    pageResult.LLMProvider,
-					Model:       pageResult.LLMModel,
-					ContentSize: len(pageResult.RawContent),
+				Request: service.LLMRequestSection{
+					Metadata: service.LLMRequestMeta{
+						Provider:    pageResult.LLMProvider,
+						Model:       pageResult.LLMModel,
+						ContentSize: len(pageResult.RawContent),
+					},
+					Payload: service.LLMRequestPayload{
+						Schema:      job.SchemaJSON,
+						PageContent: pageResult.RawContent,
+					},
 				},
-				Response: service.LLMResponseMeta{
-					InputTokens:  pageResult.TokenUsageInput,
-					OutputTokens: pageResult.TokenUsageOutput,
-					DurationMs:   int64(pageResult.ExtractDurationMs),
-					Success:      pageResult.Error == "",
-					Error:        pageResult.Error,
+				Response: service.LLMResponseSection{
+					Metadata: service.LLMResponseMeta{
+						InputTokens:  pageResult.TokenUsageInput,
+						OutputTokens: pageResult.TokenUsageOutput,
+						DurationMs:   int64(pageResult.ExtractDurationMs),
+						Success:      pageResult.Error == "",
+						Error:        pageResult.Error,
+					},
+					Payload: service.LLMResponsePayload{
+						RawOutput: pageResult.RawLLMResponse,
+					},
 				},
-				RawContent: pageResult.RawContent,
-				Schema:     job.SchemaJSON,
 			}
 			capturesMu.Lock()
 			debugCaptures = append(debugCaptures, capture)

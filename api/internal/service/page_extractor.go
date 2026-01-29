@@ -25,6 +25,9 @@ type PageExtractionResult struct {
 	// RawContent is the raw cleaned content (for debug capture).
 	RawContent string
 
+	// RawLLMResponse is the raw LLM output (for debug capture).
+	RawLLMResponse string
+
 	// Token usage
 	TokensInput  int
 	TokensOutput int

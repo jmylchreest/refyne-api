@@ -56,10 +56,11 @@ func (e *ExtractExecutor) Execute(ctx context.Context) (*JobExecutionResult, err
 	var debugCapture *DebugCaptureData
 	if result.RawContent != "" {
 		debugCapture = &DebugCaptureData{
-			URL:        result.URL,
-			FetchMode:  e.input.FetchMode,
-			RawContent: result.RawContent,
-			DurationMs: time.Since(startTime).Milliseconds(),
+			URL:            result.URL,
+			FetchMode:      e.input.FetchMode,
+			RawContent:     result.RawContent,
+			RawLLMResponse: result.RawLLMResponse,
+			DurationMs:     time.Since(startTime).Milliseconds(),
 		}
 	}
 

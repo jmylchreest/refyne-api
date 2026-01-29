@@ -414,13 +414,23 @@ type GetJobOutput struct {
 }
 
 // GetJob handles getting a single job.
+// Superadmins can view any job; regular users can only view their own jobs.
 func (h *JobHandler) GetJob(ctx context.Context, input *GetJobInput) (*GetJobOutput, error) {
-	userID := getUserID(ctx)
-	if userID == "" {
+	claims := mw.GetUserClaims(ctx)
+	if claims == nil {
 		return nil, huma.Error401Unauthorized("unauthorized")
 	}
 
-	job, err := h.jobSvc.GetJob(ctx, userID, input.ID)
+	var job *models.Job
+	var err error
+
+	// Superadmins can view any job
+	if claims.GlobalSuperadmin {
+		job, err = h.jobSvc.GetJobAdmin(ctx, input.ID)
+	} else {
+		job, err = h.jobSvc.GetJob(ctx, claims.UserID, input.ID)
+	}
+
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to get job: " + err.Error())
 	}
@@ -641,23 +651,38 @@ type GetJobResultsOutput struct {
 }
 
 // GetJobResults returns the extraction results for a job.
+// Superadmins can view results for any job; regular users can only view their own.
 func (h *JobHandler) GetJobResults(ctx context.Context, input *GetJobResultsInput) (*GetJobResultsOutput, error) {
-	userID := getUserID(ctx)
-	if userID == "" {
+	claims := mw.GetUserClaims(ctx)
+	if claims == nil {
 		return nil, huma.Error401Unauthorized("unauthorized")
 	}
 
-	// Verify job exists and belongs to user
-	job, err := h.jobSvc.GetJob(ctx, userID, input.ID)
-	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to get job: " + err.Error())
-	}
-	if job == nil {
-		return nil, huma.Error404NotFound("job not found")
+	var job *models.Job
+	var results []*models.JobResult
+	var err error
+
+	// Superadmins can view any job's results
+	if claims.GlobalSuperadmin {
+		job, err = h.jobSvc.GetJobAdmin(ctx, input.ID)
+		if err != nil {
+			return nil, huma.Error500InternalServerError("failed to get job: " + err.Error())
+		}
+		if job == nil {
+			return nil, huma.Error404NotFound("job not found")
+		}
+		results, err = h.jobSvc.GetJobResultsAdmin(ctx, input.ID)
+	} else {
+		job, err = h.jobSvc.GetJob(ctx, claims.UserID, input.ID)
+		if err != nil {
+			return nil, huma.Error500InternalServerError("failed to get job: " + err.Error())
+		}
+		if job == nil {
+			return nil, huma.Error404NotFound("job not found")
+		}
+		results, err = h.jobSvc.GetJobResults(ctx, claims.UserID, input.ID)
 	}
 
-	// Get results
-	results, err := h.jobSvc.GetJobResults(ctx, userID, input.ID)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to get results: " + err.Error())
 	}
@@ -807,8 +832,14 @@ func (h *JobHandler) GetJobResultsRaw(w http.ResponseWriter, r *http.Request) {
 	merge := r.URL.Query().Get("merge") == "true"
 	format := ParseOutputFormat(r.URL.Query().Get("format"))
 
-	// Verify job exists and belongs to user
-	job, err := h.jobSvc.GetJob(r.Context(), userID, jobID)
+	// Verify job exists and belongs to user (or superadmin)
+	var job *models.Job
+	var err error
+	if claims.GlobalSuperadmin {
+		job, err = h.jobSvc.GetJobAdmin(r.Context(), jobID)
+	} else {
+		job, err = h.jobSvc.GetJob(r.Context(), userID, jobID)
+	}
 	if err != nil {
 		http.Error(w, `{"error":"failed to get job"}`, http.StatusInternalServerError)
 		return
@@ -825,8 +856,13 @@ func (h *JobHandler) GetJobResultsRaw(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", fmt.Sprintf("private, max-age=%d, immutable", immutableSecs))
 	}
 
-	// Get results
-	results, err := h.jobSvc.GetJobResults(r.Context(), userID, jobID)
+	// Get results (superadmin can view any job's results)
+	var results []*models.JobResult
+	if claims.GlobalSuperadmin {
+		results, err = h.jobSvc.GetJobResultsAdmin(r.Context(), jobID)
+	} else {
+		results, err = h.jobSvc.GetJobResults(r.Context(), userID, jobID)
+	}
 	if err != nil {
 		http.Error(w, `{"error":"failed to get results"}`, http.StatusInternalServerError)
 		return
@@ -922,14 +958,23 @@ type GetJobResultsDownloadOutput struct {
 }
 
 // GetJobResultsDownload returns a presigned URL for downloading job results.
+// Superadmins can download results for any job; regular users can only download their own.
 func (h *JobHandler) GetJobResultsDownload(ctx context.Context, input *GetJobResultsDownloadInput) (*GetJobResultsDownloadOutput, error) {
-	userID := getUserID(ctx)
-	if userID == "" {
+	claims := mw.GetUserClaims(ctx)
+	if claims == nil {
 		return nil, huma.Error401Unauthorized("unauthorized")
 	}
 
-	// Verify job exists and belongs to user
-	job, err := h.jobSvc.GetJob(ctx, userID, input.ID)
+	var job *models.Job
+	var err error
+
+	// Superadmins can access any job
+	if claims.GlobalSuperadmin {
+		job, err = h.jobSvc.GetJobAdmin(ctx, input.ID)
+	} else {
+		job, err = h.jobSvc.GetJob(ctx, claims.UserID, input.ID)
+	}
+
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to get job: " + err.Error())
 	}
@@ -980,34 +1025,39 @@ type GetJobDebugCaptureInput struct {
 
 // DebugCaptureLLMRequest represents metadata about an LLM request.
 type DebugCaptureLLMRequest struct {
+	// Metadata
 	Provider    string `json:"provider" doc:"LLM provider used"`
 	Model       string `json:"model" doc:"LLM model used"`
 	FetchMode   string `json:"fetch_mode,omitempty" doc:"Content fetch mode"`
 	ContentSize int    `json:"content_size" doc:"Size of content sent to LLM"`
 	PromptSize  int    `json:"prompt_size" doc:"Total prompt size including system instructions"`
+	// Payload
+	Schema      string            `json:"schema,omitempty" doc:"Schema used for extraction"`
+	Prompt      string            `json:"prompt,omitempty" doc:"Full prompt sent to LLM (for analyze jobs)"`
+	PageContent string            `json:"page_content,omitempty" doc:"Cleaned page content sent to LLM"`
+	Hints       map[string]string `json:"hints_applied,omitempty" doc:"Preprocessing hints applied"`
 }
 
-// DebugCaptureLLMResponse represents metadata about an LLM response.
+// DebugCaptureLLMResponse represents metadata and payload of an LLM response.
 type DebugCaptureLLMResponse struct {
+	// Metadata
 	InputTokens  int    `json:"input_tokens" doc:"Input tokens consumed"`
 	OutputTokens int    `json:"output_tokens" doc:"Output tokens generated"`
 	DurationMs   int64  `json:"duration_ms" doc:"Request duration in milliseconds"`
 	Success      bool   `json:"success" doc:"Whether the request succeeded"`
 	Error        string `json:"error,omitempty" doc:"Error message if failed"`
+	// Payload
+	RawOutput string `json:"raw_output,omitempty" doc:"Raw LLM response text"`
 }
 
 // DebugCaptureEntry represents a single captured LLM request/response.
 type DebugCaptureEntry struct {
-	ID         string                  `json:"id" doc:"Capture ID"`
-	URL        string                  `json:"url" doc:"Page URL being processed"`
-	Timestamp  string                  `json:"timestamp" doc:"When the request was made"`
-	JobType    string                  `json:"job_type" doc:"Job type (analyze, extract, crawl)"`
-	Request    DebugCaptureLLMRequest  `json:"request" doc:"LLM request metadata"`
-	Response   DebugCaptureLLMResponse `json:"response" doc:"LLM response metadata"`
-	Prompt     string                  `json:"prompt,omitempty" doc:"Full prompt sent to LLM (for analyze jobs)"`
-	RawContent string                  `json:"raw_content,omitempty" doc:"Page content (for extract/crawl jobs)"`
-	Schema     string                  `json:"schema,omitempty" doc:"Schema used for extraction"`
-	Hints      map[string]string       `json:"hints_applied,omitempty" doc:"Preprocessing hints applied"`
+	ID        string                  `json:"id" doc:"Capture ID"`
+	URL       string                  `json:"url" doc:"Page URL being processed"`
+	Timestamp string                  `json:"timestamp" doc:"When the request was made"`
+	JobType   string                  `json:"job_type" doc:"Job type (analyze, extract, crawl)"`
+	Request   DebugCaptureLLMRequest  `json:"request" doc:"LLM request with metadata and payload"`
+	Response  DebugCaptureLLMResponse `json:"response" doc:"LLM response with metadata and payload"`
 }
 
 // GetJobDebugCaptureOutput represents debug capture response.
@@ -1021,14 +1071,23 @@ type GetJobDebugCaptureOutput struct {
 
 // GetJobDebugCapture returns the debug captures for a job.
 // This includes LLM prompts, metadata, and responses for debugging extraction issues.
+// Superadmins can view debug captures for any job; regular users can only view their own.
 func (h *JobHandler) GetJobDebugCapture(ctx context.Context, input *GetJobDebugCaptureInput) (*GetJobDebugCaptureOutput, error) {
-	userID := getUserID(ctx)
-	if userID == "" {
+	claims := mw.GetUserClaims(ctx)
+	if claims == nil {
 		return nil, huma.Error401Unauthorized("unauthorized")
 	}
 
-	// Verify job exists and belongs to user
-	job, err := h.jobSvc.GetJob(ctx, userID, input.ID)
+	var job *models.Job
+	var err error
+
+	// Superadmins can access any job
+	if claims.GlobalSuperadmin {
+		job, err = h.jobSvc.GetJobAdmin(ctx, input.ID)
+	} else {
+		job, err = h.jobSvc.GetJob(ctx, claims.UserID, input.ID)
+	}
+
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to get job: " + err.Error())
 	}
@@ -1056,23 +1115,24 @@ func (h *JobHandler) GetJobDebugCapture(ctx context.Context, input *GetJobDebugC
 			Timestamp: c.Timestamp.Format(time.RFC3339),
 			JobType:   c.JobType,
 			Request: DebugCaptureLLMRequest{
-				Provider:    c.Request.Provider,
-				Model:       c.Request.Model,
-				FetchMode:   c.Request.FetchMode,
-				ContentSize: c.Request.ContentSize,
-				PromptSize:  c.Request.PromptSize,
+				Provider:    c.Request.Metadata.Provider,
+				Model:       c.Request.Metadata.Model,
+				FetchMode:   c.Request.Metadata.FetchMode,
+				ContentSize: c.Request.Metadata.ContentSize,
+				PromptSize:  c.Request.Metadata.PromptSize,
+				Schema:      c.Request.Payload.Schema,
+				Prompt:      c.Request.Payload.Prompt,
+				PageContent: c.Request.Payload.PageContent,
+				Hints:       c.Request.Payload.Hints,
 			},
 			Response: DebugCaptureLLMResponse{
-				InputTokens:  c.Response.InputTokens,
-				OutputTokens: c.Response.OutputTokens,
-				DurationMs:   c.Response.DurationMs,
-				Success:      c.Response.Success,
-				Error:        c.Response.Error,
+				InputTokens:  c.Response.Metadata.InputTokens,
+				OutputTokens: c.Response.Metadata.OutputTokens,
+				DurationMs:   c.Response.Metadata.DurationMs,
+				Success:      c.Response.Metadata.Success,
+				Error:        c.Response.Metadata.Error,
+				RawOutput:    c.Response.Payload.RawOutput,
 			},
-			Prompt:     c.Prompt,
-			RawContent: c.RawContent,
-			Schema:     c.Schema,
-			Hints:      c.Hints,
 		})
 	}
 

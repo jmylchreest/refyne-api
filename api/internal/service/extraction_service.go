@@ -145,13 +145,14 @@ const (
 
 // ExtractOutput represents extraction output.
 type ExtractOutput struct {
-	Data        any         `json:"data"`
-	URL         string      `json:"url"`
-	FetchedAt   time.Time   `json:"fetched_at"`
-	Usage       UsageInfo   `json:"usage"`
-	Metadata    ExtractMeta `json:"metadata"`
-	InputFormat InputFormat `json:"input_format"` // "schema" or "prompt" - indicates how the input was interpreted
-	RawContent  string      `json:"-"`            // Raw page content (not serialized, for debug capture only)
+	Data           any         `json:"data"`
+	URL            string      `json:"url"`
+	FetchedAt      time.Time   `json:"fetched_at"`
+	Usage          UsageInfo   `json:"usage"`
+	Metadata       ExtractMeta `json:"metadata"`
+	InputFormat    InputFormat `json:"input_format"`    // "schema" or "prompt" - indicates how the input was interpreted
+	RawContent     string      `json:"-"`               // Raw page content (not serialized, for debug capture only)
+	RawLLMResponse string      `json:"-"`               // Raw LLM output (not serialized, for debug capture only)
 }
 
 // UsageInfo represents token usage and cost information.

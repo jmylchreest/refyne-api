@@ -152,9 +152,10 @@ extractAttempt:
 		return result, err
 	}
 
-	// Populate token usage
+	// Populate token usage and raw response
 	result.TokensInput = llmResult.InputTokens
 	result.TokensOutput = llmResult.OutputTokens
+	result.RawLLMResponse = llmResult.Content // Capture raw LLM output for debug
 
 	// 5. Check for output truncation - this should trigger fallback to a model with higher limits
 	if llmResult.IsTruncated() {

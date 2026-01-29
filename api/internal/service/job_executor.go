@@ -63,11 +63,12 @@ type JobExecutionResult struct {
 
 // DebugCaptureData contains debug information for LLM requests.
 type DebugCaptureData struct {
-	URL        string
-	FetchMode  string
-	RawContent string
-	Prompt     string
-	DurationMs int64
+	URL            string
+	FetchMode      string
+	RawContent     string // Page content sent to LLM
+	RawLLMResponse string // Raw LLM output
+	Prompt         string
+	DurationMs     int64
 }
 
 // RunJobOptions contains options for running a job via JobService.
