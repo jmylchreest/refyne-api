@@ -186,9 +186,25 @@ func (s *JobService) handleJobSuccess(ctx context.Context, job *models.Job, exec
 
 	// Store debug capture if enabled
 	if opts.CaptureDebug && result.DebugCapture != nil && s.storageSvc != nil && s.storageSvc.IsEnabled() {
+		// Marshal parsed output if available
+		var parsedOutputJSON json.RawMessage
+		if result.DebugCapture.ParsedOutput != nil {
+			if data, err := json.Marshal(result.DebugCapture.ParsedOutput); err == nil {
+				parsedOutputJSON = data
+			}
+		}
+
 		capture := &JobDebugCapture{
-			JobID:   job.ID,
-			Enabled: true,
+			JobID:          job.ID,
+			JobType:        string(executor.JobType()),
+			APIVersion:     result.DebugCapture.APIVersion,
+			IsBYOK:         result.IsBYOK,
+			Enabled:        true,
+			TotalRequests:  1,
+			TotalTokensIn:  result.TokensInput,
+			TotalTokensOut: result.TokensOutput,
+			TotalCostUSD:   result.DebugCapture.CostUSD,
+			TotalDurationMs: result.DebugCapture.DurationMs,
 			Captures: []LLMRequestCapture{
 				{
 					ID:         ulid.Make().String(),
@@ -196,18 +212,28 @@ func (s *JobService) handleJobSuccess(ctx context.Context, job *models.Job, exec
 					Timestamp:  now,
 					JobType:    string(executor.JobType()),
 					APIVersion: result.DebugCapture.APIVersion,
+					Sequence:   result.DebugCapture.Sequence,
+					IsBYOK:     result.DebugCapture.IsBYOK,
 					Request: LLMRequestSection{
 						Metadata: LLMRequestMeta{
-							Provider:    result.LLMProvider,
-							Model:       result.LLMModel,
-							FetchMode:   result.DebugCapture.FetchMode,
-							ContentSize: len(result.DebugCapture.RawContent),
-							PromptSize:  len(result.DebugCapture.Prompt),
+							Provider:         result.DebugCapture.Provider,
+							Model:            result.DebugCapture.Model,
+							FetchMode:        result.DebugCapture.FetchMode,
+							ContentSize:      len(result.DebugCapture.RawContent),
+							PromptSize:       len(result.DebugCapture.Prompt) + len(result.DebugCapture.UserPrompt),
+							Temperature:      result.DebugCapture.Temperature,
+							MaxTokens:        result.DebugCapture.MaxTokens,
+							JSONMode:         result.DebugCapture.JSONMode,
+							FallbackPosition: result.DebugCapture.FallbackPosition,
+							IsRetry:          result.DebugCapture.IsRetry,
 						},
 						Payload: LLMRequestPayload{
-							Schema:      result.DebugCapture.Schema,
-							Prompt:      result.DebugCapture.Prompt,
-							PageContent: result.DebugCapture.RawContent,
+							SystemPrompt: result.DebugCapture.SystemPrompt,
+							UserPrompt:   result.DebugCapture.UserPrompt,
+							Schema:       result.DebugCapture.Schema,
+							Prompt:       result.DebugCapture.Prompt,
+							PageContent:  result.DebugCapture.RawContent,
+							Hints:        result.DebugCapture.Hints,
 						},
 					},
 					Response: LLMResponseSection{
@@ -216,9 +242,12 @@ func (s *JobService) handleJobSuccess(ctx context.Context, job *models.Job, exec
 							OutputTokens: result.TokensOutput,
 							DurationMs:   result.DebugCapture.DurationMs,
 							Success:      true,
+							CostUSD:      result.DebugCapture.CostUSD,
 						},
 						Payload: LLMResponsePayload{
-							RawOutput: result.DebugCapture.RawLLMResponse,
+							RawOutput:    result.DebugCapture.RawLLMResponse,
+							ParsedOutput: parsedOutputJSON,
+							ParseError:   result.DebugCapture.ParseError,
 						},
 					},
 				},

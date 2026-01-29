@@ -198,6 +198,17 @@ export async function getJobDebugCapture(jobId: string) {
   return request<JobDebugCaptureResponse>('GET', `/api/v1/jobs/${jobId}/debug-capture`);
 }
 
+export interface DebugCaptureDownloadResponse {
+  job_id: string;
+  download_url: string;
+  expires_at: string;
+  filename: string;
+}
+
+export async function getJobDebugCaptureDownload(jobId: string) {
+  return request<DebugCaptureDownloadResponse>('GET', `/api/v1/jobs/${jobId}/debug-capture/download`);
+}
+
 // ==================== API Keys ====================
 
 export async function listApiKeys() {

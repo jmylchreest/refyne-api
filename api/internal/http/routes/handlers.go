@@ -19,6 +19,7 @@ type JobHandlers interface {
 	GetJobResultsDownload(ctx context.Context, input *handlers.GetJobResultsDownloadInput) (*handlers.GetJobResultsDownloadOutput, error)
 	GetJobWebhookDeliveries(ctx context.Context, input *handlers.GetJobWebhookDeliveriesInput) (*handlers.GetJobWebhookDeliveriesOutput, error)
 	GetJobDebugCapture(ctx context.Context, input *handlers.GetJobDebugCaptureInput) (*handlers.GetJobDebugCaptureOutput, error)
+	DownloadJobDebugCapture(ctx context.Context, input *handlers.DownloadJobDebugCaptureInput) (*handlers.DownloadJobDebugCaptureOutput, error)
 	// RegisterRawEndpoints registers SSE/multi-format endpoints for OpenAPI documentation.
 	RegisterRawEndpoints(api huma.API)
 }

@@ -63,14 +63,40 @@ type JobExecutionResult struct {
 
 // DebugCaptureData contains debug information for LLM requests.
 type DebugCaptureData struct {
-	URL            string
-	FetchMode      string
-	RawContent     string // Page content sent to LLM
+	// Request context
+	URL       string
+	FetchMode string
+	Sequence  int  // Order within job (0-indexed)
+	IsBYOK    bool // Whether user's own API key was used
+
+	// LLM configuration
+	Provider    string
+	Model       string
+	Temperature *float64 // nil if default
+	MaxTokens   int
+	JSONMode    bool
+
+	// Fallback/retry context
+	FallbackPosition int  // Position in fallback chain (0=primary)
+	IsRetry          bool // Whether this was a retry attempt
+
+	// Request payloads
+	SystemPrompt string            // System instructions sent to LLM
+	UserPrompt   string            // Formatted user content/prompt
+	Schema       string            // Schema used for extraction (YAML format)
+	Prompt       string            // Full prompt for analyze jobs (legacy)
+	RawContent   string            // Page content sent to LLM
+	Hints        map[string]string // Preprocessing hints applied
+
+	// Response data
 	RawLLMResponse string // Raw LLM output
-	Prompt         string
-	Schema         string // Schema used for extraction (YAML format)
-	DurationMs     int64
-	APIVersion     string // API version that processed this request
+	ParsedOutput   any    // Structured data (if successfully parsed)
+	ParseError     string // Error if JSON parsing failed
+
+	// Metrics
+	DurationMs int64
+	CostUSD    float64
+	APIVersion string // API version that processed this request
 }
 
 // RunJobOptions contains options for running a job via JobService.

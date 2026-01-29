@@ -566,12 +566,25 @@ export interface AdminJobResultsResponse {
 // ==================== Debug Capture Types ====================
 
 export interface DebugCaptureLLMRequest {
+  // Metadata
   provider: string;
   model: string;
   fetch_mode?: string;
   content_size: number;
   prompt_size: number;
+
+  // LLM Parameters
+  temperature?: number;
+  max_tokens?: number;
+  json_mode?: boolean;
+
+  // Fallback/Retry Context
+  fallback_position?: number;
+  is_retry?: boolean;
+
   // Payload fields
+  system_prompt?: string;
+  user_prompt?: string;
   schema?: string;
   prompt?: string;
   page_content?: string;
@@ -579,13 +592,19 @@ export interface DebugCaptureLLMRequest {
 }
 
 export interface DebugCaptureLLMResponse {
+  // Metadata
   input_tokens: number;
   output_tokens: number;
   duration_ms: number;
   success: boolean;
   error?: string;
+  error_category?: string;
+  cost_usd?: number;
+
   // Payload fields
   raw_output?: string;
+  parsed_output?: unknown;
+  parse_error?: string;
 }
 
 export interface DebugCaptureEntry {
@@ -594,12 +613,27 @@ export interface DebugCaptureEntry {
   timestamp: string;
   job_type: string;
   api_version?: string;
+  sequence?: number;
+  is_byok?: boolean;
   request: DebugCaptureLLMRequest;
   response: DebugCaptureLLMResponse;
 }
 
 export interface JobDebugCaptureResponse {
+  // Job-level metadata
   job_id: string;
+  job_type?: string;
+  api_version?: string;
+  is_byok?: boolean;
   enabled: boolean;
+
+  // Summary statistics
+  total_requests?: number;
+  total_tokens_in?: number;
+  total_tokens_out?: number;
+  total_cost_usd?: number;
+  total_duration_ms?: number;
+
+  // Individual captures
   captures: DebugCaptureEntry[];
 }

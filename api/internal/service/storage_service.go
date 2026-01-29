@@ -100,6 +100,8 @@ type LLMRequestCapture struct {
 	Timestamp  time.Time `json:"timestamp"`
 	JobType    string    `json:"job_type"`              // "analyze", "extract", "crawl"
 	APIVersion string    `json:"api_version,omitempty"` // API version that processed this request
+	Sequence   int       `json:"sequence,omitempty"`    // Order within job (0-indexed)
+	IsBYOK     bool      `json:"is_byok,omitempty"`     // Whether user's own API key was used
 
 	// === Request Section ===
 	Request LLMRequestSection `json:"request"`
@@ -123,14 +125,25 @@ type LLMRequestMeta struct {
 	FetchMode   string `json:"fetch_mode,omitempty"`
 	ContentSize int    `json:"content_size"`
 	PromptSize  int    `json:"prompt_size"`
+
+	// LLM Parameters
+	Temperature *float64 `json:"temperature,omitempty"` // Temperature setting (nil if default)
+	MaxTokens   int      `json:"max_tokens,omitempty"`  // Max tokens requested
+	JSONMode    bool     `json:"json_mode,omitempty"`   // Whether JSON mode was enabled
+
+	// Fallback/Retry Context
+	FallbackPosition int  `json:"fallback_position,omitempty"` // Position in fallback chain (0=primary)
+	IsRetry          bool `json:"is_retry,omitempty"`          // Whether this was a retry attempt
 }
 
 // LLMRequestPayload contains the actual content sent to the LLM.
 type LLMRequestPayload struct {
-	Schema     string            `json:"schema,omitempty"`       // Schema used (for extract/crawl)
-	Prompt     string            `json:"prompt,omitempty"`       // Full prompt for analyze jobs
-	PageContent string           `json:"page_content,omitempty"` // Cleaned page content sent to LLM
-	Hints      map[string]string `json:"hints_applied,omitempty"`
+	SystemPrompt string            `json:"system_prompt,omitempty"` // System instructions sent to LLM
+	UserPrompt   string            `json:"user_prompt,omitempty"`   // Formatted user content/prompt
+	Schema       string            `json:"schema,omitempty"`        // Schema used (for extract/crawl)
+	Prompt       string            `json:"prompt,omitempty"`        // Full prompt for analyze jobs (legacy)
+	PageContent  string            `json:"page_content,omitempty"`  // Cleaned page content sent to LLM
+	Hints        map[string]string `json:"hints_applied,omitempty"` // Preprocessing hints applied
 }
 
 // LLMResponseSection contains the response metadata and payload.
@@ -143,22 +156,39 @@ type LLMResponseSection struct {
 
 // LLMResponseMeta contains metadata about the LLM response.
 type LLMResponseMeta struct {
-	InputTokens  int    `json:"input_tokens"`
-	OutputTokens int    `json:"output_tokens"`
-	DurationMs   int64  `json:"duration_ms"`
-	Success      bool   `json:"success"`
-	Error        string `json:"error,omitempty"`
+	InputTokens   int     `json:"input_tokens"`
+	OutputTokens  int     `json:"output_tokens"`
+	DurationMs    int64   `json:"duration_ms"`
+	Success       bool    `json:"success"`
+	Error         string  `json:"error,omitempty"`
+	ErrorCategory string  `json:"error_category,omitempty"` // Error classification
+	CostUSD       float64 `json:"cost_usd,omitempty"`       // Cost of this request in USD
 }
 
 // LLMResponsePayload contains the actual LLM output.
 type LLMResponsePayload struct {
-	RawOutput string `json:"raw_output,omitempty"` // Raw LLM response text
+	RawOutput    string          `json:"raw_output,omitempty"`    // Raw LLM response text
+	ParsedOutput json.RawMessage `json:"parsed_output,omitempty"` // Structured data (if successfully parsed)
+	ParseError   string          `json:"parse_error,omitempty"`   // Error if JSON parsing failed
 }
 
 // JobDebugCapture holds all debug captures for a job.
 type JobDebugCapture struct {
-	JobID    string              `json:"job_id"`
-	Enabled  bool                `json:"enabled"`
+	// Job-level metadata
+	JobID      string `json:"job_id"`
+	JobType    string `json:"job_type,omitempty"`    // "analyze", "extract", "crawl"
+	APIVersion string `json:"api_version,omitempty"` // API version that processed this job
+	IsBYOK     bool   `json:"is_byok,omitempty"`     // Whether user's own API key was used
+	Enabled    bool   `json:"enabled"`
+
+	// Summary statistics
+	TotalRequests int     `json:"total_requests,omitempty"` // Number of LLM requests
+	TotalTokensIn int     `json:"total_tokens_in,omitempty"`
+	TotalTokensOut int    `json:"total_tokens_out,omitempty"`
+	TotalCostUSD  float64 `json:"total_cost_usd,omitempty"`
+	TotalDurationMs int64 `json:"total_duration_ms,omitempty"`
+
+	// Individual captures
 	Captures []LLMRequestCapture `json:"captures"`
 }
 
@@ -442,6 +472,31 @@ func (s *StorageService) GetDebugCapture(ctx context.Context, jobID string) (*Jo
 	}
 
 	return &capture, nil
+}
+
+// GetDebugCaptureDownloadURL returns a presigned URL for downloading raw debug capture JSON.
+// The URL is valid for the specified duration (default 1 hour).
+func (s *StorageService) GetDebugCaptureDownloadURL(ctx context.Context, jobID string, expiry time.Duration) (string, error) {
+	if !s.enabled {
+		return "", fmt.Errorf("storage is not enabled")
+	}
+
+	if expiry == 0 {
+		expiry = 1 * time.Hour
+	}
+
+	key := fmt.Sprintf("debug/%s.json", jobID)
+
+	presignClient := s3.NewPresignClient(s.client)
+	presignedReq, err := presignClient.PresignGetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	}, s3.WithPresignExpires(expiry))
+	if err != nil {
+		return "", fmt.Errorf("failed to generate presigned URL: %w", err)
+	}
+
+	return presignedReq.URL, nil
 }
 
 // DebugCaptureExists checks if debug captures exist for a job.

@@ -61,6 +61,11 @@ func Register(api huma.API, h *Handlers) {
 		mw.WithSummary("Get job debug captures"),
 		mw.WithDescription("Returns captured LLM prompts and metadata for debugging extraction issues"),
 		mw.WithOperationID("getJobDebugCapture"))
+	mw.ProtectedGet(api, "/api/v1/jobs/{id}/debug-capture/download", h.Job.DownloadJobDebugCapture,
+		mw.WithTags("Jobs"),
+		mw.WithSummary("Download debug capture file"),
+		mw.WithDescription("Returns a signed URL to download the raw debug capture JSON file for sharing or offline analysis"),
+		mw.WithOperationID("downloadJobDebugCapture"))
 
 	// Raw HTTP handlers for format-aware responses (non-JSON content types)
 	// RegisterRawEndpoints adds them to OpenAPI with proper security requirements.

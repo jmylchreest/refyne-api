@@ -18,12 +18,17 @@ import {
   XCircle,
   FileCode,
   Zap,
+  DollarSign,
+  Clock,
+  Key,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
+// Props can be either jobId (fetch from API) or data (direct data)
 interface JobInspectorProps {
-  jobId: string;
+  jobId?: string;
+  data?: JobDebugCaptureResponse;
 }
 
 function formatTokens(count: number): string {
@@ -44,14 +49,31 @@ function truncateUrl(url: string, maxLength = 40) {
   }
 }
 
-export function JobInspector({ jobId }: JobInspectorProps) {
-  const [capture, setCapture] = useState<JobDebugCaptureResponse | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+export function JobInspector({ jobId, data: initialData }: JobInspectorProps) {
+  const [capture, setCapture] = useState<JobDebugCaptureResponse | null>(initialData || null);
+  const [isLoading, setIsLoading] = useState(!initialData && !!jobId);
   const [error, setError] = useState<string | null>(null);
-  const [selectedCapture, setSelectedCapture] = useState<DebugCaptureEntry | null>(null);
+  const [selectedCapture, setSelectedCapture] = useState<DebugCaptureEntry | null>(
+    initialData?.captures?.[0] || null
+  );
   const [copied, setCopied] = useState<string | null>(null);
 
+  // Fetch from API only if jobId is provided and no initial data
   useEffect(() => {
+    if (initialData) {
+      setCapture(initialData);
+      if (initialData.captures?.length > 0) {
+        setSelectedCapture(initialData.captures[0]);
+      }
+      setIsLoading(false);
+      return;
+    }
+
+    if (!jobId) {
+      setIsLoading(false);
+      return;
+    }
+
     const loadCapture = async () => {
       setIsLoading(true);
       setError(null);
@@ -71,7 +93,7 @@ export function JobInspector({ jobId }: JobInspectorProps) {
     };
 
     loadCapture();
-  }, [jobId]);
+  }, [jobId, initialData]);
 
   const copyToClipboard = async (text: string, label: string) => {
     await navigator.clipboard.writeText(text);
@@ -117,11 +139,45 @@ export function JobInspector({ jobId }: JobInspectorProps) {
   return (
     <div className="flex h-full">
       {/* Left Navigator */}
-      <div className="w-48 border-r border-zinc-200 dark:border-zinc-800 flex flex-col">
-        <div className="p-2 border-b border-zinc-200 dark:border-zinc-800">
-          <span className="text-xs font-medium text-zinc-500">
-            {capture.captures.length} request{capture.captures.length !== 1 ? 's' : ''}
-          </span>
+      <div className="w-56 border-r border-zinc-200 dark:border-zinc-800 flex flex-col">
+        {/* Job Summary Header */}
+        <div className="p-3 border-b border-zinc-200 dark:border-zinc-800 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-zinc-500">
+              {capture.captures.length} request{capture.captures.length !== 1 ? 's' : ''}
+            </span>
+            {capture.is_byok && (
+              <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-200">
+                <Key className="h-3 w-3 mr-1" />
+                BYOK
+              </Badge>
+            )}
+          </div>
+          {/* Summary Stats */}
+          {(capture.total_tokens_in || capture.total_cost_usd || capture.total_duration_ms) && (
+            <div className="grid grid-cols-2 gap-1 text-xs">
+              {capture.total_tokens_in !== undefined && (
+                <div className="text-zinc-500">
+                  <span className="font-medium">{formatTokens(capture.total_tokens_in + (capture.total_tokens_out || 0))}</span> tokens
+                </div>
+              )}
+              {capture.total_cost_usd !== undefined && capture.total_cost_usd > 0 && (
+                <div className="text-zinc-500">
+                  <span className="font-medium">${capture.total_cost_usd.toFixed(4)}</span>
+                </div>
+              )}
+              {capture.total_duration_ms !== undefined && (
+                <div className="text-zinc-500">
+                  <span className="font-medium">{(capture.total_duration_ms / 1000).toFixed(1)}s</span> total
+                </div>
+              )}
+            </div>
+          )}
+          {capture.api_version && (
+            <div className="text-xs text-zinc-400">
+              API {capture.api_version}
+            </div>
+          )}
         </div>
         <div className="flex-1 overflow-auto">
           <div className="p-1">
@@ -171,46 +227,94 @@ export function JobInspector({ jobId }: JobInspectorProps) {
               </div>
 
               {/* Metadata Grid */}
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Zap className="h-3.5 w-3.5 text-zinc-400" />
-                    <span className="text-zinc-500">Provider</span>
+              <div className="grid grid-cols-3 gap-3 text-sm">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-1.5">
+                    <Zap className="h-3 w-3 text-zinc-400" />
+                    <span className="text-xs text-zinc-500">Provider</span>
                   </div>
-                  <Badge variant="outline" className="font-mono">
+                  <Badge variant="outline" className="font-mono text-xs">
                     {selectedCapture.request.provider}
                   </Badge>
                 </div>
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <ChevronRight className="h-3.5 w-3.5 text-zinc-400" />
-                    <span className="text-zinc-500">Model</span>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-1.5">
+                    <ChevronRight className="h-3 w-3 text-zinc-400" />
+                    <span className="text-xs text-zinc-500">Model</span>
                   </div>
-                  <Badge variant="outline" className="font-mono">
+                  <Badge variant="outline" className="font-mono text-xs">
                     {selectedCapture.request.model}
                   </Badge>
                 </div>
-                <div className="space-y-2">
-                  <div className="text-zinc-500">Input Tokens</div>
-                  <span className="font-medium">{formatTokens(selectedCapture.response.input_tokens)}</span>
-                </div>
-                <div className="space-y-2">
-                  <div className="text-zinc-500">Output Tokens</div>
-                  <span className="font-medium">{formatTokens(selectedCapture.response.output_tokens)}</span>
-                </div>
-                <div className="space-y-2">
-                  <div className="text-zinc-500">Duration</div>
-                  <span className="font-medium">{(selectedCapture.response.duration_ms / 1000).toFixed(2)}s</span>
-                </div>
-                <div className="space-y-2">
-                  <div className="text-zinc-500">Content Size</div>
-                  <span className="font-medium">{formatTokens(selectedCapture.request.content_size)} chars</span>
-                </div>
                 {selectedCapture.api_version && (
-                  <div className="space-y-2">
-                    <div className="text-zinc-500">API Version</div>
+                  <div className="space-y-1">
+                    <span className="text-xs text-zinc-500">API Version</span>
                     <Badge variant="outline" className="font-mono text-xs">
                       {selectedCapture.api_version}
+                    </Badge>
+                  </div>
+                )}
+                <div className="space-y-1">
+                  <span className="text-xs text-zinc-500">Input Tokens</span>
+                  <div className="font-medium">{formatTokens(selectedCapture.response.input_tokens)}</div>
+                </div>
+                <div className="space-y-1">
+                  <span className="text-xs text-zinc-500">Output Tokens</span>
+                  <div className="font-medium">{formatTokens(selectedCapture.response.output_tokens)}</div>
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-1.5">
+                    <Clock className="h-3 w-3 text-zinc-400" />
+                    <span className="text-xs text-zinc-500">Duration</span>
+                  </div>
+                  <div className="font-medium">{(selectedCapture.response.duration_ms / 1000).toFixed(2)}s</div>
+                </div>
+                {selectedCapture.response.cost_usd !== undefined && selectedCapture.response.cost_usd > 0 && (
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-1.5">
+                      <DollarSign className="h-3 w-3 text-zinc-400" />
+                      <span className="text-xs text-zinc-500">Cost</span>
+                    </div>
+                    <div className="font-medium">${selectedCapture.response.cost_usd.toFixed(4)}</div>
+                  </div>
+                )}
+                <div className="space-y-1">
+                  <span className="text-xs text-zinc-500">Content Size</span>
+                  <div className="font-medium">{formatTokens(selectedCapture.request.content_size)} chars</div>
+                </div>
+                {selectedCapture.request.temperature !== undefined && (
+                  <div className="space-y-1">
+                    <span className="text-xs text-zinc-500">Temperature</span>
+                    <div className="font-medium">{selectedCapture.request.temperature}</div>
+                  </div>
+                )}
+                {selectedCapture.request.max_tokens !== undefined && selectedCapture.request.max_tokens > 0 && (
+                  <div className="space-y-1">
+                    <span className="text-xs text-zinc-500">Max Tokens</span>
+                    <div className="font-medium">{formatTokens(selectedCapture.request.max_tokens)}</div>
+                  </div>
+                )}
+                {selectedCapture.is_byok && (
+                  <div className="space-y-1">
+                    <span className="text-xs text-zinc-500">Key Type</span>
+                    <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-200">
+                      BYOK
+                    </Badge>
+                  </div>
+                )}
+                {selectedCapture.request.is_retry && (
+                  <div className="space-y-1">
+                    <span className="text-xs text-zinc-500">Retry</span>
+                    <Badge variant="outline" className="text-xs bg-orange-50 text-orange-700 border-orange-200">
+                      Retry
+                    </Badge>
+                  </div>
+                )}
+                {selectedCapture.request.fallback_position !== undefined && selectedCapture.request.fallback_position > 0 && (
+                  <div className="space-y-1">
+                    <span className="text-xs text-zinc-500">Fallback</span>
+                    <Badge variant="outline" className="text-xs">
+                      Position {selectedCapture.request.fallback_position}
                     </Badge>
                   </div>
                 )}

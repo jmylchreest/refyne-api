@@ -89,6 +89,10 @@ func (s *stubJobHandlers) GetJobDebugCapture(_ context.Context, _ *handlers.GetJ
 	return nil, nil
 }
 
+func (s *stubJobHandlers) DownloadJobDebugCapture(_ context.Context, _ *handlers.DownloadJobDebugCaptureInput) (*handlers.DownloadJobDebugCaptureOutput, error) {
+	return nil, nil
+}
+
 // RegisterRawEndpoints calls the real handler's RegisterRawEndpoints method.
 // The real method already registers placeholder handlers, so it works for OpenAPI generation.
 // This avoids duplicating the Operation definitions.
