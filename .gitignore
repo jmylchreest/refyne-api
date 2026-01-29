@@ -127,3 +127,4 @@ wrangler.jsonc
 *.log
 .env*.local
 api-keys.json
+openapi.json
