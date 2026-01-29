@@ -56,12 +56,22 @@ func (e *ExtractExecutor) Execute(ctx context.Context) (*JobExecutionResult, err
 	// Build debug capture data if raw content is available
 	var debugCapture *DebugCaptureData
 	if result.RawContent != "" {
+		// Unmarshal the schema from json.RawMessage to get the actual string value
+		// (json.RawMessage contains JSON-encoded bytes, so we need to decode it)
+		var schemaStr string
+		if len(e.input.Schema) > 0 {
+			if err := json.Unmarshal(e.input.Schema, &schemaStr); err != nil {
+				// If unmarshal fails (e.g., schema is a JSON object not a string), use raw bytes
+				schemaStr = string(e.input.Schema)
+			}
+		}
+
 		debugCapture = &DebugCaptureData{
 			URL:            result.URL,
 			FetchMode:      e.input.FetchMode,
 			RawContent:     result.RawContent,
 			RawLLMResponse: result.RawLLMResponse,
-			Schema:         string(e.input.Schema), // Captures both schema and prompt-based extractions
+			Schema:         schemaStr,
 			DurationMs:     time.Since(startTime).Milliseconds(),
 			APIVersion:     version.Get().Short(),
 		}
