@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useUser, SignedIn, SignedOut, RedirectToSignIn } from '@clerk/nextjs';
 import { cn } from '@/lib/utils';
 import { SiteHeader } from '@/components/site-header';
+import { VersionInfo } from '@/components/version-info';
 
 const navigation = [
   { name: 'Extract', href: '/dashboard', icon: ExtractIcon },
@@ -141,8 +142,8 @@ export default function DashboardLayout({
           <SiteHeader fixed />
 
           {/* Sidebar - navigation only */}
-          <div className="fixed top-16 bottom-0 left-0 z-40 w-56 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800 overflow-y-auto">
-            <nav className="flex flex-col p-4">
+          <div className="fixed top-16 bottom-0 left-0 z-40 w-56 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800 flex flex-col">
+            <nav className="flex flex-col p-4 flex-1 overflow-y-auto">
               {/* Main navigation */}
               <div className="flex flex-col gap-1">
                 {navigation.map((item) => {
@@ -241,6 +242,11 @@ export default function DashboardLayout({
                 </div>
               )}
             </nav>
+
+            {/* Version info at bottom of sidebar */}
+            <div className="p-4 border-t border-zinc-200 dark:border-zinc-800">
+              <VersionInfo className="text-center" showBuildTime />
+            </div>
           </div>
 
           {/* Main content */}
