@@ -35,7 +35,8 @@ export default function DebugViewerPage() {
         total_tokens_out: parsed.total_tokens_out || parsed.TotalTokensOut,
         total_cost_usd: parsed.total_cost_usd || parsed.TotalCostUSD,
         total_duration_ms: parsed.total_duration_ms || parsed.TotalDurationMs,
-        captures: parsed.captures.map((c: any) => ({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        captures: parsed.captures.map((c: Record<string, any>) => ({
           id: c.id || c.ID,
           url: c.url || c.URL,
           timestamp: c.timestamp || c.Timestamp,
