@@ -217,13 +217,13 @@ export function JobInspector({ jobId }: JobInspectorProps) {
               )}
 
               {/* Hints Applied */}
-              {selectedCapture.hints_applied && Object.keys(selectedCapture.hints_applied).length > 0 && (
+              {selectedCapture.request.hints_applied && Object.keys(selectedCapture.request.hints_applied).length > 0 && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-medium text-zinc-500">Hints Applied</span>
                   </div>
                   <div className="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-3 space-y-2">
-                    {Object.entries(selectedCapture.hints_applied).map(([key, value]) => (
+                    {Object.entries(selectedCapture.request.hints_applied).map(([key, value]) => (
                       <div key={key} className="text-xs">
                         <span className="font-medium text-zinc-600 dark:text-zinc-400">{key}:</span>
                         <span className="ml-2 text-zinc-500">{value}</span>
@@ -234,18 +234,18 @@ export function JobInspector({ jobId }: JobInspectorProps) {
               )}
 
               {/* Raw Content / Prompt */}
-              {(selectedCapture.raw_content || selectedCapture.prompt) && (
+              {(selectedCapture.request.page_content || selectedCapture.request.prompt) && (
                 <div className="flex flex-col flex-1 min-h-0">
                   <div className="flex items-center justify-between mb-2 shrink-0">
                     <span className="text-sm font-medium text-zinc-500">
-                      {selectedCapture.prompt ? 'Prompt' : 'Page Content'}
+                      {selectedCapture.request.prompt ? 'Prompt' : 'Page Content'}
                     </span>
                     <Button
                       variant="ghost"
                       size="sm"
                       className="h-7 text-xs"
                       onClick={() => copyToClipboard(
-                        selectedCapture.prompt || selectedCapture.raw_content || '',
+                        selectedCapture.request.prompt || selectedCapture.request.page_content || '',
                         'Content'
                       )}
                     >
@@ -259,14 +259,14 @@ export function JobInspector({ jobId }: JobInspectorProps) {
                   </div>
                   <div className="bg-zinc-950 rounded-lg flex-1 min-h-0 overflow-auto">
                     <pre className="p-3 text-xs text-zinc-300 font-mono whitespace-pre-wrap break-all">
-                      {selectedCapture.prompt || selectedCapture.raw_content}
+                      {selectedCapture.request.prompt || selectedCapture.request.page_content}
                     </pre>
                   </div>
                 </div>
               )}
 
               {/* Schema */}
-              {selectedCapture.schema && (
+              {selectedCapture.request.schema && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-medium text-zinc-500">Schema</span>
@@ -274,7 +274,7 @@ export function JobInspector({ jobId }: JobInspectorProps) {
                       variant="ghost"
                       size="sm"
                       className="h-7 text-xs"
-                      onClick={() => copyToClipboard(selectedCapture.schema || '', 'Schema')}
+                      onClick={() => copyToClipboard(selectedCapture.request.schema || '', 'Schema')}
                     >
                       {copied === 'Schema' ? (
                         <Check className="h-3.5 w-3.5 mr-1 text-green-500" />
@@ -288,9 +288,42 @@ export function JobInspector({ jobId }: JobInspectorProps) {
                     <pre className="p-3 text-xs text-zinc-300 font-mono whitespace-pre-wrap">
                       {(() => {
                         try {
-                          return JSON.stringify(JSON.parse(selectedCapture.schema || ''), null, 2);
+                          return JSON.stringify(JSON.parse(selectedCapture.request.schema || ''), null, 2);
                         } catch {
-                          return selectedCapture.schema;
+                          return selectedCapture.request.schema;
+                        }
+                      })()}
+                    </pre>
+                  </div>
+                </div>
+              )}
+
+              {/* LLM Raw Output */}
+              {selectedCapture.response.raw_output && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-zinc-500">LLM Raw Output</span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => copyToClipboard(selectedCapture.response.raw_output || '', 'Raw Output')}
+                    >
+                      {copied === 'Raw Output' ? (
+                        <Check className="h-3.5 w-3.5 mr-1 text-green-500" />
+                      ) : (
+                        <Copy className="h-3.5 w-3.5 mr-1" />
+                      )}
+                      Copy
+                    </Button>
+                  </div>
+                  <div className="bg-zinc-950 rounded-lg max-h-48 overflow-auto">
+                    <pre className="p-3 text-xs text-zinc-300 font-mono whitespace-pre-wrap">
+                      {(() => {
+                        try {
+                          return JSON.stringify(JSON.parse(selectedCapture.response.raw_output || ''), null, 2);
+                        } catch {
+                          return selectedCapture.response.raw_output;
                         }
                       })()}
                     </pre>

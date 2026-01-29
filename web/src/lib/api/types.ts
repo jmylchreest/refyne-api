@@ -571,6 +571,11 @@ export interface DebugCaptureLLMRequest {
   fetch_mode?: string;
   content_size: number;
   prompt_size: number;
+  // Payload fields
+  schema?: string;
+  prompt?: string;
+  page_content?: string;
+  hints_applied?: Record<string, string>;
 }
 
 export interface DebugCaptureLLMResponse {
@@ -579,6 +584,8 @@ export interface DebugCaptureLLMResponse {
   duration_ms: number;
   success: boolean;
   error?: string;
+  // Payload fields
+  raw_output?: string;
 }
 
 export interface DebugCaptureEntry {
@@ -588,10 +595,6 @@ export interface DebugCaptureEntry {
   job_type: string;
   request: DebugCaptureLLMRequest;
   response: DebugCaptureLLMResponse;
-  prompt?: string;
-  raw_content?: string;
-  schema?: string;
-  hints_applied?: Record<string, string>;
 }
 
 export interface JobDebugCaptureResponse {
