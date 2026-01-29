@@ -294,13 +294,7 @@ export function JobInspector({ jobId }: JobInspectorProps) {
                   </div>
                   <div className="bg-zinc-950 rounded-lg max-h-48 overflow-auto">
                     <pre className="p-3 text-xs text-zinc-300 font-mono whitespace-pre-wrap">
-                      {(() => {
-                        try {
-                          return JSON.stringify(JSON.parse(selectedCapture.request.schema || ''), null, 2);
-                        } catch {
-                          return selectedCapture.request.schema;
-                        }
-                      })()}
+                      {selectedCapture.request.schema}
                     </pre>
                   </div>
                 </div>
