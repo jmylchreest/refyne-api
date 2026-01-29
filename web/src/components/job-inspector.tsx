@@ -207,8 +207,8 @@ export function JobInspector({ jobId, data: initialData }: JobInspectorProps) {
       {/* Right Detail View */}
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
         {selectedCapture ? (
-          <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-            <div className="p-4 space-y-4 flex flex-col flex-1 min-h-0">
+          <div className="flex-1 flex flex-col min-h-0 overflow-auto">
+            <div className="p-4 space-y-4">
               {/* URL Header */}
               <div className="flex items-center gap-2">
                 {selectedCapture.response.success ? (
@@ -347,8 +347,8 @@ export function JobInspector({ jobId, data: initialData }: JobInspectorProps) {
 
               {/* Raw Content / Prompt */}
               {(selectedCapture.request.page_content || selectedCapture.request.prompt) && (
-                <div className="flex flex-col flex-1 min-h-0">
-                  <div className="flex items-center justify-between mb-2 shrink-0">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
                     <span className="text-sm font-medium text-zinc-500">
                       {selectedCapture.request.prompt ? 'Prompt' : 'Page Content'}
                     </span>
@@ -369,7 +369,7 @@ export function JobInspector({ jobId, data: initialData }: JobInspectorProps) {
                       Copy
                     </Button>
                   </div>
-                  <div className="bg-zinc-950 rounded-lg flex-1 min-h-0 overflow-auto">
+                  <div className="bg-zinc-950 rounded-lg">
                     <pre className="p-3 text-xs text-zinc-300 font-mono whitespace-pre-wrap break-all">
                       {selectedCapture.request.prompt || selectedCapture.request.page_content}
                     </pre>
@@ -396,7 +396,7 @@ export function JobInspector({ jobId, data: initialData }: JobInspectorProps) {
                       Copy
                     </Button>
                   </div>
-                  <div className="bg-zinc-950 rounded-lg max-h-48 overflow-auto">
+                  <div className="bg-zinc-950 rounded-lg">
                     <pre className="p-3 text-xs text-zinc-300 font-mono whitespace-pre-wrap">
                       {selectedCapture.request.schema}
                     </pre>
@@ -423,7 +423,7 @@ export function JobInspector({ jobId, data: initialData }: JobInspectorProps) {
                       Copy
                     </Button>
                   </div>
-                  <div className="bg-zinc-950 rounded-lg max-h-48 overflow-auto">
+                  <div className="bg-zinc-950 rounded-lg">
                     <pre className="p-3 text-xs text-zinc-300 font-mono whitespace-pre-wrap">
                       {(() => {
                         try {
@@ -438,7 +438,7 @@ export function JobInspector({ jobId, data: initialData }: JobInspectorProps) {
               )}
 
               {/* Timestamp */}
-              <div className="text-xs text-zinc-400 pt-2 border-t border-zinc-200 dark:border-zinc-800 shrink-0">
+              <div className="text-xs text-zinc-400 pt-2 border-t border-zinc-200 dark:border-zinc-800">
                 Captured at {format(new Date(selectedCapture.timestamp), 'PPpp')}
               </div>
             </div>
