@@ -14,6 +14,7 @@ import (
 	"github.com/jmylchreest/refyne-api/captcha/internal/browser"
 	"github.com/jmylchreest/refyne-api/captcha/internal/challenge"
 	"github.com/jmylchreest/refyne-api/captcha/internal/config"
+	"github.com/jmylchreest/refyne-api/captcha/internal/consent"
 	"github.com/jmylchreest/refyne-api/captcha/internal/http/mw"
 	"github.com/jmylchreest/refyne-api/captcha/internal/models"
 	"github.com/jmylchreest/refyne-api/captcha/internal/session"
@@ -27,6 +28,7 @@ type SolveHandler struct {
 	sessions       *session.Manager
 	detector       *challenge.Detector
 	solver         solver.Solver
+	consentDismiss *consent.Dismisser
 	cfg            *config.Config
 	logger         *slog.Logger
 }
@@ -41,12 +43,13 @@ func NewSolveHandler(
 	logger *slog.Logger,
 ) *SolveHandler {
 	return &SolveHandler{
-		pool:     pool,
-		sessions: sessions,
-		detector: detector,
-		solver:   solverChain,
-		cfg:      cfg,
-		logger:   logger,
+		pool:           pool,
+		sessions:       sessions,
+		detector:       detector,
+		solver:         solverChain,
+		consentDismiss: consent.NewDismisser(logger),
+		cfg:            cfg,
+		logger:         logger,
 	}
 }
 
@@ -307,6 +310,16 @@ func (h *SolveHandler) handleRequest(ctx context.Context, req *models.SolveReque
 	// Wait for initial load
 	if err := page.WaitLoad(); err != nil {
 		return models.NewErrorResponse("failed to wait for load: "+err.Error(), startTime, time.Now().UnixMilli(), ver, "")
+	}
+
+	// Dismiss cookie consent banners (if present)
+	// This must happen before challenge detection to ensure content is visible
+	if dismissed := h.consentDismiss.Dismiss(ctx, page); dismissed {
+		h.logger.Debug("cookie consent banner dismissed",
+			"user_id", userID,
+			"job_id", jobID,
+			"url", req.URL,
+		)
 	}
 
 	// Detect challenge
