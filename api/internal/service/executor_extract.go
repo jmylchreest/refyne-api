@@ -72,6 +72,8 @@ func (e *ExtractExecutor) Execute(ctx context.Context) (*JobExecutionResult, err
 			RawContent:     result.RawContent,
 			RawLLMResponse: result.RawLLMResponse,
 			Schema:         schemaStr,
+			Provider:       result.Metadata.Provider,
+			Model:          result.Metadata.Model,
 			DurationMs:     time.Since(startTime).Milliseconds(),
 			APIVersion:     version.Get().Short(),
 		}
