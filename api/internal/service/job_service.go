@@ -204,6 +204,7 @@ func (s *JobService) handleJobSuccess(ctx context.Context, job *models.Job, exec
 							PromptSize:  len(result.DebugCapture.Prompt),
 						},
 						Payload: LLMRequestPayload{
+							Schema:      result.DebugCapture.Schema,
 							Prompt:      result.DebugCapture.Prompt,
 							PageContent: result.DebugCapture.RawContent,
 						},

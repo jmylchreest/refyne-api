@@ -68,6 +68,7 @@ type DebugCaptureData struct {
 	RawContent     string // Page content sent to LLM
 	RawLLMResponse string // Raw LLM output
 	Prompt         string
+	Schema         string // Schema used for extraction (YAML format)
 	DurationMs     int64
 }
 

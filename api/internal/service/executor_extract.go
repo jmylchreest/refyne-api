@@ -60,6 +60,7 @@ func (e *ExtractExecutor) Execute(ctx context.Context) (*JobExecutionResult, err
 			FetchMode:      e.input.FetchMode,
 			RawContent:     result.RawContent,
 			RawLLMResponse: result.RawLLMResponse,
+			Schema:         string(e.input.Schema), // Captures both schema and prompt-based extractions
 			DurationMs:     time.Since(startTime).Milliseconds(),
 		}
 	}
