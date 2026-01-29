@@ -28,7 +28,7 @@ type AnalyzeInput struct {
 		URL       string `json:"url" minLength:"1" doc:"URL to analyze"`
 		Depth     *int   `json:"depth,omitempty" minimum:"0" maximum:"1" default:"0" doc:"Crawl depth: 0=single page, 1=one level deep"`
 		FetchMode string `json:"fetch_mode,omitempty" enum:"auto,static,dynamic" default:"auto" doc:"Fetch mode: auto, static, or dynamic"`
-		Debug     *bool  `json:"debug,omitempty" doc:"Capture debug information (LLM prompts/responses). Defaults to true for analyze jobs."`
+		CaptureDebug *bool `json:"capture_debug,omitempty" doc:"Enable debug capture to store raw LLM request/response for troubleshooting. Defaults to true for analyze jobs."`
 	}
 }
 
@@ -76,8 +76,8 @@ func (h *AnalyzeHandler) Analyze(ctx context.Context, input *AnalyzeInput) (*Ana
 
 	// Debug capture defaults to true for analyze jobs (unlike crawl/extract which default to false)
 	captureDebug := true
-	if input.Body.Debug != nil {
-		captureDebug = *input.Body.Debug
+	if input.Body.CaptureDebug != nil {
+		captureDebug = *input.Body.CaptureDebug
 	}
 
 	// Determine depth with default of 0

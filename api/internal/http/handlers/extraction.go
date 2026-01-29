@@ -55,6 +55,7 @@ type ExtractInput struct {
 		FetchMode    string               `json:"fetch_mode,omitempty" enum:"auto,static,dynamic" default:"auto" doc:"Fetch mode: auto, static, or dynamic"`
 		LLMConfig    *LLMConfigInput      `json:"llm_config,omitempty" doc:"Optional LLM configuration override"`
 		CleanerChain []CleanerConfigInput `json:"cleaner_chain,omitempty" doc:"Content cleaner chain (default: [markdown])"`
+		CaptureDebug bool                 `json:"capture_debug,omitempty" doc:"Enable debug capture to store raw LLM request/response for troubleshooting"`
 		WebhookID    string               `json:"webhook_id,omitempty" doc:"ID of a saved webhook to call on completion"`
 		Webhook      *InlineWebhookInput  `json:"webhook,omitempty" doc:"Inline ephemeral webhook configuration"`
 		WebhookURL   string               `json:"webhook_url,omitempty" format:"uri" doc:"Simple webhook URL (backward compatible)"`
@@ -168,7 +169,7 @@ func (h *ExtractionHandler) Extract(ctx context.Context, input *ExtractInput) (*
 		runResult, err := h.jobSvc.RunJob(ctx, executor, &service.RunJobOptions{
 			UserID:           uc.UserID,
 			Tier:             uc.Tier,
-			CaptureDebug:     false, // Default for extract
+			CaptureDebug:     input.Body.CaptureDebug,
 			EphemeralWebhook: ephemeralWebhook,
 			WebhookID:        input.Body.WebhookID,
 		})

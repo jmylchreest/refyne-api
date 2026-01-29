@@ -99,14 +99,15 @@ type CreateCrawlJobInput struct {
 	Wait    bool `query:"wait" default:"false" doc:"Block until job completes and return results directly. Max wait time is 2 minutes. Returns 202 if timeout exceeded."`
 	Timeout int  `query:"timeout" default:"120" minimum:"10" maximum:"120" doc:"Maximum seconds to wait when wait=true (default 120s, max 120s/2min). For longer jobs, use async mode."`
 	Body    struct {
-		URL          string                  `json:"url" minLength:"1" example:"https://example.com/products" doc:"Seed URL to start crawling from"`
-		Schema       json.RawMessage         `json:"schema" minLength:"1" doc:"Extraction instructions - either a structured schema (YAML/JSON with 'name' and 'fields') or freeform natural language prompt. The API auto-detects the format."`
-		Options      CrawlOptions            `json:"options,omitempty" doc:"Crawl configuration options"`
-		CleanerChain []JobCleanerConfigInput `json:"cleaner_chain,omitempty" doc:"Content cleaner chain (default: [markdown])"`
-		WebhookID    string                  `json:"webhook_id,omitempty" doc:"ID of a saved webhook to call on job events"`
+		URL          string                   `json:"url" minLength:"1" example:"https://example.com/products" doc:"Seed URL to start crawling from"`
+		Schema       json.RawMessage          `json:"schema" minLength:"1" doc:"Extraction instructions - either a structured schema (YAML/JSON with 'name' and 'fields') or freeform natural language prompt. The API auto-detects the format."`
+		Options      CrawlOptions             `json:"options,omitempty" doc:"Crawl configuration options"`
+		CleanerChain []JobCleanerConfigInput  `json:"cleaner_chain,omitempty" doc:"Content cleaner chain (default: [markdown])"`
+		CaptureDebug *bool                    `json:"capture_debug,omitempty" doc:"Enable debug capture to store raw LLM request/response for troubleshooting"`
+		WebhookID    string                   `json:"webhook_id,omitempty" doc:"ID of a saved webhook to call on job events"`
 		Webhook      *CrawlInlineWebhookInput `json:"webhook,omitempty" doc:"Inline ephemeral webhook configuration"`
-		WebhookURL   string                  `json:"webhook_url,omitempty" format:"uri" example:"https://my-app.com/webhook/crawl-complete" doc:"Simple webhook URL (backward compatible)"`
-		LLMConfig    *LLMConfigInput         `json:"llm_config,omitempty" doc:"Optional LLM configuration override (BYOK)"`
+		WebhookURL   string                   `json:"webhook_url,omitempty" format:"uri" example:"https://my-app.com/webhook/crawl-complete" doc:"Simple webhook URL (backward compatible)"`
+		LLMConfig    *LLMConfigInput          `json:"llm_config,omitempty" doc:"Optional LLM configuration override (BYOK)"`
 	}
 }
 
@@ -217,6 +218,7 @@ func (h *JobHandler) CreateCrawlJob(ctx context.Context, input *CreateCrawlJobIn
 		LLMConfigs:   llmChain.All(),
 		Tier:         uc.Tier,
 		IsBYOK:       llmChain.IsBYOK(),
+		CaptureDebug: input.Body.CaptureDebug,
 	})
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to create crawl job: " + err.Error())

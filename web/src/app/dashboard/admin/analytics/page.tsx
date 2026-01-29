@@ -22,7 +22,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { ChevronLeft, ChevronRight, RefreshCw, Settings2, ExternalLink, Loader2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, RefreshCw, Settings2, ExternalLink, Loader2, Eye } from 'lucide-react';
+import Link from 'next/link';
 import {
   Popover,
   PopoverContent,
@@ -127,9 +128,9 @@ export default function AdminAnalyticsPage() {
   const pageSize = 50;
 
   // Column visibility state with localStorage persistence
-  type JobColumn = 'id' | 'user' | 'type' | 'status' | 'url' | 'cost' | 'llmCost' | 'tokens' | 'provider' | 'model' | 'discovery' | 'created' | 'results';
+  type JobColumn = 'id' | 'user' | 'type' | 'status' | 'url' | 'cost' | 'llmCost' | 'tokens' | 'provider' | 'model' | 'discovery' | 'created' | 'view' | 'results';
   const STORAGE_KEY = 'admin-analytics-visible-columns';
-  const defaultColumns: JobColumn[] = ['user', 'type', 'status', 'cost', 'llmCost', 'tokens', 'provider', 'discovery', 'created', 'results'];
+  const defaultColumns: JobColumn[] = ['user', 'type', 'status', 'cost', 'llmCost', 'tokens', 'provider', 'discovery', 'created', 'view', 'results'];
 
   const [visibleColumns, setVisibleColumns] = useState<Set<JobColumn>>(() => {
     if (typeof window === 'undefined') return new Set(defaultColumns);
@@ -167,6 +168,7 @@ export default function AdminAnalyticsPage() {
     model: 'Model',
     discovery: 'Discovery',
     created: 'Created',
+    view: 'View',
     results: 'Results',
   };
 
@@ -491,6 +493,7 @@ export default function AdminAnalyticsPage() {
                       {visibleColumns.has('model') && <TableHead>Model</TableHead>}
                       {visibleColumns.has('discovery') && <TableHead>Discovery</TableHead>}
                       {visibleColumns.has('created') && <TableHead>Created</TableHead>}
+                      {visibleColumns.has('view') && <TableHead>View</TableHead>}
                       {visibleColumns.has('results') && <TableHead>Results</TableHead>}
                     </TableRow>
                   </TableHeader>
@@ -580,6 +583,20 @@ export default function AdminAnalyticsPage() {
                           {visibleColumns.has('created') && (
                             <TableCell className="text-sm text-zinc-500">
                               {formatDate(job.created_at)}
+                            </TableCell>
+                          )}
+                          {visibleColumns.has('view') && (
+                            <TableCell>
+                              <Link href={`/dashboard/jobs/${job.id}`}>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 px-2 text-xs"
+                                  title="View job details"
+                                >
+                                  <Eye className="h-3 w-3" />
+                                </Button>
+                              </Link>
                             </TableCell>
                           )}
                           {visibleColumns.has('results') && (
