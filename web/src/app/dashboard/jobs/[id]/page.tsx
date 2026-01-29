@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import yaml from 'js-yaml';
 import { formatDistanceToNow, formatDistance, format } from 'date-fns';
@@ -116,7 +116,6 @@ function StatItem({ icon, label, value, subValue }: StatItemProps) {
 
 export default function JobViewPage() {
   const params = useParams();
-  const router = useRouter();
   const jobId = params.id as string;
 
   const [job, setJob] = useState<Job | null>(null);
