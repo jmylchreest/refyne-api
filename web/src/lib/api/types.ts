@@ -593,6 +593,7 @@ export interface DebugCaptureEntry {
   url: string;
   timestamp: string;
   job_type: string;
+  api_version?: string;
   request: DebugCaptureLLMRequest;
   response: DebugCaptureLLMResponse;
 }

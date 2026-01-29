@@ -1054,12 +1054,13 @@ type DebugCaptureLLMResponse struct {
 
 // DebugCaptureEntry represents a single captured LLM request/response.
 type DebugCaptureEntry struct {
-	ID        string                  `json:"id" doc:"Capture ID"`
-	URL       string                  `json:"url" doc:"Page URL being processed"`
-	Timestamp string                  `json:"timestamp" doc:"When the request was made"`
-	JobType   string                  `json:"job_type" doc:"Job type (analyze, extract, crawl)"`
-	Request   DebugCaptureLLMRequest  `json:"request" doc:"LLM request with metadata and payload"`
-	Response  DebugCaptureLLMResponse `json:"response" doc:"LLM response with metadata and payload"`
+	ID         string                  `json:"id" doc:"Capture ID"`
+	URL        string                  `json:"url" doc:"Page URL being processed"`
+	Timestamp  string                  `json:"timestamp" doc:"When the request was made"`
+	JobType    string                  `json:"job_type" doc:"Job type (analyze, extract, crawl)"`
+	APIVersion string                  `json:"api_version,omitempty" doc:"API version that processed this request"`
+	Request    DebugCaptureLLMRequest  `json:"request" doc:"LLM request with metadata and payload"`
+	Response   DebugCaptureLLMResponse `json:"response" doc:"LLM response with metadata and payload"`
 }
 
 // GetJobDebugCaptureOutput represents debug capture response.
@@ -1112,10 +1113,11 @@ func (h *JobHandler) GetJobDebugCapture(ctx context.Context, input *GetJobDebugC
 	entries := make([]DebugCaptureEntry, 0, len(capture.Captures))
 	for _, c := range capture.Captures {
 		entries = append(entries, DebugCaptureEntry{
-			ID:        c.ID,
-			URL:       c.URL,
-			Timestamp: c.Timestamp.Format(time.RFC3339),
-			JobType:   c.JobType,
+			ID:         c.ID,
+			URL:        c.URL,
+			Timestamp:  c.Timestamp.Format(time.RFC3339),
+			JobType:    c.JobType,
+			APIVersion: c.APIVersion,
 			Request: DebugCaptureLLMRequest{
 				Provider:    c.Request.Metadata.Provider,
 				Model:       c.Request.Metadata.Model,

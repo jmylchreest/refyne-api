@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jmylchreest/refyne-api/internal/models"
+	"github.com/jmylchreest/refyne-api/internal/version"
 )
 
 // ExtractExecutor handles single-page extraction jobs.
@@ -62,6 +63,7 @@ func (e *ExtractExecutor) Execute(ctx context.Context) (*JobExecutionResult, err
 			RawLLMResponse: result.RawLLMResponse,
 			Schema:         string(e.input.Schema), // Captures both schema and prompt-based extractions
 			DurationMs:     time.Since(startTime).Milliseconds(),
+			APIVersion:     version.Get().Short(),
 		}
 	}
 

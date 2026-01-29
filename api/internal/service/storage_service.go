@@ -95,10 +95,11 @@ type JobResultData struct {
 // Structured with clear separation between metadata and payloads for readability.
 type LLMRequestCapture struct {
 	// === Capture Metadata ===
-	ID        string    `json:"id"`
-	URL       string    `json:"url"`
-	Timestamp time.Time `json:"timestamp"`
-	JobType   string    `json:"job_type"` // "analyze", "extract", "crawl"
+	ID         string    `json:"id"`
+	URL        string    `json:"url"`
+	Timestamp  time.Time `json:"timestamp"`
+	JobType    string    `json:"job_type"`              // "analyze", "extract", "crawl"
+	APIVersion string    `json:"api_version,omitempty"` // API version that processed this request
 
 	// === Request Section ===
 	Request LLMRequestSection `json:"request"`

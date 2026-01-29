@@ -191,10 +191,11 @@ func (s *JobService) handleJobSuccess(ctx context.Context, job *models.Job, exec
 			Enabled: true,
 			Captures: []LLMRequestCapture{
 				{
-					ID:        ulid.Make().String(),
-					URL:       result.DebugCapture.URL,
-					Timestamp: now,
-					JobType:   string(executor.JobType()),
+					ID:         ulid.Make().String(),
+					URL:        result.DebugCapture.URL,
+					Timestamp:  now,
+					JobType:    string(executor.JobType()),
+					APIVersion: result.DebugCapture.APIVersion,
 					Request: LLMRequestSection{
 						Metadata: LLMRequestMeta{
 							Provider:    result.LLMProvider,

@@ -206,6 +206,14 @@ export function JobInspector({ jobId }: JobInspectorProps) {
                   <div className="text-zinc-500">Content Size</div>
                   <span className="font-medium">{formatTokens(selectedCapture.request.content_size)} chars</span>
                 </div>
+                {selectedCapture.api_version && (
+                  <div className="space-y-2">
+                    <div className="text-zinc-500">API Version</div>
+                    <Badge variant="outline" className="font-mono text-xs">
+                      {selectedCapture.api_version}
+                    </Badge>
+                  </div>
+                )}
               </div>
 
               {/* Error if failed */}

@@ -70,6 +70,7 @@ type DebugCaptureData struct {
 	Prompt         string
 	Schema         string // Schema used for extraction (YAML format)
 	DurationMs     int64
+	APIVersion     string // API version that processed this request
 }
 
 // RunJobOptions contains options for running a job via JobService.
