@@ -186,6 +186,20 @@ var (
 
 	// Pattern to check if page has meaningful content
 	contentIndicatorRegex = regexp.MustCompile(`<(article|main|section|div[^>]*class[^>]*content)[^>]*>`)
+
+	// SPA framework indicators - empty root elements suggest JS-rendered content
+	spaRootPatterns = []*regexp.Regexp{
+		regexp.MustCompile(`<div\s+id=["'](?:root|app|__next|__nuxt)["'][^>]*>\s*</div>`),
+		regexp.MustCompile(`<app-root[^>]*>\s*</app-root>`), // Angular
+		regexp.MustCompile(`<div\s+id=["']react-root["'][^>]*>\s*</div>`),
+	}
+
+	// Pattern to extract visible text (excludes script/style content)
+	htmlTagRegex     = regexp.MustCompile(`<[^>]+>`)
+	scriptRegex      = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>`)
+	styleRegex       = regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
+	noscriptRegex    = regexp.MustCompile(`(?is)<noscript[^>]*>.*?</noscript>`)
+	whitespaceRegex  = regexp.MustCompile(`\s+`)
 )
 
 // checkBodyContent analyzes response body for protection signals.
@@ -255,6 +269,25 @@ func (d *Detector) checkBodyContent(body []byte) DetectionResult {
 		}
 	}
 
+	// Check for empty SPA framework root elements (React, Vue, Angular, Next.js, Nuxt)
+	for _, pattern := range spaRootPatterns {
+		if pattern.MatchString(content) {
+			return DetectionResult{
+				Detected:       true,
+				Signal:         SignalJavaScriptRequired,
+				Confidence:     90,
+				Description:    "SPA framework detected with empty root - content is JavaScript-rendered",
+				SuggestDynamic: true,
+			}
+		}
+	}
+
+	// Check visible text content ratio - if very little actual text, likely JS-rendered
+	// This catches sites like Instructables where static HTML has only nav/footer
+	if result := d.checkTextContentRatio(content); result.Detected {
+		return result
+	}
+
 	// Check for suspiciously small content
 	if len(body) < d.MinContentLength {
 		// Only flag as suspicious if it doesn't look like a real page
@@ -266,6 +299,59 @@ func (d *Detector) checkBodyContent(body []byte) DetectionResult {
 				Description:    "Response too small - may be a challenge or error page",
 				SuggestDynamic: true,
 			}
+		}
+	}
+
+	return DetectionResult{Detected: false}
+}
+
+// checkTextContentRatio analyzes the visible text content in the HTML.
+// If the page has very little actual text content (just nav/footer), it likely needs JS.
+func (d *Detector) checkTextContentRatio(content string) DetectionResult {
+	// Remove script, style, and noscript content
+	cleaned := scriptRegex.ReplaceAllString(content, "")
+	cleaned = styleRegex.ReplaceAllString(cleaned, "")
+	cleaned = noscriptRegex.ReplaceAllString(cleaned, "")
+
+	// Remove all HTML tags to get visible text
+	visibleText := htmlTagRegex.ReplaceAllString(cleaned, " ")
+
+	// Normalize whitespace
+	visibleText = whitespaceRegex.ReplaceAllString(visibleText, " ")
+	visibleText = strings.TrimSpace(visibleText)
+
+	// Calculate metrics
+	textLength := len(visibleText)
+	htmlLength := len(content)
+
+	// If there's very little visible text compared to HTML size, or absolute text is tiny,
+	// the page likely renders its main content via JavaScript
+	// Threshold: less than 500 chars of visible text, or text is <2% of HTML
+	minVisibleText := 500
+	minTextRatio := 0.02
+
+	if textLength < minVisibleText {
+		// Check if this looks like a navigation-only page (short text, has links)
+		linkCount := strings.Count(strings.ToLower(content), "<a ")
+		if linkCount > 5 && textLength < 300 {
+			return DetectionResult{
+				Detected:       true,
+				Signal:         SignalJavaScriptRequired,
+				Confidence:     75,
+				Description:    "Page appears to have only navigation/footer content - main content likely requires JavaScript",
+				SuggestDynamic: true,
+			}
+		}
+	}
+
+	// Very low text-to-HTML ratio suggests JS-rendered content
+	if htmlLength > 1000 && float64(textLength)/float64(htmlLength) < minTextRatio {
+		return DetectionResult{
+			Detected:       true,
+			Signal:         SignalJavaScriptRequired,
+			Confidence:     70,
+			Description:    "Very low text content ratio - page likely renders content via JavaScript",
+			SuggestDynamic: true,
 		}
 	}
 

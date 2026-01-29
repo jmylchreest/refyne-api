@@ -159,6 +159,50 @@ func TestDetector_DetectFromResponse(t *testing.T) {
 			wantSignal:    SignalCloudflare,
 			wantRetryable: true,
 		},
+		{
+			name:       "empty React root element",
+			statusCode: 200,
+			body:       `<html><head></head><body><div id="root"></div><script src="/app.js"></script></body></html>`,
+			wantDetected:  true,
+			wantSignal:    SignalJavaScriptRequired,
+			wantRetryable: true,
+		},
+		{
+			name:       "empty Next.js root element",
+			statusCode: 200,
+			body:       `<html><head></head><body><div id="__next"></div></body></html>`,
+			wantDetected:  true,
+			wantSignal:    SignalJavaScriptRequired,
+			wantRetryable: true,
+		},
+		{
+			name:       "navigation-only content like Instructables static",
+			statusCode: 200,
+			body: `<html><head></head><body>
+				<nav><a href="/one">Link</a><a href="/two">Link</a><a href="/three">Link</a>
+				<a href="/four">Link</a><a href="/five">Link</a><a href="/six">Link</a></nav>
+				<footer>Copyright 2026</footer>
+			</body></html>`,
+			wantDetected:  true,
+			wantSignal:    SignalJavaScriptRequired,
+			wantRetryable: true,
+		},
+		{
+			name:       "real content page should not be detected",
+			statusCode: 200,
+			body: `<html><head></head><body>
+				<article>
+					<h1>How to Build Something Amazing</h1>
+					<p>This is a detailed tutorial about building something. It has lots of content
+					that describes the steps involved. First you need to gather materials. Then you
+					start assembling the pieces together. This paragraph contains enough text to
+					demonstrate that this is a real content page and not just navigation links.
+					The minimum threshold is around 500 characters of visible text content.</p>
+					<p>Here is more content to ensure we pass the threshold comfortably.</p>
+				</article>
+			</body></html>`,
+			wantDetected: false,
+		},
 	}
 
 	for _, tt := range tests {
