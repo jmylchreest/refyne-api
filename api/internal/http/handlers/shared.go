@@ -71,6 +71,7 @@ func BuildExtractContext(uc UserContext, llmConfig *LLMConfigInput) *service.Ext
 		SkipCreditCheckAllowed: uc.SkipCreditCheckAllowed,
 		LLMProvider:            uc.LLMProvider,
 		LLMModel:               uc.LLMModel,
+		LLMConfigs:             uc.LLMConfigs,
 	}
 
 	if llmConfig != nil && llmConfig.APIKey != "" {

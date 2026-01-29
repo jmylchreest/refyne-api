@@ -25,7 +25,7 @@ func (s *ExtractionService) extractWithPrompt(ctx context.Context, userID string
 	)
 
 	// Get LLM config chain (same as schema-based extraction)
-	llmChain := s.resolveLLMConfigChain(ctx, userID, input.LLMConfig, ectx.Tier, ectx.BYOKAllowed, ectx.ModelsCustomAllowed, ectx.LLMProvider, ectx.LLMModel)
+	llmChain := s.resolveLLMConfigChain(ctx, userID, input.LLMConfig, ectx.Tier, ectx.BYOKAllowed, ectx.ModelsCustomAllowed, ectx.LLMProvider, ectx.LLMModel, ectx.LLMConfigs)
 	ectx.IsBYOK = llmChain.IsBYOK()
 
 	if llmChain.IsEmpty() {

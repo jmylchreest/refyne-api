@@ -30,8 +30,9 @@ type UserClaims struct {
 	Features         []string // From Clerk Commerce "fea" claim
 	Scopes           []string // For API keys
 	IsAPIKey         bool     // True if authenticated via API key
-	LLMProvider      string   // For S3 API keys: forced LLM provider
-	LLMModel         string   // For S3 API keys: forced LLM model
+	LLMProvider      string   // For S3 API keys: forced LLM provider (deprecated, use LLMConfigs)
+	LLMModel         string   // For S3 API keys: forced LLM model (deprecated, use LLMConfigs)
+	LLMConfigs       []config.APIKeyLLMConfig // For S3 API keys: fallback chain of LLM configs
 }
 
 // HasFeature checks if the user has a specific feature.
@@ -295,8 +296,13 @@ func validateS3APIKey(r *http.Request, apiKey string) *UserClaims {
 
 	// Inject LLM config if specified (bypasses fallback chain)
 	if keyConfig.LLMConfig != nil {
-		claims.LLMProvider = keyConfig.LLMConfig.Provider
-		claims.LLMModel = keyConfig.LLMConfig.Model
+		models := keyConfig.LLMConfig.GetModels()
+		claims.LLMConfigs = models
+		// Backward compatibility: also set single provider/model from first config
+		if len(models) > 0 {
+			claims.LLMProvider = models[0].Provider
+			claims.LLMModel = models[0].Model
+		}
 	}
 
 	return claims

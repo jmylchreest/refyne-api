@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/jmylchreest/refyne-api/internal/config"
 	"github.com/jmylchreest/refyne-api/internal/constants"
 	"github.com/jmylchreest/refyne-api/internal/http/mw"
 )
@@ -18,8 +19,9 @@ type UserContext struct {
 	ModelsPremiumAllowed   bool   // Access to premium/charged models with budget-based fallback
 	ContentDynamicAllowed  bool   // JavaScript/real browser support for dynamic content
 	SkipCreditCheckAllowed bool   // Skip pre-flight credit balance check (limited by quota instead)
-	LLMProvider            string // For S3 API keys: forced LLM provider
-	LLMModel               string // For S3 API keys: forced LLM model
+	LLMProvider            string // For S3 API keys: forced LLM provider (deprecated, use LLMConfigs)
+	LLMModel               string // For S3 API keys: forced LLM model (deprecated, use LLMConfigs)
+	LLMConfigs             []config.APIKeyLLMConfig // For S3 API keys: fallback chain of LLM configs
 }
 
 // ExtractUserContext extracts user context from JWT claims.
@@ -41,12 +43,16 @@ func ExtractUserContext(ctx context.Context) UserContext {
 		uc.SkipCreditCheckAllowed = claims.HasFeature(constants.FeatureSkipCreditCheck)
 		uc.LLMProvider = claims.LLMProvider
 		uc.LLMModel = claims.LLMModel
+		uc.LLMConfigs = claims.LLMConfigs
 
-		if uc.LLMProvider != "" || uc.LLMModel != "" {
-			slog.Debug("extracted injected LLM config from claims",
+		if len(uc.LLMConfigs) > 0 {
+			var models []string
+			for _, m := range uc.LLMConfigs {
+				models = append(models, m.Provider+"/"+m.Model)
+			}
+			slog.Debug("extracted injected LLM configs from claims",
 				"user_id", uc.UserID,
-				"llm_provider", uc.LLMProvider,
-				"llm_model", uc.LLMModel,
+				"llm_models", models,
 			)
 		}
 	}

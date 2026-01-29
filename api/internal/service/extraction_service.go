@@ -193,8 +193,9 @@ type ExtractContext struct {
 	ModelsPremiumAllowed   bool   // From JWT claims - whether user has the "models_premium" feature (budget-based fallback)
 	ContentDynamicAllowed  bool   // From JWT claims - whether user has the "content_dynamic" feature (browser rendering)
 	SkipCreditCheckAllowed bool   // From JWT claims - whether user has the "skip_credit_check" feature
-	LLMProvider            string // For S3 API keys: forced LLM provider (bypasses fallback chain)
-	LLMModel               string // For S3 API keys: forced LLM model (bypasses fallback chain)
+	LLMProvider            string // For S3 API keys: forced LLM provider (deprecated, use LLMConfigs)
+	LLMModel               string // For S3 API keys: forced LLM model (deprecated, use LLMConfigs)
+	LLMConfigs             []config.APIKeyLLMConfig // For S3 API keys: fallback chain of LLM configs
 }
 
 // Extract performs a single-page extraction.
@@ -254,8 +255,8 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 	// Get the LLM config chain to try (using tier-specific chain)
 	// BYOKAllowed comes from JWT claims - this is the authoritative check for BYOK eligibility
 	// ModelsCustomAllowed controls whether user's custom model chain is used
-	// LLMProvider/LLMModel from S3 API keys bypass the entire fallback chain
-	llmChain := s.resolveLLMConfigChain(ctx, userID, input.LLMConfig, ectx.Tier, ectx.BYOKAllowed, ectx.ModelsCustomAllowed, ectx.LLMProvider, ectx.LLMModel)
+	// LLMConfigs from S3 API keys bypass the entire fallback chain (supports multiple models)
+	llmChain := s.resolveLLMConfigChain(ctx, userID, input.LLMConfig, ectx.Tier, ectx.BYOKAllowed, ectx.ModelsCustomAllowed, ectx.LLMProvider, ectx.LLMModel, ectx.LLMConfigs)
 	ectx.IsBYOK = llmChain.IsBYOK()
 
 	// Log the full chain for debugging fallback issues
@@ -689,19 +690,64 @@ func (s *ExtractionService) handleSuccessfulExtraction(
 // resolveLLMConfigChain returns an iterator over LLM configs to try.
 // Delegates to LLMConfigResolver for the feature matrix implementation.
 //
-// If injectedProvider and injectedModel are set (from S3 API key config), they bypass
-// the entire fallback chain and use system keys for that specific provider/model.
-func (s *ExtractionService) resolveLLMConfigChain(ctx context.Context, userID string, override *LLMConfigInput, tier string, byokAllowed bool, modelsCustomAllowed bool, injectedProvider, injectedModel string) *LLMConfigChain {
-	// Check for injected LLM config from S3 API keys first - this bypasses the entire fallback chain
+// If injectedConfigs are set (from S3 API key config), they bypass the entire fallback chain
+// and use system keys for the specified providers/models.
+// For backward compatibility, injectedProvider/injectedModel are also supported (deprecated).
+func (s *ExtractionService) resolveLLMConfigChain(ctx context.Context, userID string, override *LLMConfigInput, tier string, byokAllowed bool, modelsCustomAllowed bool, injectedProvider, injectedModel string, injectedConfigs []config.APIKeyLLMConfig) *LLMConfigChain {
+	// Check for injected LLM configs from S3 API keys first - this bypasses the entire fallback chain
+	// New: support multiple models for fallback
+	if len(injectedConfigs) > 0 {
+		var models []string
+		for _, c := range injectedConfigs {
+			models = append(models, c.Provider+"/"+c.Model)
+		}
+		s.logger.Info("using injected LLM configs from S3 API key",
+			"user_id", userID,
+			"models", models,
+		)
+
+		configs := make([]*LLMConfigInput, 0, len(injectedConfigs))
+		var serviceKeys ServiceKeys
+		if s.resolver != nil {
+			serviceKeys = s.resolver.GetServiceKeys(ctx)
+		}
+
+		for _, injected := range injectedConfigs {
+			cfg := &LLMConfigInput{
+				Provider:   injected.Provider,
+				Model:      injected.Model,
+				MaxTokens:  s.getMaxTokens(ctx, injected.Provider, injected.Model, injected.MaxTokens),
+				StrictMode: s.getStrictMode(ctx, injected.Provider, injected.Model, nil),
+			}
+
+			// Use system keys for the specified provider
+			switch injected.Provider {
+			case "openrouter":
+				cfg.APIKey = serviceKeys.OpenRouterKey
+			case "anthropic":
+				cfg.APIKey = serviceKeys.AnthropicKey
+			case "openai":
+				cfg.APIKey = serviceKeys.OpenAIKey
+			case "ollama":
+				// Ollama doesn't require an API key
+			}
+
+			configs = append(configs, cfg)
+		}
+
+		return NewLLMConfigChain(configs, false) // Not BYOK - using system keys
+	}
+
+	// Backward compatibility: single provider/model (deprecated)
 	if injectedProvider != "" && injectedModel != "" {
-		s.logger.Info("using injected LLM config from S3 API key",
+		s.logger.Info("using injected LLM config from S3 API key (deprecated single-model format)",
 			"user_id", userID,
 			"provider", injectedProvider,
 			"model", injectedModel,
 		)
 
 		// Get system keys to use with the injected provider
-		config := &LLMConfigInput{
+		cfg := &LLMConfigInput{
 			Provider:   injectedProvider,
 			Model:      injectedModel,
 			MaxTokens:  s.getMaxTokens(ctx, injectedProvider, injectedModel, nil),
@@ -713,17 +759,17 @@ func (s *ExtractionService) resolveLLMConfigChain(ctx context.Context, userID st
 			serviceKeys := s.resolver.GetServiceKeys(ctx)
 			switch injectedProvider {
 			case "openrouter":
-				config.APIKey = serviceKeys.OpenRouterKey
+				cfg.APIKey = serviceKeys.OpenRouterKey
 			case "anthropic":
-				config.APIKey = serviceKeys.AnthropicKey
+				cfg.APIKey = serviceKeys.AnthropicKey
 			case "openai":
-				config.APIKey = serviceKeys.OpenAIKey
+				cfg.APIKey = serviceKeys.OpenAIKey
 			case "ollama":
 				// Ollama doesn't require an API key
 			}
 		}
 
-		return NewLLMConfigChain([]*LLMConfigInput{config}, false) // Not BYOK - using system keys
+		return NewLLMConfigChain([]*LLMConfigInput{cfg}, false) // Not BYOK - using system keys
 	}
 
 	// Delegate to resolver for all standard cases

@@ -382,16 +382,24 @@ func validateS3APIKeyHuma(ctx huma.Context, apiKey string) *UserClaims {
 
 	// Inject LLM config if specified (bypasses fallback chain)
 	if keyConfig.LLMConfig != nil {
-		claims.LLMProvider = keyConfig.LLMConfig.Provider
-		claims.LLMModel = keyConfig.LLMConfig.Model
+		models := keyConfig.LLMConfig.GetModels()
+		claims.LLMConfigs = models
+		// Backward compatibility: also set single provider/model from first config
+		if len(models) > 0 {
+			claims.LLMProvider = models[0].Provider
+			claims.LLMModel = models[0].Model
+		}
 	}
 
+	var llmModels []string
+	for _, m := range claims.LLMConfigs {
+		llmModels = append(llmModels, m.Provider+"/"+m.Model)
+	}
 	slog.Info("S3 API key validated",
 		"key_name", keyConfig.Name,
 		"client_id", keyConfig.Identity.ClientID,
 		"tier", keyConfig.Identity.Tier,
-		"llm_provider", claims.LLMProvider,
-		"llm_model", claims.LLMModel,
+		"llm_models", llmModels,
 	)
 
 	return claims

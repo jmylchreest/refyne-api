@@ -18,15 +18,39 @@ type APIKeyConfig struct {
 	Identity     APIKeyIdentity      `json:"identity"`
 	Restrictions APIKeyRestrictions  `json:"restrictions"`
 	RateLimits   APIKeyRateLimits    `json:"rate_limits"`
-	LLMConfig    *APIKeyLLMConfig    `json:"llm_config,omitempty"`
+	LLMConfig    *APIKeyLLMConfigs   `json:"llm_config,omitempty"`
 	TierOverrides map[string]any     `json:"tier_overrides,omitempty"`
 }
 
-// APIKeyLLMConfig specifies the LLM configuration for an API key.
-// This bypasses the normal tier-based fallback chain resolution.
+// APIKeyLLMConfig specifies a single LLM model configuration.
 type APIKeyLLMConfig struct {
-	Provider string `json:"provider"`
-	Model    string `json:"model"`
+	Provider  string `json:"provider"`
+	Model     string `json:"model"`
+	MaxTokens *int   `json:"max_tokens,omitempty"` // Optional override
+}
+
+// APIKeyLLMConfigs specifies the LLM configuration(s) for an API key.
+// This bypasses the normal tier-based fallback chain resolution.
+// Supports both single model (backward compatible) and multiple models (fallback chain).
+type APIKeyLLMConfigs struct {
+	// Single model config (backward compatible)
+	Provider string `json:"provider,omitempty"`
+	Model    string `json:"model,omitempty"`
+	// Multiple models for fallback chain
+	Models []APIKeyLLMConfig `json:"models,omitempty"`
+}
+
+// GetModels returns all configured models as a slice.
+// Handles both single-model (backward compatible) and multi-model configurations.
+func (c *APIKeyLLMConfigs) GetModels() []APIKeyLLMConfig {
+	if len(c.Models) > 0 {
+		return c.Models
+	}
+	// Backward compatibility: single provider/model
+	if c.Provider != "" && c.Model != "" {
+		return []APIKeyLLMConfig{{Provider: c.Provider, Model: c.Model}}
+	}
+	return nil
 }
 
 // APIKeyIdentity represents the synthetic identity for an API key.
@@ -150,11 +174,11 @@ func (l *APIKeyLoader) refresh(ctx context.Context) {
 			keyPrefix = keyPrefix[:15] + "..."
 		}
 
-		llmProvider := ""
-		llmModel := ""
+		var llmModels []string
 		if key.LLMConfig != nil {
-			llmProvider = key.LLMConfig.Provider
-			llmModel = key.LLMConfig.Model
+			for _, m := range key.LLMConfig.GetModels() {
+				llmModels = append(llmModels, m.Provider+"/"+m.Model)
+			}
 		}
 
 		l.logger.Info("S3 API key loaded",
@@ -162,8 +186,7 @@ func (l *APIKeyLoader) refresh(ctx context.Context) {
 			"key", keyPrefix,
 			"enabled", key.Enabled,
 			"tier", key.Identity.Tier,
-			"llm_provider", llmProvider,
-			"llm_model", llmModel,
+			"llm_models", llmModels,
 			"referrers", key.Restrictions.Referrers,
 		)
 	}
