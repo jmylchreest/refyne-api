@@ -183,8 +183,40 @@ func (h *JobHandler) CreateCrawlJob(ctx context.Context, input *CreateCrawlJobIn
 	}
 
 	// Resolve LLM config chain at job creation time
+	// Check for S3 API key LLM configs first - these bypass the tier-based fallback chain
 	var llmChain *service.LLMConfigChain
-	if h.resolver != nil {
+	if len(uc.LLMConfigs) > 0 && h.resolver != nil {
+		// S3 API key has explicit LLM configs - convert to LLMConfigChain using system keys
+		serviceKeys := h.resolver.GetServiceKeys(ctx)
+		configs := make([]*service.LLMConfigInput, 0, len(uc.LLMConfigs))
+
+		for _, injected := range uc.LLMConfigs {
+			cfg := &service.LLMConfigInput{
+				Provider: injected.Provider,
+				Model:    injected.Model,
+			}
+			if injected.MaxTokens != nil {
+				cfg.MaxTokens = *injected.MaxTokens
+			}
+
+			// Use system keys for the specified provider
+			switch injected.Provider {
+			case "openrouter":
+				cfg.APIKey = serviceKeys.OpenRouterKey
+			case "anthropic":
+				cfg.APIKey = serviceKeys.AnthropicKey
+			case "openai":
+				cfg.APIKey = serviceKeys.OpenAIKey
+			case "ollama":
+				// Ollama doesn't require an API key
+			}
+
+			configs = append(configs, cfg)
+		}
+
+		llmChain = service.NewLLMConfigChain(configs, false) // Not BYOK - using system keys
+	} else if h.resolver != nil {
+		// No S3 API key configs - use normal tier-based resolution
 		llmChain = h.resolver.ResolveConfigChain(ctx, uc.UserID, nil, uc.Tier, uc.BYOKAllowed, uc.ModelsCustomAllowed)
 	}
 	if llmChain == nil || llmChain.IsEmpty() {
