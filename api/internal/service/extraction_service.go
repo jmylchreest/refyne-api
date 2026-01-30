@@ -114,6 +114,15 @@ func (s *ExtractionService) getMaxTokens(ctx context.Context, provider, model st
 	return maxTokens
 }
 
+// getContextLength returns the context window size for a model.
+// Delegates to the resolver which fetches from OpenRouter API.
+func (s *ExtractionService) getContextLength(ctx context.Context, provider, model string) int {
+	if s.resolver != nil {
+		return s.resolver.GetContextLength(ctx, provider, model)
+	}
+	return 0 // Unknown - validation will be skipped
+}
+
 // ExtractInput represents extraction input.
 type ExtractInput struct {
 	URL          string           `json:"url"`
@@ -125,12 +134,13 @@ type ExtractInput struct {
 
 // LLMConfigInput represents user-provided LLM configuration.
 type LLMConfigInput struct {
-	Provider   string `json:"provider,omitempty"`
-	APIKey     string `json:"api_key,omitempty"`
-	BaseURL    string `json:"base_url,omitempty"`
-	Model      string `json:"model,omitempty"`
-	MaxTokens  int    `json:"max_tokens,omitempty"`  // Max output tokens for LLM responses
-	StrictMode bool   `json:"strict_mode,omitempty"` // Whether to use strict JSON schema mode
+	Provider      string `json:"provider,omitempty"`
+	APIKey        string `json:"api_key,omitempty"`
+	BaseURL       string `json:"base_url,omitempty"`
+	Model         string `json:"model,omitempty"`
+	MaxTokens     int    `json:"max_tokens,omitempty"`      // Max output tokens for LLM responses
+	ContextLength int    `json:"context_length,omitempty"`  // Total context window size (input + output)
+	StrictMode    bool   `json:"strict_mode,omitempty"`     // Whether to use strict JSON schema mode
 }
 
 // InputFormat represents the detected input format for extraction.
@@ -716,10 +726,11 @@ func (s *ExtractionService) resolveLLMConfigChain(ctx context.Context, userID st
 
 		for _, injected := range injectedConfigs {
 			cfg := &LLMConfigInput{
-				Provider:   injected.Provider,
-				Model:      injected.Model,
-				MaxTokens:  s.getMaxTokens(ctx, injected.Provider, injected.Model, injected.MaxTokens),
-				StrictMode: s.getStrictMode(ctx, injected.Provider, injected.Model, nil),
+				Provider:      injected.Provider,
+				Model:         injected.Model,
+				MaxTokens:     s.getMaxTokens(ctx, injected.Provider, injected.Model, injected.MaxTokens),
+				ContextLength: s.getContextLength(ctx, injected.Provider, injected.Model),
+				StrictMode:    s.getStrictMode(ctx, injected.Provider, injected.Model, nil),
 			}
 
 			// Use system keys for the specified provider
@@ -750,10 +761,11 @@ func (s *ExtractionService) resolveLLMConfigChain(ctx context.Context, userID st
 
 		// Get system keys to use with the injected provider
 		cfg := &LLMConfigInput{
-			Provider:   injectedProvider,
-			Model:      injectedModel,
-			MaxTokens:  s.getMaxTokens(ctx, injectedProvider, injectedModel, nil),
-			StrictMode: s.getStrictMode(ctx, injectedProvider, injectedModel, nil),
+			Provider:      injectedProvider,
+			Model:         injectedModel,
+			MaxTokens:     s.getMaxTokens(ctx, injectedProvider, injectedModel, nil),
+			ContextLength: s.getContextLength(ctx, injectedProvider, injectedModel),
+			StrictMode:    s.getStrictMode(ctx, injectedProvider, injectedModel, nil),
 		}
 
 		// Use system keys for the specified provider

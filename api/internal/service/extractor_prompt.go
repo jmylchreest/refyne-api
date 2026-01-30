@@ -128,10 +128,47 @@ extractAttempt:
 	extractPrompt := e.svc.buildPromptExtractionPrompt(pageContent, e.promptText)
 	llmClient := NewLLMClient(e.svc.logger)
 
-	// Use configured max tokens from LLM config
+	// Estimate input tokens (~3.5 chars per token for English text, conservative)
+	estimatedInputTokens := len(extractPrompt) / 3
+
+	// Pre-validate context capacity - fail fast if input too large for model
+	if e.llmCfg.ContextLength > 0 {
+		if e.svc.resolver != nil {
+			if _, err := e.svc.resolver.CalculateDynamicMaxTokens(
+				e.llmCfg.ContextLength, estimatedInputTokens, e.llmCfg.MaxTokens,
+			); err != nil {
+				result.Error = fmt.Errorf("context capacity exceeded for %s: %w", e.llmCfg.Model, err)
+				result.ErrorCategory = "context_length"
+				e.svc.logger.Warn("input too large for model context window, will fallback",
+					"url", pageURL,
+					"model", e.llmCfg.Model,
+					"context_length", e.llmCfg.ContextLength,
+					"estimated_input_tokens", estimatedInputTokens,
+					"prompt_chars", len(extractPrompt),
+				)
+				return result, result.Error
+			}
+		}
+	}
+
+	// Calculate dynamic max tokens based on available context
 	maxTokens := e.llmCfg.MaxTokens
 	if maxTokens == 0 {
 		maxTokens = 8192 // Default fallback
+	}
+	if e.llmCfg.ContextLength > 0 && e.svc.resolver != nil {
+		if dynamicMax, err := e.svc.resolver.CalculateDynamicMaxTokens(
+			e.llmCfg.ContextLength, estimatedInputTokens, maxTokens,
+		); err == nil && dynamicMax > 0 {
+			e.svc.logger.Debug("using dynamic max tokens",
+				"model", e.llmCfg.Model,
+				"config_max", maxTokens,
+				"dynamic_max", dynamicMax,
+				"context_length", e.llmCfg.ContextLength,
+				"estimated_input", estimatedInputTokens,
+			)
+			maxTokens = dynamicMax
+		}
 	}
 
 	llmResult, err := llmClient.Call(ctx, e.llmCfg, extractPrompt, LLMCallOptions{

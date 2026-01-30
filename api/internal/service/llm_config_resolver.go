@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/jmylchreest/refyne-api/internal/config"
@@ -147,46 +148,24 @@ func (r *LLMConfigResolver) SupportsResponseFormat(ctx context.Context, provider
 	return provider == "openai" || provider == "openrouter"
 }
 
-// MaxOutputTokensCap is the maximum output tokens we'll request from any model.
-// This prevents requesting more output tokens than the model can handle when
-// max_completion_tokens is very high (e.g., 131072 for some models where it
-// matches the context window size, causing input+output > context_length errors).
-// 32768 is reasonable for extraction tasks and well within most models' capabilities.
-const MaxOutputTokensCap = 32768
+// DefaultMaxOutputTokens is the fallback when model's max_completion_tokens is unknown.
+// This is only used when we can't determine the actual limit from the provider.
+const DefaultMaxOutputTokens = 8192
 
-// GetMaxTokens returns the recommended max tokens for a model.
+// GetMaxTokens returns the model's max output tokens capability.
 // Priority: 1) chain config override (S3), 2) OpenRouter API max_completion_tokens, 3) provider defaults
-// If chainMaxTokens is provided (from S3 fallback chain), it takes highest precedence.
-// All values are capped to MaxOutputTokensCap to prevent context overflow errors.
+// NOTE: This returns the model's capability, not necessarily what we'll use.
+// Use CalculateDynamicMaxTokens at extraction time to get the effective limit
+// based on actual input size and context window.
 func (r *LLMConfigResolver) GetMaxTokens(ctx context.Context, provider, model string, chainMaxTokens *int) int {
 	// If chain config explicitly sets MaxTokens, use that (highest priority)
-	// Chain config is intentional so we respect it, but still cap to prevent errors
 	if chainMaxTokens != nil && *chainMaxTokens > 0 {
-		if *chainMaxTokens > MaxOutputTokensCap {
-			r.logger.Debug("capping chain max_tokens to prevent context overflow",
-				"model", model,
-				"requested", *chainMaxTokens,
-				"capped_to", MaxOutputTokensCap,
-			)
-			return MaxOutputTokensCap
-		}
 		return *chainMaxTokens
 	}
 
 	// For OpenRouter, check the cached max_completion_tokens from the API
-	// This provides dynamic, auto-updating token limits without S3 config
 	if provider == llm.ProviderOpenRouter && r.pricing != nil {
 		if apiMaxTokens := r.pricing.GetMaxCompletionTokens(provider, model); apiMaxTokens > 0 {
-			// Cap to prevent context overflow (e.g., GLM 4.5 Air reports 131072 which
-			// equals its context window, causing input+output > context_length errors)
-			if apiMaxTokens > MaxOutputTokensCap {
-				r.logger.Debug("capping OpenRouter API max_completion_tokens to prevent context overflow",
-					"model", model,
-					"api_max_completion_tokens", apiMaxTokens,
-					"capped_to", MaxOutputTokensCap,
-				)
-				return MaxOutputTokensCap
-			}
 			r.logger.Debug("using OpenRouter API max_completion_tokens",
 				"model", model,
 				"max_completion_tokens", apiMaxTokens,
@@ -197,7 +176,113 @@ func (r *LLMConfigResolver) GetMaxTokens(ctx context.Context, provider, model st
 
 	// Fall back to S3/static model settings
 	_, maxTokens, _ := llm.GetModelSettings(provider, model, nil, nil, nil)
+	if maxTokens == 0 {
+		return DefaultMaxOutputTokens
+	}
 	return maxTokens
+}
+
+// CalculateDynamicMaxTokens determines the effective max output tokens based on:
+// - The model's context window
+// - The estimated input tokens
+// - The model's max_completion_tokens capability
+// Returns the smaller of: (context - input - buffer) or configMaxTokens
+// Also returns an error if input already exceeds the safe threshold.
+func (r *LLMConfigResolver) CalculateDynamicMaxTokens(contextLength, estimatedInputTokens, configMaxTokens int) (int, error) {
+	// If context length unknown, use config as-is (graceful fallback)
+	if contextLength == 0 {
+		return configMaxTokens, nil
+	}
+
+	// Check if input exceeds safe threshold (80% of context)
+	maxInputTokens := int(float64(contextLength) * ContextCapacityThreshold)
+	if estimatedInputTokens > maxInputTokens {
+		return 0, fmt.Errorf("input tokens (%d) exceed safe threshold (%d, %.0f%% of %d context)",
+			estimatedInputTokens, maxInputTokens, ContextCapacityThreshold*100, contextLength)
+	}
+
+	// Calculate available tokens for output (leave 5% buffer for safety)
+	safetyBuffer := int(float64(contextLength) * 0.05)
+	availableForOutput := contextLength - estimatedInputTokens - safetyBuffer
+
+	// Use the smaller of available space or model's max capability
+	effectiveMax := availableForOutput
+	if configMaxTokens > 0 && configMaxTokens < effectiveMax {
+		effectiveMax = configMaxTokens
+	}
+
+	// Ensure we have at least some room for output
+	if effectiveMax < 1000 {
+		return 0, fmt.Errorf("insufficient context for output: only %d tokens available after %d input (context: %d)",
+			effectiveMax, estimatedInputTokens, contextLength)
+	}
+
+	r.logger.Debug("calculated dynamic max tokens",
+		"context_length", contextLength,
+		"input_tokens", estimatedInputTokens,
+		"config_max_tokens", configMaxTokens,
+		"effective_max_tokens", effectiveMax,
+	)
+
+	return effectiveMax, nil
+}
+
+// ContextCapacityThreshold is the maximum percentage of context window that input can use.
+// If input tokens exceed this threshold, we fail fast rather than wasting an API call.
+// 80% leaves room for output tokens and avoids context overflow errors.
+const ContextCapacityThreshold = 0.80
+
+// GetContextLength returns the context window size for a model.
+// Returns 0 if unknown (no pre-validation will be performed).
+func (r *LLMConfigResolver) GetContextLength(ctx context.Context, provider, model string) int {
+	// For OpenRouter, check the cached context_length from the API
+	if provider == llm.ProviderOpenRouter && r.pricing != nil {
+		if contextLen := r.pricing.GetContextLength(provider, model); contextLen > 0 {
+			return contextLen
+		}
+	}
+	// Return 0 for unknown - no pre-validation possible
+	return 0
+}
+
+// ValidateContextCapacity checks if the estimated input tokens fit within the model's context window.
+// Returns an error if input tokens exceed ContextCapacityThreshold (80%) of the context window.
+// Returns nil if validation passes or if context length is unknown (graceful fallback).
+func (r *LLMConfigResolver) ValidateContextCapacity(ctx context.Context, provider, model string, estimatedInputTokens int) error {
+	contextLength := r.GetContextLength(ctx, provider, model)
+	if contextLength == 0 {
+		// Unknown context length - skip validation, let the API handle it
+		return nil
+	}
+
+	maxInputTokens := int(float64(contextLength) * ContextCapacityThreshold)
+	if estimatedInputTokens > maxInputTokens {
+		return &ErrContextCapacityExceeded{
+			Model:                model,
+			ContextLength:        contextLength,
+			EstimatedInputTokens: estimatedInputTokens,
+			MaxInputTokens:       maxInputTokens,
+			Threshold:            ContextCapacityThreshold,
+		}
+	}
+	return nil
+}
+
+// ErrContextCapacityExceeded is returned when input tokens exceed the safe threshold of a model's context window.
+// This allows fast-failing before making an expensive API call that would fail anyway.
+type ErrContextCapacityExceeded struct {
+	Model                string
+	ContextLength        int
+	EstimatedInputTokens int
+	MaxInputTokens       int
+	Threshold            float64
+}
+
+func (e *ErrContextCapacityExceeded) Error() string {
+	return fmt.Sprintf(
+		"input too large for model %s: estimated %d tokens exceeds %.0f%% capacity (%d/%d context window)",
+		e.Model, e.EstimatedInputTokens, e.Threshold*100, e.MaxInputTokens, e.ContextLength,
+	)
 }
 
 // ResolveConfigs determines which LLM configurations to use based on the feature matrix.
@@ -446,12 +531,13 @@ func (r *LLMConfigResolver) BuildUserFallbackChain(ctx context.Context, userID s
 		}
 
 		configs = append(configs, &LLMConfigInput{
-			Provider:   entry.Provider,
-			APIKey:     apiKey,
-			BaseURL:    baseURL,
-			Model:      entry.Model,
-			MaxTokens:  r.GetMaxTokens(ctx, entry.Provider, entry.Model, entry.MaxTokens),
-			StrictMode: r.GetStrictMode(ctx, entry.Provider, entry.Model, entry.StrictMode),
+			Provider:      entry.Provider,
+			APIKey:        apiKey,
+			BaseURL:       baseURL,
+			Model:         entry.Model,
+			MaxTokens:     r.GetMaxTokens(ctx, entry.Provider, entry.Model, entry.MaxTokens),
+			ContextLength: r.GetContextLength(ctx, entry.Provider, entry.Model),
+			StrictMode:    r.GetStrictMode(ctx, entry.Provider, entry.Model, entry.StrictMode),
 		})
 	}
 
@@ -480,10 +566,11 @@ func (r *LLMConfigResolver) BuildUserChainWithSystemKeys(ctx context.Context, us
 
 	for _, entry := range chain {
 		config := &LLMConfigInput{
-			Provider:   entry.Provider,
-			Model:      entry.Model,
-			MaxTokens:  r.GetMaxTokens(ctx, entry.Provider, entry.Model, entry.MaxTokens),
-			StrictMode: r.GetStrictMode(ctx, entry.Provider, entry.Model, entry.StrictMode),
+			Provider:      entry.Provider,
+			Model:         entry.Model,
+			MaxTokens:     r.GetMaxTokens(ctx, entry.Provider, entry.Model, entry.MaxTokens),
+			ContextLength: r.GetContextLength(ctx, entry.Provider, entry.Model),
+			StrictMode:    r.GetStrictMode(ctx, entry.Provider, entry.Model, entry.StrictMode),
 		}
 
 		// Use SYSTEM keys for the provider
@@ -557,12 +644,13 @@ func (r *LLMConfigResolver) buildBYOKOnlyConfigs(ctx context.Context, userID str
 
 			if apiKey != "" {
 				configs = append(configs, &LLMConfigInput{
-					Provider:   entry.Provider,
-					APIKey:     apiKey,
-					BaseURL:    userKey.BaseURL,
-					Model:      entry.Model,
-					MaxTokens:  r.GetMaxTokens(ctx, entry.Provider, entry.Model, entry.MaxTokens),
-					StrictMode: r.GetStrictMode(ctx, entry.Provider, entry.Model, entry.StrictMode),
+					Provider:      entry.Provider,
+					APIKey:        apiKey,
+					BaseURL:       userKey.BaseURL,
+					Model:         entry.Model,
+					MaxTokens:     r.GetMaxTokens(ctx, entry.Provider, entry.Model, entry.MaxTokens),
+					ContextLength: r.GetContextLength(ctx, entry.Provider, entry.Model),
+					StrictMode:    r.GetStrictMode(ctx, entry.Provider, entry.Model, entry.StrictMode),
 				})
 			}
 		}
@@ -619,10 +707,11 @@ func (r *LLMConfigResolver) GetDefaultConfigsForTier(ctx context.Context, tier s
 
 			for _, entry := range chain {
 				config := &LLMConfigInput{
-					Provider:   entry.Provider,
-					Model:      entry.Model,
-					MaxTokens:  r.GetMaxTokens(ctx, entry.Provider, entry.Model, entry.MaxTokens),
-					StrictMode: r.GetStrictMode(ctx, entry.Provider, entry.Model, entry.StrictMode),
+					Provider:      entry.Provider,
+					Model:         entry.Model,
+					MaxTokens:     r.GetMaxTokens(ctx, entry.Provider, entry.Model, entry.MaxTokens),
+					ContextLength: r.GetContextLength(ctx, entry.Provider, entry.Model),
+					StrictMode:    r.GetStrictMode(ctx, entry.Provider, entry.Model, entry.StrictMode),
 				}
 
 				switch entry.Provider {

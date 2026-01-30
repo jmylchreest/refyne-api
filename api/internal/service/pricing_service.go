@@ -248,6 +248,17 @@ func (s *PricingService) GetMaxCompletionTokens(provider, model string) int {
 	return 0
 }
 
+// GetContextLength returns the context window size for a model from cached provider data.
+// Returns 0 if the model is not found or provider doesn't support this.
+// This is used for pre-validation to fail fast if input tokens exceed the model's capacity.
+func (s *PricingService) GetContextLength(provider, model string) int {
+	pricing := s.GetModelPricing(provider, model)
+	if pricing != nil {
+		return pricing.ContextLength
+	}
+	return 0
+}
+
 // EstimateCost calculates estimated cost based on cached pricing.
 // Falls back to refyne's CostEstimator or hardcoded estimates if pricing not available.
 func (s *PricingService) EstimateCost(provider, model string, inputTokens, outputTokens int) float64 {
