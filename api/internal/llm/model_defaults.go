@@ -146,7 +146,7 @@ func (m *ModelDefaultsLoader) GetModelSettings(provider, model string, chainTemp
 	// Start with provider defaults
 	defaults, ok := providerDefs[provider]
 	if !ok {
-		defaults = ModelSettings{Temperature: 0.2, MaxTokens: 4096, StrictMode: false}
+		defaults = ModelSettings{Temperature: 0.2, MaxTokens: 16384, StrictMode: false}
 	}
 
 	temperature = defaults.Temperature
@@ -191,7 +191,7 @@ func (m *ModelDefaultsLoader) GetDefaultSettings(provider, model string) ModelSe
 		return defaults
 	}
 
-	return ModelSettings{Temperature: 0.2, MaxTokens: 4096, StrictMode: false}
+	return ModelSettings{Temperature: 0.2, MaxTokens: 16384, StrictMode: false}
 }
 
 // ModelDefaultsStats contains statistics for observability.

@@ -399,12 +399,42 @@ func (r *LLMConfigResolver) ResolveConfigs(ctx context.Context, userID string, o
 			)
 			return r.GetDefaultConfigsForTier(ctx, tier), false
 		}
+
+		// Populate defaults for any missing fields
+		resolvedOverride := &LLMConfigInput{
+			Provider:       override.Provider,
+			APIKey:         override.APIKey,
+			BaseURL:        override.BaseURL,
+			Model:          override.Model,
+			TargetProvider: override.TargetProvider,
+			TargetAPIKey:   override.TargetAPIKey,
+		}
+
+		// Use GetMaxTokens to get proper default if not specified
+		if override.MaxTokens > 0 {
+			resolvedOverride.MaxTokens = override.MaxTokens
+		} else {
+			resolvedOverride.MaxTokens = r.GetMaxTokens(ctx, override.Provider, override.Model, nil)
+		}
+
+		// Use GetContextLength to get proper default if not specified
+		if override.ContextLength > 0 {
+			resolvedOverride.ContextLength = override.ContextLength
+		} else {
+			resolvedOverride.ContextLength = r.GetContextLength(ctx, override.Provider, override.Model)
+		}
+
+		// Use GetStrictMode to get proper default
+		resolvedOverride.StrictMode = r.GetStrictMode(ctx, override.Provider, override.Model, &override.StrictMode)
+
 		r.logger.Info("using override config (BYOK)",
 			"user_id", userID,
-			"provider", override.Provider,
-			"model", override.Model,
+			"provider", resolvedOverride.Provider,
+			"model", resolvedOverride.Model,
+			"max_tokens", resolvedOverride.MaxTokens,
+			"context_length", resolvedOverride.ContextLength,
 		)
-		return []*LLMConfigInput{override}, true
+		return []*LLMConfigInput{resolvedOverride}, true
 	}
 
 	// Case 2: BYOK + models_custom - user chain with user keys

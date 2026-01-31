@@ -11,15 +11,15 @@ import (
 func TestModelSettings_Fields(t *testing.T) {
 	settings := ModelSettings{
 		Temperature: 0.5,
-		MaxTokens:   4096,
+		MaxTokens:   16384,
 		StrictMode:  true,
 	}
 
 	if settings.Temperature != 0.5 {
 		t.Errorf("Temperature = %f, want 0.5", settings.Temperature)
 	}
-	if settings.MaxTokens != 4096 {
-		t.Errorf("MaxTokens = %d, want 4096", settings.MaxTokens)
+	if settings.MaxTokens != 16384 {
+		t.Errorf("MaxTokens = %d, want 16384", settings.MaxTokens)
 	}
 	if !settings.StrictMode {
 		t.Error("StrictMode should be true")
@@ -125,8 +125,8 @@ func TestGetModelSettings_UnknownProvider(t *testing.T) {
 	if temp != 0.2 {
 		t.Errorf("Temperature = %f, want 0.2 (fallback)", temp)
 	}
-	if maxTokens != 4096 {
-		t.Errorf("MaxTokens = %d, want 4096 (fallback)", maxTokens)
+	if maxTokens != 16384 {
+		t.Errorf("MaxTokens = %d, want 16384 (fallback)", maxTokens)
 	}
 	if strictMode {
 		t.Error("StrictMode should be false by default")
@@ -168,8 +168,8 @@ func TestGetDefaultSettings_UnknownProvider(t *testing.T) {
 	if settings.Temperature != 0.2 {
 		t.Errorf("Temperature = %f, want 0.2", settings.Temperature)
 	}
-	if settings.MaxTokens != 4096 {
-		t.Errorf("MaxTokens = %d, want 4096", settings.MaxTokens)
+	if settings.MaxTokens != 16384 {
+		t.Errorf("MaxTokens = %d, want 16384", settings.MaxTokens)
 	}
 }
 

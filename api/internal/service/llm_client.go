@@ -37,7 +37,7 @@ func IsOutputTruncated(err error) bool {
 // LLMCallOptions configures an LLM API call.
 type LLMCallOptions struct {
 	Temperature float64 // Default: 0.2
-	MaxTokens   int     // Default: 4096
+	MaxTokens   int     // Default: 16384
 	Timeout     time.Duration // Default: 120s
 	JSONMode    bool    // Request JSON response format (OpenAI/OpenRouter only)
 }
@@ -46,7 +46,7 @@ type LLMCallOptions struct {
 func DefaultLLMCallOptions() LLMCallOptions {
 	return LLMCallOptions{
 		Temperature: 0.2,
-		MaxTokens:   4096,
+		MaxTokens:   16384,
 		Timeout:     120 * time.Second,
 		JSONMode:    false,
 	}
@@ -103,7 +103,7 @@ func (c *LLMClient) Call(ctx context.Context, config *LLMConfigInput, prompt str
 		opts.Temperature = 0.2
 	}
 	if opts.MaxTokens == 0 {
-		opts.MaxTokens = 4096
+		opts.MaxTokens = 16384
 	}
 	if opts.Timeout == 0 {
 		opts.Timeout = 120 * time.Second

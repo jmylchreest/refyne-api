@@ -192,11 +192,11 @@ func (h *JobHandler) CreateCrawlJob(ctx context.Context, input *CreateCrawlJobIn
 
 		for _, injected := range uc.LLMConfigs {
 			cfg := &service.LLMConfigInput{
-				Provider: injected.Provider,
-				Model:    injected.Model,
-			}
-			if injected.MaxTokens != nil {
-				cfg.MaxTokens = *injected.MaxTokens
+				Provider:      injected.Provider,
+				Model:         injected.Model,
+				MaxTokens:     h.resolver.GetMaxTokens(ctx, injected.Provider, injected.Model, injected.MaxTokens),
+				ContextLength: h.resolver.GetContextLength(ctx, injected.Provider, injected.Model),
+				StrictMode:    h.resolver.GetStrictMode(ctx, injected.Provider, injected.Model, nil),
 			}
 
 			// Use system keys for the specified provider (provider-agnostic)

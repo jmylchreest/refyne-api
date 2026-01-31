@@ -12,11 +12,11 @@ type ModelSettings struct {
 // These are used only as last-resort fallbacks when S3 config is unavailable.
 // Model-specific settings should be configured via S3 config file: config/model_defaults.json
 var ProviderDefaults = map[string]ModelSettings{
-	"anthropic":  {Temperature: 0.2, MaxTokens: 8192, StrictMode: false}, // Anthropic uses tool_use, not strict
-	"openai":     {Temperature: 0.2, MaxTokens: 8192, StrictMode: true},  // Native OpenAI supports strict
-	"openrouter": {Temperature: 0.2, MaxTokens: 6144, StrictMode: false}, // Default false, override per model
-	"ollama":     {Temperature: 0.1, MaxTokens: 4096, StrictMode: false}, // Local models don't support strict
-	"helicone":   {Temperature: 0.2, MaxTokens: 8192, StrictMode: true},  // Helicone proxies OpenAI-compatible APIs
+	"anthropic":  {Temperature: 0.2, MaxTokens: 16384, StrictMode: false}, // Anthropic uses tool_use, not strict
+	"openai":     {Temperature: 0.2, MaxTokens: 16384, StrictMode: true},  // Native OpenAI supports strict
+	"openrouter": {Temperature: 0.2, MaxTokens: 16384, StrictMode: false}, // Default false, override per model
+	"ollama":     {Temperature: 0.1, MaxTokens: 16384, StrictMode: false}, // Local models don't support strict
+	"helicone":   {Temperature: 0.2, MaxTokens: 16384, StrictMode: true},  // Helicone proxies OpenAI-compatible APIs
 }
 
 // ModelOverrides is deprecated - model settings should come from S3 config.
