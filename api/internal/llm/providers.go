@@ -1,5 +1,7 @@
 package llm
 
+//go:generate go run ./generate_fallbacks -output model_fallbacks_gen.go
+
 import (
 	"context"
 	"log/slog"
@@ -223,55 +225,27 @@ func getStaticOpenRouterCapabilities(model string) ModelCapabilities {
 }
 
 func getStaticOpenRouterModels(r *Registry) []ModelInfo {
-	staticModels := []struct {
-		id      string
-		name    string
-		context int
-	}{
-		{"anthropic/claude-sonnet-4", "Claude Sonnet 4", 200000},
-		{"anthropic/claude-3.5-sonnet", "Claude 3.5 Sonnet", 200000},
-		{"openai/gpt-4o", "GPT-4o", 128000},
-		{"openai/gpt-4o-mini", "GPT-4o Mini", 128000},
-		{"google/gemini-2.0-flash-001", "Gemini 2.0 Flash", 1000000},
-		{"meta-llama/llama-3.3-70b-instruct", "Llama 3.3 70B", 131072},
-	}
-
-	models := make([]ModelInfo, 0, len(staticModels))
-	for _, m := range staticModels {
-		settings := GetDefaultSettings("openrouter", m.id)
-		// Get capabilities from registry cache or static defaults
-		caps := r.GetModelCapabilities(context.Background(), "openrouter", m.id)
+	fallbacks := GetStaticFallbacks("openrouter")
+	models := make([]ModelInfo, 0, len(fallbacks))
+	for _, m := range fallbacks {
+		settings := GetDefaultSettings("openrouter", m.ID)
+		caps := r.GetModelCapabilities(context.Background(), "openrouter", m.ID)
 		models = append(models, ModelInfo{
-			ID:               m.id,
-			Name:             m.name,
+			ID:               m.ID,
+			Name:             m.Name,
 			Provider:         "openrouter",
-			ContextWindow:    m.context,
+			ContextWindow:    m.ContextWindow,
 			Capabilities:     caps,
 			DefaultTemp:      settings.Temperature,
 			DefaultMaxTokens: settings.MaxTokens,
 		})
 	}
-
 	return models
 }
 
 // listAnthropicModels returns static Anthropic models (no public API).
 func listAnthropicModels(ctx context.Context, baseURL, apiKey string) ([]ModelInfo, error) {
-	staticModels := []struct {
-		id      string
-		name    string
-		context int
-	}{
-		{"claude-opus-4-20250514", "Claude Opus 4", 200000},
-		{"claude-sonnet-4-5-20250514", "Claude Sonnet 4.5", 200000},
-		{"claude-sonnet-4-20250514", "Claude Sonnet 4", 200000},
-		{"claude-3-7-sonnet-20250219", "Claude 3.7 Sonnet", 200000},
-		{"claude-3-5-sonnet-20241022", "Claude 3.5 Sonnet v2", 200000},
-		{"claude-3-5-haiku-20241022", "Claude 3.5 Haiku", 200000},
-		{"claude-3-opus-20240229", "Claude 3 Opus", 200000},
-		{"claude-3-sonnet-20240229", "Claude 3 Sonnet", 200000},
-		{"claude-3-haiku-20240307", "Claude 3 Haiku", 200000},
-	}
+	fallbacks := GetStaticFallbacks("anthropic")
 
 	// Anthropic uses tool_use for structured outputs, not response_format
 	anthropicCaps := ModelCapabilities{
@@ -280,14 +254,14 @@ func listAnthropicModels(ctx context.Context, baseURL, apiKey string) ([]ModelIn
 		SupportsStreaming:         true,
 	}
 
-	models := make([]ModelInfo, 0, len(staticModels))
-	for _, m := range staticModels {
-		settings := GetDefaultSettings("anthropic", m.id)
+	models := make([]ModelInfo, 0, len(fallbacks))
+	for _, m := range fallbacks {
+		settings := GetDefaultSettings("anthropic", m.ID)
 		models = append(models, ModelInfo{
-			ID:               m.id,
-			Name:             m.name,
+			ID:               m.ID,
+			Name:             m.Name,
 			Provider:         "anthropic",
-			ContextWindow:    m.context,
+			ContextWindow:    m.ContextWindow,
 			Capabilities:     anthropicCaps,
 			DefaultTemp:      settings.Temperature,
 			DefaultMaxTokens: settings.MaxTokens,
@@ -299,38 +273,18 @@ func listAnthropicModels(ctx context.Context, baseURL, apiKey string) ([]ModelIn
 
 // listOpenAIModels returns static OpenAI models.
 func listOpenAIModels(ctx context.Context, baseURL, apiKey string) ([]ModelInfo, error) {
-	staticModels := []struct {
-		id                        string
-		name                      string
-		context                   int
-		supportsStructuredOutputs bool
-		supportsReasoning         bool
-	}{
-		{"gpt-4o", "GPT-4o", 128000, true, false},
-		{"gpt-4o-mini", "GPT-4o Mini", 128000, true, false},
-		{"gpt-4-turbo", "GPT-4 Turbo", 128000, true, false},
-		{"gpt-4", "GPT-4", 8192, false, false},
-		{"gpt-3.5-turbo", "GPT-3.5 Turbo", 16385, false, false},
-		{"o1", "o1", 200000, true, true},
-		{"o1-mini", "o1 Mini", 128000, true, true},
-		{"o3-mini", "o3 Mini", 200000, true, true},
-	}
+	fallbacks := GetStaticFallbacks("openai")
 
-	models := make([]ModelInfo, 0, len(staticModels))
-	for _, m := range staticModels {
-		settings := GetDefaultSettings("openai", m.id)
+	models := make([]ModelInfo, 0, len(fallbacks))
+	for _, m := range fallbacks {
+		settings := GetDefaultSettings("openai", m.ID)
+		caps := getOpenAICapabilities(ctx, m.ID)
 		models = append(models, ModelInfo{
-			ID:            m.id,
-			Name:          m.name,
-			Provider:      "openai",
-			ContextWindow: m.context,
-			Capabilities: ModelCapabilities{
-				SupportsStructuredOutputs: m.supportsStructuredOutputs,
-				SupportsTools:             true,
-				SupportsStreaming:         true,
-				SupportsReasoning:         m.supportsReasoning,
-				SupportsResponseFormat:    true,
-			},
+			ID:               m.ID,
+			Name:             m.Name,
+			Provider:         "openai",
+			ContextWindow:    m.ContextWindow,
+			Capabilities:     caps,
 			DefaultTemp:      settings.Temperature,
 			DefaultMaxTokens: settings.MaxTokens,
 		})
@@ -374,28 +328,20 @@ func listOllamaModels(ctx context.Context, baseURL, apiKey string) ([]ModelInfo,
 }
 
 func getStaticOllamaModels() []ModelInfo {
-	staticModels := []string{
-		"llama3.2",
-		"llama3.1",
-		"mistral",
-		"gemma2",
-		"qwen2.5",
-		"deepseek-coder-v2",
-	}
-
-	models := make([]ModelInfo, 0, len(staticModels))
-	for _, id := range staticModels {
-		settings := GetDefaultSettings("ollama", id)
+	fallbacks := GetStaticFallbacks("ollama")
+	models := make([]ModelInfo, 0, len(fallbacks))
+	for _, m := range fallbacks {
+		settings := GetDefaultSettings("ollama", m.ID)
 		models = append(models, ModelInfo{
-			ID:               id,
-			Name:             id,
+			ID:               m.ID,
+			Name:             m.Name,
 			Provider:         "ollama",
-			Capabilities:     getOllamaCapabilities(context.Background(), id),
+			ContextWindow:    m.ContextWindow,
+			Capabilities:     getOllamaCapabilities(context.Background(), m.ID),
 			DefaultTemp:      settings.Temperature,
 			DefaultMaxTokens: settings.MaxTokens,
 		})
 	}
-
 	return models
 }
 
@@ -469,44 +415,22 @@ func listHeliconeModels(ctx context.Context, baseURL, apiKey string) ([]ModelInf
 }
 
 // getStaticHeliconeModels returns static fallback models for Helicone.
-// Updated 2026-01-31 from https://api.helicone.ai/v1/public/model-registry/models
+// Models are generated from https://api.helicone.ai/v1/public/model-registry/models
 func getStaticHeliconeModels() []ModelInfo {
-	staticModels := []struct {
-		id      string
-		name    string
-		context int
-	}{
-		// OpenAI
-		{"gpt-4o", "OpenAI GPT-4o", 128000},
-		{"gpt-4o-mini", "OpenAI GPT-4o Mini", 128000},
-		{"gpt-5-nano", "OpenAI GPT-5 Nano", 400000},
-		{"o3-mini", "OpenAI o3 Mini", 200000},
-		// Anthropic
-		{"claude-sonnet-4", "Anthropic: Claude Sonnet 4", 200000},
-		{"claude-3.5-haiku", "Anthropic: Claude 3.5 Haiku", 200000},
-		// Google
-		{"gemini-2.5-flash", "Google Gemini 2.5 Flash", 1048576},
-		{"gemini-2.5-pro", "Google Gemini 2.5 Pro", 1048576},
-		// DeepSeek
-		{"deepseek-v3", "DeepSeek V3", 65536},
-		// Meta
-		{"llama-4-scout", "Meta Llama 4 Scout", 512000},
-	}
-
-	models := make([]ModelInfo, 0, len(staticModels))
-	for _, m := range staticModels {
-		settings := GetDefaultSettings("helicone", m.id)
+	fallbacks := GetStaticFallbacks("helicone")
+	models := make([]ModelInfo, 0, len(fallbacks))
+	for _, m := range fallbacks {
+		settings := GetDefaultSettings("helicone", m.ID)
 		models = append(models, ModelInfo{
-			ID:               m.id,
-			Name:             m.name,
+			ID:               m.ID,
+			Name:             m.Name,
 			Provider:         "helicone",
-			ContextWindow:    m.context,
-			Capabilities:     getHeliconeCapabilities(context.Background(), m.id),
+			ContextWindow:    m.ContextWindow,
+			Capabilities:     getHeliconeCapabilities(context.Background(), m.ID),
 			DefaultTemp:      settings.Temperature,
 			DefaultMaxTokens: settings.MaxTokens,
 		})
 	}
-
 	return models
 }
 
