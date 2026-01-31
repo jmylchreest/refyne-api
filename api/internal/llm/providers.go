@@ -450,11 +450,35 @@ func getOllamaCapabilities(_ context.Context, _ string) ModelCapabilities {
 	}
 }
 
-// listHeliconeModels returns available models through Helicone.
-// Helicone Cloud provides access to multiple provider models.
+// listHeliconeModels fetches models from Helicone's public model registry.
+// Uses refyne's Helicone provider when an API key is available.
 func listHeliconeModels(ctx context.Context, baseURL, apiKey string) ([]ModelInfo, error) {
-	// Helicone is a gateway - it proxies to underlying providers
-	// Return common models available through the gateway
+	// If we have an API key, use refyne's provider to fetch live models
+	if apiKey != "" {
+		cfg := refynellm.ProviderConfig{
+			APIKey:  apiKey,
+			BaseURL: baseURL,
+		}
+		provider, err := refynellm.NewHeliconeProvider(cfg)
+		if err == nil {
+			models, err := provider.ListModels(ctx)
+			if err == nil && len(models) > 0 {
+				// Convert refyne models to refyne-api format
+				result := make([]ModelInfo, 0, len(models))
+				for _, m := range models {
+					result = append(result, ConvertModelInfo("helicone", m))
+				}
+				return result, nil
+			}
+		}
+	}
+
+	// Fall back to static models
+	return getStaticHeliconeModels(), nil
+}
+
+// getStaticHeliconeModels returns static fallback models for Helicone.
+func getStaticHeliconeModels() []ModelInfo {
 	staticModels := []struct {
 		id      string
 		name    string
@@ -476,13 +500,13 @@ func listHeliconeModels(ctx context.Context, baseURL, apiKey string) ([]ModelInf
 			Name:             m.name,
 			Provider:         "helicone",
 			ContextWindow:    m.context,
-			Capabilities:     getHeliconeCapabilities(ctx, m.id),
+			Capabilities:     getHeliconeCapabilities(context.Background(), m.id),
 			DefaultTemp:      settings.Temperature,
 			DefaultMaxTokens: settings.MaxTokens,
 		})
 	}
 
-	return models, nil
+	return models
 }
 
 // getHeliconeCapabilities returns capabilities for Helicone models.
