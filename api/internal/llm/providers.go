@@ -451,29 +451,20 @@ func getOllamaCapabilities(_ context.Context, _ string) ModelCapabilities {
 }
 
 // listHeliconeModels fetches models from Helicone's public model registry.
-// Uses refyne's Helicone provider when an API key is available.
+// Uses refyne's ListHeliconeModels which calls the public API (no auth required).
 func listHeliconeModels(ctx context.Context, baseURL, apiKey string) ([]ModelInfo, error) {
-	// If we have an API key, use refyne's provider to fetch live models
-	if apiKey != "" {
-		cfg := refynellm.ProviderConfig{
-			APIKey:  apiKey,
-			BaseURL: baseURL,
+	// Use refyne's standalone function - Helicone models API is public (no auth required)
+	models, err := refynellm.ListHeliconeModels(ctx)
+	if err == nil && len(models) > 0 {
+		// Convert refyne models to refyne-api format
+		result := make([]ModelInfo, 0, len(models))
+		for _, m := range models {
+			result = append(result, ConvertModelInfo("helicone", m))
 		}
-		provider, err := refynellm.NewHeliconeProvider(cfg)
-		if err == nil {
-			models, err := provider.ListModels(ctx)
-			if err == nil && len(models) > 0 {
-				// Convert refyne models to refyne-api format
-				result := make([]ModelInfo, 0, len(models))
-				for _, m := range models {
-					result = append(result, ConvertModelInfo("helicone", m))
-				}
-				return result, nil
-			}
-		}
+		return result, nil
 	}
 
-	// Fall back to static models
+	// Fall back to static models on error
 	return getStaticHeliconeModels(), nil
 }
 
