@@ -151,11 +151,12 @@ func InitRegistry(cfg *config.Config, logger *slog.Logger) *Registry {
 			AuthType:             AuthTypeBearer,
 			APIFormat:            APIFormatOpenAI,
 			AllowBaseURLOverride: true, // Self-hostable
-			// Helicone proxies to other providers - pricing depends on underlying provider
-			// TODO: Add Helicone pricing API support when available
-			SupportsPricing:        false,
-			SupportsGenerationCost: false,
-			SupportsDynamicPricing: false,
+			// Helicone credits mode has full pricing support (like OpenRouter)
+			// Models API: GET /v1/public/model-registry/models (public, no auth)
+			// Generation cost: GET /v1/request/{requestId} returns cost/costUSD
+			SupportsPricing:        true,
+			SupportsGenerationCost: true,
+			SupportsDynamicPricing: true,
 		},
 		Status: ProviderStatusActive,
 	})
