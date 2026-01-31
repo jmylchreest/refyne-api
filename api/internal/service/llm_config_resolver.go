@@ -207,42 +207,61 @@ const DefaultMaxOutputTokens = 16384
 // NOTE: This returns the model's capability, not necessarily what we'll use.
 // Use CalculateDynamicMaxTokens at extraction time to get the effective limit
 // based on actual input size and context window.
+// GUARANTEE: This function always returns a non-zero value (DefaultMaxOutputTokens as fallback).
 func (r *LLMConfigResolver) GetMaxTokens(ctx context.Context, provider, model string, chainMaxTokens *int) int {
+	var source string
+	var result int
+
+	defer func() {
+		// Log the lookup path for debugging max_tokens:0 issues
+		if r.logger != nil {
+			r.logger.Debug("GetMaxTokens resolved",
+				"provider", provider,
+				"model", model,
+				"max_tokens", result,
+				"source", source,
+			)
+		}
+	}()
+
 	// If chain config explicitly sets MaxTokens, use that (highest priority)
 	if chainMaxTokens != nil && *chainMaxTokens > 0 {
-		return *chainMaxTokens
+		source = "chain_config"
+		result = *chainMaxTokens
+		return result
 	}
 
 	// Check the registry for cached max_completion_tokens (populated by provider APIs)
 	// This works for ALL providers, not just OpenRouter
 	if r.registry != nil {
 		if apiMaxTokens := r.registry.GetMaxCompletionTokens(ctx, provider, model); apiMaxTokens > 0 {
-			r.logger.Debug("using registry max_completion_tokens",
-				"provider", provider,
-				"model", model,
-				"max_completion_tokens", apiMaxTokens,
-			)
-			return apiMaxTokens
+			source = "registry"
+			result = apiMaxTokens
+			return result
 		}
 	}
 
 	// Legacy fallback: check pricing service for OpenRouter (will be deprecated)
 	if provider == llm.ProviderOpenRouter && r.pricing != nil {
 		if apiMaxTokens := r.pricing.GetMaxCompletionTokens(provider, model); apiMaxTokens > 0 {
-			r.logger.Debug("using OpenRouter pricing service max_completion_tokens",
-				"model", model,
-				"max_completion_tokens", apiMaxTokens,
-			)
-			return apiMaxTokens
+			source = "pricing_service"
+			result = apiMaxTokens
+			return result
 		}
 	}
 
 	// Fall back to S3/static model settings
 	_, maxTokens, _ := llm.GetModelSettings(provider, model, nil, nil, nil)
-	if maxTokens == 0 {
-		return DefaultMaxOutputTokens
+	if maxTokens > 0 {
+		source = "static_defaults"
+		result = maxTokens
+		return result
 	}
-	return maxTokens
+
+	// Ultimate fallback - ensure we NEVER return 0
+	source = "default_fallback"
+	result = DefaultMaxOutputTokens
+	return result
 }
 
 // CalculateDynamicMaxTokens determines the effective max output tokens based on:

@@ -376,6 +376,8 @@ func (s *ExtractionService) ExtractWithContext(ctx context.Context, userID strin
 			"provider", llmCfg.Provider,
 			"model", llmCfg.Model,
 			"max_tokens", llmCfg.MaxTokens,
+			"context_length", llmCfg.ContextLength,
+			"strict_mode", llmCfg.StrictMode,
 			"attempt", pos,
 			"of", total,
 			"is_byok", llmChain.IsBYOK(),
