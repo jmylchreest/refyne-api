@@ -25,8 +25,9 @@ const (
 
 // Helicone URL constants.
 const (
-	// HeliconeCloudBaseURL is the default Helicone cloud gateway URL.
-	HeliconeCloudBaseURL = "https://gateway.helicone.ai"
+	// HeliconeCloudBaseURL is the default Helicone cloud gateway URL for managed credits mode.
+	// This endpoint handles provider routing automatically - no Helicone-Target-Url header needed.
+	HeliconeCloudBaseURL = "https://ai-gateway.helicone.ai"
 )
 
 // Timeout constants for LLM operations.

@@ -267,7 +267,7 @@ func (c *LLMClient) getAPIURL(config *LLMConfigInput) string {
 	case llm.ProviderHelicone:
 		baseURL := config.BaseURL
 		if baseURL == "" {
-			baseURL = llm.HeliconeCloudBaseURL
+			baseURL = llm.HeliconeCloudBaseURL // https://ai-gateway.helicone.ai for managed credits
 		}
 		return baseURL + "/v1/chat/completions"
 	default:
