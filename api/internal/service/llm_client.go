@@ -121,15 +121,21 @@ func (c *LLMClient) Call(ctx context.Context, config *LLMConfigInput, prompt str
 
 	// Add JSON mode if requested
 	// The caller is responsible for checking model capabilities via SupportsResponseFormat()
-	// This parameter is supported by OpenAI-compatible APIs (OpenAI, OpenRouter)
+	// This parameter is supported by OpenAI-compatible APIs
 	// Anthropic uses tool_use for structured outputs, Ollama varies by model
 	if opts.JSONMode {
-		switch config.Provider {
-		case "openai", "openrouter":
+		// Check API format from registry - only OpenAI-compatible APIs support response_format
+		apiFormat := llm.APIFormatOpenAI // default assumption
+		if c.registry != nil {
+			if apiConfig := c.registry.GetProviderAPIConfig(config.Provider); apiConfig != nil {
+				apiFormat = apiConfig.APIFormat
+			}
+		}
+		if apiFormat == llm.APIFormatOpenAI {
 			reqBody["response_format"] = map[string]string{"type": "json_object"}
+		}
 		// Anthropic and Ollama don't use response_format - they have different mechanisms
 		// If JSONMode is requested for these, we rely on the prompt instructions
-		}
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
