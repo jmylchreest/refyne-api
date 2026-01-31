@@ -248,6 +248,7 @@ tasks:
     desc: Upgrade all dependencies to latest versions (may include breaking changes)
     cmds:
       - task: api:deps:upgrade
+      - task: api:models:update
       - task: web:deps:upgrade
       - task: docs:deps:upgrade
       - task: demo:deps:upgrade
@@ -265,6 +266,13 @@ tasks:
     cmds:
       - go get -u ./...
       - go mod tidy
+
+  api:models:update:
+    desc: Update provider models from APIs (Helicone, OpenRouter, etc.)
+    dir: '{{.API_DIR}}'
+    cmds:
+      - go run ./cmd/generate_fallbacks
+      - echo "Updated provider models - commit changes if needed"
 
   web:deps:update:
     desc: Update web dependencies within semver ranges (safe)

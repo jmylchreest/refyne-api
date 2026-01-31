@@ -129,6 +129,12 @@ func main() {
 		log.Printf("Fetched %d %s models", len(models), fetcher.Name)
 	}
 
+	// Validate before output
+	if err := validateConfig(config); err != nil {
+		log.Fatalf("Validation failed: %v", err)
+	}
+	log.Printf("Validation passed")
+
 	// Generate outputs
 	if err := generateJSONConfig(*configOutput, config); err != nil {
 		log.Printf("Warning: failed to generate config JSON: %v", err)
@@ -203,10 +209,10 @@ func fetchHeliconeModels(ctx context.Context) ([]ModelData, error) {
 		// Extract pricing from first endpoint
 		if len(m.Endpoints) > 0 {
 			p := m.Endpoints[0].Pricing
-			// Helicone returns per-token prices, convert to per-1M
+			// Helicone returns prices per 1M tokens (e.g., 15 = $15/1M)
 			model.Pricing = &ModelPricing{
-				PromptPricePer1M:     p.Prompt * 1_000_000,
-				CompletionPricePer1M: p.Completion * 1_000_000,
+				PromptPricePer1M:     p.Prompt,
+				CompletionPricePer1M: p.Completion,
 				IsFree:               p.Prompt == 0 && p.Completion == 0,
 			}
 		}
@@ -250,6 +256,14 @@ func fetchOpenRouterModels(ctx context.Context) ([]ModelData, error) {
 	for _, m := range result.Data {
 		promptPrice := parsePrice(m.Pricing.Prompt)
 		completionPrice := parsePrice(m.Pricing.Completion)
+
+		// OpenRouter uses -1 for dynamic/variable pricing - treat as unknown (0)
+		if promptPrice < 0 {
+			promptPrice = 0
+		}
+		if completionPrice < 0 {
+			completionPrice = 0
+		}
 
 		model := ModelData{
 			ID:            m.ID,
@@ -474,6 +488,55 @@ func getPriorityPrefixes(provider string) []string {
 	default:
 		return nil
 	}
+}
+
+// =============================================================================
+// Validation
+// =============================================================================
+
+// validateConfig checks that fetched data looks reasonable.
+// This catches issues like incorrect pricing multipliers or malformed API responses.
+func validateConfig(config ProviderModelsConfig) error {
+	var errors []string
+
+	for providerName, provider := range config.Providers {
+		for _, model := range provider.Models {
+			// Check model ID
+			if model.ID == "" {
+				errors = append(errors, fmt.Sprintf("%s: model has empty ID", providerName))
+			}
+
+			// Check context window (should be > 0 and < 10M tokens)
+			if model.ContextWindow < 0 {
+				errors = append(errors, fmt.Sprintf("%s/%s: negative context window %d", providerName, model.ID, model.ContextWindow))
+			}
+			if model.ContextWindow > 10_000_000 {
+				errors = append(errors, fmt.Sprintf("%s/%s: context window too large %d (>10M)", providerName, model.ID, model.ContextWindow))
+			}
+
+			// Check pricing (should be $0 - $1000 per 1M tokens for reasonable models)
+			if model.Pricing != nil && !model.Pricing.IsFree {
+				if model.Pricing.PromptPricePer1M < 0 {
+					errors = append(errors, fmt.Sprintf("%s/%s: negative prompt price %f", providerName, model.ID, model.Pricing.PromptPricePer1M))
+				}
+				if model.Pricing.PromptPricePer1M > 1000 {
+					errors = append(errors, fmt.Sprintf("%s/%s: prompt price too high $%f/1M (>$1000)", providerName, model.ID, model.Pricing.PromptPricePer1M))
+				}
+				if model.Pricing.CompletionPricePer1M < 0 {
+					errors = append(errors, fmt.Sprintf("%s/%s: negative completion price %f", providerName, model.ID, model.Pricing.CompletionPricePer1M))
+				}
+				if model.Pricing.CompletionPricePer1M > 1000 {
+					errors = append(errors, fmt.Sprintf("%s/%s: completion price too high $%f/1M (>$1000)", providerName, model.ID, model.Pricing.CompletionPricePer1M))
+				}
+			}
+		}
+	}
+
+	if len(errors) > 0 {
+		return fmt.Errorf("found %d validation errors:\n  - %s", len(errors), strings.Join(errors, "\n  - "))
+	}
+
+	return nil
 }
 
 // =============================================================================

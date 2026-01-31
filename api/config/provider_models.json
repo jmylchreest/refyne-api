@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-01-31T13:01:13Z",
+  "generated_at": "2026-01-31T13:05:19Z",
   "version": "1.0.0",
   "providers": {
     "anthropic": {
@@ -151,8 +151,8 @@
           "context_window": 200000,
           "max_output": 32000,
           "pricing": {
-            "prompt_price_per_1m": 15000000,
-            "completion_price_per_1m": 75000000
+            "prompt_price_per_1m": 15,
+            "completion_price_per_1m": 75
           },
           "capabilities": {
             "supports_streaming": true
@@ -164,8 +164,8 @@
           "context_window": 200000,
           "max_output": 32000,
           "pricing": {
-            "prompt_price_per_1m": 15000000,
-            "completion_price_per_1m": 75000000
+            "prompt_price_per_1m": 15,
+            "completion_price_per_1m": 75
           },
           "capabilities": {
             "supports_streaming": true
@@ -177,8 +177,8 @@
           "context_window": 200000,
           "max_output": 64000,
           "pricing": {
-            "prompt_price_per_1m": 3000000,
-            "completion_price_per_1m": 15000000
+            "prompt_price_per_1m": 3,
+            "completion_price_per_1m": 15
           },
           "capabilities": {
             "supports_streaming": true
@@ -190,8 +190,8 @@
           "context_window": 200000,
           "max_output": 64000,
           "pricing": {
-            "prompt_price_per_1m": 3000000,
-            "completion_price_per_1m": 15000000
+            "prompt_price_per_1m": 3,
+            "completion_price_per_1m": 15
           },
           "capabilities": {
             "supports_streaming": true
@@ -203,8 +203,8 @@
           "context_window": 200000,
           "max_output": 8192,
           "pricing": {
-            "prompt_price_per_1m": 3000000,
-            "completion_price_per_1m": 15000000
+            "prompt_price_per_1m": 3,
+            "completion_price_per_1m": 15
           },
           "capabilities": {
             "supports_streaming": true
@@ -216,8 +216,8 @@
           "context_window": 200000,
           "max_output": 8192,
           "pricing": {
-            "prompt_price_per_1m": 799999.9999999999,
-            "completion_price_per_1m": 4000000
+            "prompt_price_per_1m": 0.7999999999999999,
+            "completion_price_per_1m": 4
           },
           "capabilities": {
             "supports_streaming": true
@@ -229,8 +229,8 @@
           "context_window": 200000,
           "max_output": 4096,
           "pricing": {
-            "prompt_price_per_1m": 250000,
-            "completion_price_per_1m": 1250000
+            "prompt_price_per_1m": 0.25,
+            "completion_price_per_1m": 1.25
           },
           "capabilities": {
             "supports_streaming": true
@@ -242,8 +242,8 @@
           "context_window": 200000,
           "max_output": 64000,
           "pricing": {
-            "prompt_price_per_1m": 3000000,
-            "completion_price_per_1m": 15000000
+            "prompt_price_per_1m": 3,
+            "completion_price_per_1m": 15
           },
           "capabilities": {
             "supports_streaming": true
@@ -255,8 +255,8 @@
           "context_window": 200000,
           "max_output": 8192,
           "pricing": {
-            "prompt_price_per_1m": 1000000,
-            "completion_price_per_1m": 5000000
+            "prompt_price_per_1m": 1,
+            "completion_price_per_1m": 5
           },
           "capabilities": {
             "supports_streaming": true
@@ -268,8 +268,8 @@
           "context_window": 200000,
           "max_output": 64000,
           "pricing": {
-            "prompt_price_per_1m": 3000000,
-            "completion_price_per_1m": 15000000
+            "prompt_price_per_1m": 3,
+            "completion_price_per_1m": 15
           },
           "capabilities": {
             "supports_streaming": true
@@ -281,8 +281,8 @@
           "context_window": 200000,
           "max_output": 8192,
           "pricing": {
-            "prompt_price_per_1m": 1000000,
-            "completion_price_per_1m": 5000000
+            "prompt_price_per_1m": 1,
+            "completion_price_per_1m": 5
           },
           "capabilities": {
             "supports_streaming": true
@@ -294,8 +294,8 @@
           "context_window": 200000,
           "max_output": 32000,
           "pricing": {
-            "prompt_price_per_1m": 15000000,
-            "completion_price_per_1m": 75000000
+            "prompt_price_per_1m": 15,
+            "completion_price_per_1m": 75
           },
           "capabilities": {
             "supports_streaming": true
@@ -307,8 +307,8 @@
           "context_window": 200000,
           "max_output": 64000,
           "pricing": {
-            "prompt_price_per_1m": 5000000,
-            "completion_price_per_1m": 25000000
+            "prompt_price_per_1m": 5,
+            "completion_price_per_1m": 25
           },
           "capabilities": {
             "supports_streaming": true
@@ -320,8 +320,8 @@
           "context_window": 128000,
           "max_output": 16384,
           "pricing": {
-            "prompt_price_per_1m": 2500000,
-            "completion_price_per_1m": 10000000
+            "prompt_price_per_1m": 2.5,
+            "completion_price_per_1m": 10
           },
           "capabilities": {
             "supports_streaming": true
@@ -333,8 +333,8 @@
           "context_window": 128000,
           "max_output": 16384,
           "pricing": {
-            "prompt_price_per_1m": 150000,
-            "completion_price_per_1m": 600000
+            "prompt_price_per_1m": 0.15,
+            "completion_price_per_1m": 0.6
           },
           "capabilities": {
             "supports_streaming": true
@@ -346,8 +346,8 @@
           "context_window": 128000,
           "max_output": 16384,
           "pricing": {
-            "prompt_price_per_1m": 5280000,
-            "completion_price_per_1m": 15820000
+            "prompt_price_per_1m": 5.28,
+            "completion_price_per_1m": 15.82
           },
           "capabilities": {
             "supports_streaming": true
@@ -359,8 +359,8 @@
           "context_window": 200000,
           "max_output": 100000,
           "pricing": {
-            "prompt_price_per_1m": 15000000,
-            "completion_price_per_1m": 60000000
+            "prompt_price_per_1m": 15,
+            "completion_price_per_1m": 60
           },
           "capabilities": {
             "supports_streaming": true
@@ -372,8 +372,8 @@
           "context_window": 128000,
           "max_output": 65536,
           "pricing": {
-            "prompt_price_per_1m": 1100000,
-            "completion_price_per_1m": 4400000
+            "prompt_price_per_1m": 1.1,
+            "completion_price_per_1m": 4.4
           },
           "capabilities": {
             "supports_streaming": true
@@ -385,8 +385,8 @@
           "context_window": 200000,
           "max_output": 100000,
           "pricing": {
-            "prompt_price_per_1m": 2000000,
-            "completion_price_per_1m": 8000000
+            "prompt_price_per_1m": 2,
+            "completion_price_per_1m": 8
           },
           "capabilities": {
             "supports_streaming": true
@@ -398,8 +398,8 @@
           "context_window": 200000,
           "max_output": 100000,
           "pricing": {
-            "prompt_price_per_1m": 20000000,
-            "completion_price_per_1m": 80000000
+            "prompt_price_per_1m": 20,
+            "completion_price_per_1m": 80
           },
           "capabilities": {
             "supports_streaming": true
@@ -411,8 +411,8 @@
           "context_window": 200000,
           "max_output": 100000,
           "pricing": {
-            "prompt_price_per_1m": 1100000,
-            "completion_price_per_1m": 4400000
+            "prompt_price_per_1m": 1.1,
+            "completion_price_per_1m": 4.4
           },
           "capabilities": {
             "supports_streaming": true
@@ -424,8 +424,8 @@
           "context_window": 200000,
           "max_output": 100000,
           "pricing": {
-            "prompt_price_per_1m": 1100000,
-            "completion_price_per_1m": 4400000
+            "prompt_price_per_1m": 1.1,
+            "completion_price_per_1m": 4.4
           },
           "capabilities": {
             "supports_streaming": true
@@ -437,8 +437,8 @@
           "context_window": 1047576,
           "max_output": 32768,
           "pricing": {
-            "prompt_price_per_1m": 2000000,
-            "completion_price_per_1m": 8000000
+            "prompt_price_per_1m": 2,
+            "completion_price_per_1m": 8
           },
           "capabilities": {
             "supports_streaming": true
@@ -450,8 +450,8 @@
           "context_window": 1047576,
           "max_output": 32768,
           "pricing": {
-            "prompt_price_per_1m": 399999.99999999994,
-            "completion_price_per_1m": 1599999.9999999998
+            "prompt_price_per_1m": 0.39999999999999997,
+            "completion_price_per_1m": 1.5999999999999999
           },
           "capabilities": {
             "supports_streaming": true
@@ -463,8 +463,8 @@
           "context_window": 1047576,
           "max_output": 32768,
           "pricing": {
-            "prompt_price_per_1m": 99999.99999999999,
-            "completion_price_per_1m": 399999.99999999994
+            "prompt_price_per_1m": 0.09999999999999999,
+            "completion_price_per_1m": 0.39999999999999997
           },
           "capabilities": {
             "supports_streaming": true
@@ -476,8 +476,8 @@
           "context_window": 400000,
           "max_output": 128000,
           "pricing": {
-            "prompt_price_per_1m": 1250000,
-            "completion_price_per_1m": 10000000
+            "prompt_price_per_1m": 1.25,
+            "completion_price_per_1m": 10
           },
           "capabilities": {
             "supports_streaming": true
@@ -489,8 +489,8 @@
           "context_window": 400000,
           "max_output": 128000,
           "pricing": {
-            "prompt_price_per_1m": 250000,
-            "completion_price_per_1m": 2000000
+            "prompt_price_per_1m": 0.25,
+            "completion_price_per_1m": 2
           },
           "capabilities": {
             "supports_streaming": true
@@ -502,8 +502,8 @@
           "context_window": 400000,
           "max_output": 128000,
           "pricing": {
-            "prompt_price_per_1m": 49999.99999999999,
-            "completion_price_per_1m": 399999.99999999994
+            "prompt_price_per_1m": 0.049999999999999996,
+            "completion_price_per_1m": 0.39999999999999997
           },
           "capabilities": {
             "supports_streaming": true
@@ -515,8 +515,8 @@
           "context_window": 128000,
           "max_output": 16384,
           "pricing": {
-            "prompt_price_per_1m": 1250000,
-            "completion_price_per_1m": 10000000
+            "prompt_price_per_1m": 1.25,
+            "completion_price_per_1m": 10
           },
           "capabilities": {
             "supports_streaming": true
@@ -528,8 +528,8 @@
           "context_window": 128000,
           "max_output": 32768,
           "pricing": {
-            "prompt_price_per_1m": 15000000,
-            "completion_price_per_1m": 120000000
+            "prompt_price_per_1m": 15,
+            "completion_price_per_1m": 120
           },
           "capabilities": {
             "supports_streaming": true
@@ -541,8 +541,8 @@
           "context_window": 400000,
           "max_output": 128000,
           "pricing": {
-            "prompt_price_per_1m": 1250000,
-            "completion_price_per_1m": 10000000
+            "prompt_price_per_1m": 1.25,
+            "completion_price_per_1m": 10
           },
           "capabilities": {
             "supports_streaming": true
@@ -554,8 +554,8 @@
           "context_window": 400000,
           "max_output": 128000,
           "pricing": {
-            "prompt_price_per_1m": 1250000,
-            "completion_price_per_1m": 10000000
+            "prompt_price_per_1m": 1.25,
+            "completion_price_per_1m": 10
           },
           "capabilities": {
             "supports_streaming": true
@@ -567,8 +567,8 @@
           "context_window": 400000,
           "max_output": 128000,
           "pricing": {
-            "prompt_price_per_1m": 250000,
-            "completion_price_per_1m": 2000000
+            "prompt_price_per_1m": 0.25,
+            "completion_price_per_1m": 2
           },
           "capabilities": {
             "supports_streaming": true
@@ -580,8 +580,8 @@
           "context_window": 400000,
           "max_output": 128000,
           "pricing": {
-            "prompt_price_per_1m": 49999.99999999999,
-            "completion_price_per_1m": 399999.99999999994
+            "prompt_price_per_1m": 0.049999999999999996,
+            "completion_price_per_1m": 0.39999999999999997
           },
           "capabilities": {
             "supports_streaming": true
@@ -593,8 +593,8 @@
           "context_window": 128000,
           "max_output": 32768,
           "pricing": {
-            "prompt_price_per_1m": 15000000,
-            "completion_price_per_1m": 120000000
+            "prompt_price_per_1m": 15,
+            "completion_price_per_1m": 120
           },
           "capabilities": {
             "supports_streaming": true
@@ -606,8 +606,8 @@
           "context_window": 400000,
           "max_output": 128000,
           "pricing": {
-            "prompt_price_per_1m": 1250000,
-            "completion_price_per_1m": 10000000
+            "prompt_price_per_1m": 1.25,
+            "completion_price_per_1m": 10
           },
           "capabilities": {
             "supports_streaming": true
@@ -619,8 +619,8 @@
           "context_window": 400000,
           "max_output": 128000,
           "pricing": {
-            "prompt_price_per_1m": 1250000,
-            "completion_price_per_1m": 10000000
+            "prompt_price_per_1m": 1.25,
+            "completion_price_per_1m": 10
           },
           "capabilities": {
             "supports_streaming": true
@@ -632,8 +632,8 @@
           "context_window": 400000,
           "max_output": 128000,
           "pricing": {
-            "prompt_price_per_1m": 250000,
-            "completion_price_per_1m": 2000000
+            "prompt_price_per_1m": 0.25,
+            "completion_price_per_1m": 2
           },
           "capabilities": {
             "supports_streaming": true
@@ -645,8 +645,8 @@
           "context_window": 128000,
           "max_output": 16384,
           "pricing": {
-            "prompt_price_per_1m": 1250000,
-            "completion_price_per_1m": 10000000
+            "prompt_price_per_1m": 1.25,
+            "completion_price_per_1m": 10
           },
           "capabilities": {
             "supports_streaming": true
@@ -658,8 +658,8 @@
           "context_window": 200000,
           "max_output": 100000,
           "pricing": {
-            "prompt_price_per_1m": 1500000,
-            "completion_price_per_1m": 6000000
+            "prompt_price_per_1m": 1.5,
+            "completion_price_per_1m": 6
           },
           "capabilities": {
             "supports_streaming": true
@@ -671,8 +671,8 @@
           "context_window": 400000,
           "max_output": 128000,
           "pricing": {
-            "prompt_price_per_1m": 1250000,
-            "completion_price_per_1m": 10000000
+            "prompt_price_per_1m": 1.25,
+            "completion_price_per_1m": 10
           },
           "capabilities": {
             "supports_streaming": true
@@ -684,8 +684,8 @@
           "context_window": 400000,
           "max_output": 128000,
           "pricing": {
-            "prompt_price_per_1m": 1750000,
-            "completion_price_per_1m": 14000000
+            "prompt_price_per_1m": 1.75,
+            "completion_price_per_1m": 14
           },
           "capabilities": {
             "supports_streaming": true
@@ -697,8 +697,8 @@
           "context_window": 400000,
           "max_output": 128000,
           "pricing": {
-            "prompt_price_per_1m": 21000000,
-            "completion_price_per_1m": 168000000
+            "prompt_price_per_1m": 21,
+            "completion_price_per_1m": 168
           },
           "capabilities": {
             "supports_streaming": true
@@ -710,8 +710,8 @@
           "context_window": 128000,
           "max_output": 16384,
           "pricing": {
-            "prompt_price_per_1m": 1750000,
-            "completion_price_per_1m": 14000000
+            "prompt_price_per_1m": 1.75,
+            "completion_price_per_1m": 14
           },
           "capabilities": {
             "supports_streaming": true
@@ -723,8 +723,8 @@
           "context_window": 131072,
           "max_output": 131072,
           "pricing": {
-            "prompt_price_per_1m": 40000,
-            "completion_price_per_1m": 160000
+            "prompt_price_per_1m": 0.04,
+            "completion_price_per_1m": 0.16
           },
           "capabilities": {
             "supports_streaming": true
@@ -736,8 +736,8 @@
           "context_window": 131072,
           "max_output": 131072,
           "pricing": {
-            "prompt_price_per_1m": 49999.99999999999,
-            "completion_price_per_1m": 199999.99999999997
+            "prompt_price_per_1m": 0.049999999999999996,
+            "completion_price_per_1m": 0.19999999999999998
           },
           "capabilities": {
             "supports_streaming": true
@@ -749,8 +749,8 @@
           "context_window": 8192,
           "max_output": 4096,
           "pricing": {
-            "prompt_price_per_1m": 6250000,
-            "completion_price_per_1m": 12500000
+            "prompt_price_per_1m": 6.25,
+            "completion_price_per_1m": 12.5
           },
           "capabilities": {
             "supports_streaming": true
@@ -762,8 +762,8 @@
           "context_window": 8192,
           "max_output": 4096,
           "pricing": {
-            "prompt_price_per_1m": 5000000,
-            "completion_price_per_1m": 10000000
+            "prompt_price_per_1m": 5,
+            "completion_price_per_1m": 10
           },
           "capabilities": {
             "supports_streaming": true
@@ -789,8 +789,8 @@
           "context_window": 1048576,
           "max_output": 65536,
           "pricing": {
-            "prompt_price_per_1m": 1250000,
-            "completion_price_per_1m": 10000000
+            "prompt_price_per_1m": 1.25,
+            "completion_price_per_1m": 10
           },
           "capabilities": {
             "supports_streaming": true
@@ -802,8 +802,8 @@
           "context_window": 1048576,
           "max_output": 65535,
           "pricing": {
-            "prompt_price_per_1m": 300000,
-            "completion_price_per_1m": 2500000
+            "prompt_price_per_1m": 0.3,
+            "completion_price_per_1m": 2.5
           },
           "capabilities": {
             "supports_streaming": true
@@ -815,8 +815,8 @@
           "context_window": 1048576,
           "max_output": 65535,
           "pricing": {
-            "prompt_price_per_1m": 99999.99999999999,
-            "completion_price_per_1m": 399999.99999999994
+            "prompt_price_per_1m": 0.09999999999999999,
+            "completion_price_per_1m": 0.39999999999999997
           },
           "capabilities": {
             "supports_streaming": true
@@ -828,8 +828,8 @@
           "context_window": 1048576,
           "max_output": 65536,
           "pricing": {
-            "prompt_price_per_1m": 2000000,
-            "completion_price_per_1m": 12000000
+            "prompt_price_per_1m": 2,
+            "completion_price_per_1m": 12
           },
           "capabilities": {
             "supports_streaming": true
@@ -841,8 +841,8 @@
           "context_window": 1048576,
           "max_output": 65536,
           "pricing": {
-            "prompt_price_per_1m": 500000,
-            "completion_price_per_1m": 3000000
+            "prompt_price_per_1m": 0.5,
+            "completion_price_per_1m": 3
           },
           "capabilities": {
             "supports_streaming": true
@@ -854,8 +854,8 @@
           "context_window": 65536,
           "max_output": 32768,
           "pricing": {
-            "prompt_price_per_1m": 2000000,
-            "completion_price_per_1m": 12000000
+            "prompt_price_per_1m": 2,
+            "completion_price_per_1m": 12
           },
           "capabilities": {
             "supports_streaming": true
@@ -867,8 +867,8 @@
           "context_window": 8192,
           "max_output": 8192,
           "pricing": {
-            "prompt_price_per_1m": 10000,
-            "completion_price_per_1m": 30000
+            "prompt_price_per_1m": 0.01,
+            "completion_price_per_1m": 0.03
           },
           "capabilities": {
             "supports_streaming": true
@@ -880,8 +880,8 @@
           "context_window": 131072,
           "max_output": 8192,
           "pricing": {
-            "prompt_price_per_1m": 49999.99999999999,
-            "completion_price_per_1m": 99999.99999999999
+            "prompt_price_per_1m": 0.049999999999999996,
+            "completion_price_per_1m": 0.09999999999999999
           },
           "capabilities": {
             "supports_streaming": true
@@ -893,8 +893,8 @@
           "context_window": 256000,
           "max_output": 10000,
           "pricing": {
-            "prompt_price_per_1m": 199999.99999999997,
-            "completion_price_per_1m": 1500000
+            "prompt_price_per_1m": 0.19999999999999998,
+            "completion_price_per_1m": 1.5
           },
           "capabilities": {
             "supports_streaming": true
@@ -906,8 +906,8 @@
           "context_window": 256000,
           "max_output": 256000,
           "pricing": {
-            "prompt_price_per_1m": 3000000,
-            "completion_price_per_1m": 15000000
+            "prompt_price_per_1m": 3,
+            "completion_price_per_1m": 15
           },
           "capabilities": {
             "supports_streaming": true
@@ -919,8 +919,8 @@
           "context_window": 2000000,
           "max_output": 2000000,
           "pricing": {
-            "prompt_price_per_1m": 199999.99999999997,
-            "completion_price_per_1m": 500000
+            "prompt_price_per_1m": 0.19999999999999998,
+            "completion_price_per_1m": 0.5
           },
           "capabilities": {
             "supports_streaming": true
@@ -932,8 +932,8 @@
           "context_window": 2000000,
           "max_output": 2000000,
           "pricing": {
-            "prompt_price_per_1m": 199999.99999999997,
-            "completion_price_per_1m": 500000
+            "prompt_price_per_1m": 0.19999999999999998,
+            "completion_price_per_1m": 0.5
           },
           "capabilities": {
             "supports_streaming": true
@@ -945,8 +945,8 @@
           "context_window": 2000000,
           "max_output": 30000,
           "pricing": {
-            "prompt_price_per_1m": 199999.99999999997,
-            "completion_price_per_1m": 500000
+            "prompt_price_per_1m": 0.19999999999999998,
+            "completion_price_per_1m": 0.5
           },
           "capabilities": {
             "supports_streaming": true
@@ -958,8 +958,8 @@
           "context_window": 2000000,
           "max_output": 2000000,
           "pricing": {
-            "prompt_price_per_1m": 199999.99999999997,
-            "completion_price_per_1m": 500000
+            "prompt_price_per_1m": 0.19999999999999998,
+            "completion_price_per_1m": 0.5
           },
           "capabilities": {
             "supports_streaming": true
@@ -971,8 +971,8 @@
           "context_window": 131072,
           "max_output": 131072,
           "pricing": {
-            "prompt_price_per_1m": 3000000,
-            "completion_price_per_1m": 15000000
+            "prompt_price_per_1m": 3,
+            "completion_price_per_1m": 15
           },
           "capabilities": {
             "supports_streaming": true
@@ -984,8 +984,8 @@
           "context_window": 131072,
           "max_output": 131072,
           "pricing": {
-            "prompt_price_per_1m": 300000,
-            "completion_price_per_1m": 500000
+            "prompt_price_per_1m": 0.3,
+            "completion_price_per_1m": 0.5
           },
           "capabilities": {
             "supports_streaming": true
@@ -997,8 +997,8 @@
           "context_window": 131072,
           "max_output": 8192,
           "pricing": {
-            "prompt_price_per_1m": 80000,
-            "completion_price_per_1m": 300000
+            "prompt_price_per_1m": 0.08,
+            "completion_price_per_1m": 0.3
           },
           "capabilities": {
             "supports_streaming": true
@@ -1010,8 +1010,8 @@
           "context_window": 131072,
           "max_output": 8192,
           "pricing": {
-            "prompt_price_per_1m": 150000,
-            "completion_price_per_1m": 600000
+            "prompt_price_per_1m": 0.15,
+            "completion_price_per_1m": 0.6
           },
           "capabilities": {
             "supports_streaming": true
@@ -1023,8 +1023,8 @@
           "context_window": 131072,
           "max_output": 1024,
           "pricing": {
-            "prompt_price_per_1m": 210000,
-            "completion_price_per_1m": 210000
+            "prompt_price_per_1m": 0.21,
+            "completion_price_per_1m": 0.21
           },
           "capabilities": {
             "supports_streaming": true
@@ -1036,8 +1036,8 @@
           "context_window": 131072,
           "max_output": 32678,
           "pricing": {
-            "prompt_price_per_1m": 590000,
-            "completion_price_per_1m": 789999.9999999999
+            "prompt_price_per_1m": 0.59,
+            "completion_price_per_1m": 0.7899999999999999
           },
           "capabilities": {
             "supports_streaming": true
@@ -1049,8 +1049,8 @@
           "context_window": 128000,
           "max_output": 16400,
           "pricing": {
-            "prompt_price_per_1m": 130000,
-            "completion_price_per_1m": 390000
+            "prompt_price_per_1m": 0.13,
+            "completion_price_per_1m": 0.39
           },
           "capabilities": {
             "supports_streaming": true
@@ -1062,8 +1062,8 @@
           "context_window": 131072,
           "max_output": 32678,
           "pricing": {
-            "prompt_price_per_1m": 49999.99999999999,
-            "completion_price_per_1m": 80000
+            "prompt_price_per_1m": 0.049999999999999996,
+            "completion_price_per_1m": 0.08
           },
           "capabilities": {
             "supports_streaming": true
@@ -1075,8 +1075,8 @@
           "context_window": 512,
           "max_output": 2,
           "pricing": {
-            "prompt_price_per_1m": 10000,
-            "completion_price_per_1m": 10000
+            "prompt_price_per_1m": 0.01,
+            "completion_price_per_1m": 0.01
           },
           "capabilities": {
             "supports_streaming": true
@@ -1088,8 +1088,8 @@
           "context_window": 512,
           "max_output": 2,
           "pricing": {
-            "prompt_price_per_1m": 10000,
-            "completion_price_per_1m": 10000
+            "prompt_price_per_1m": 0.01,
+            "completion_price_per_1m": 0.01
           },
           "capabilities": {
             "supports_streaming": true
@@ -1101,8 +1101,8 @@
           "context_window": 16384,
           "max_output": 16384,
           "pricing": {
-            "prompt_price_per_1m": 20000,
-            "completion_price_per_1m": 49999.99999999999
+            "prompt_price_per_1m": 0.02,
+            "completion_price_per_1m": 0.049999999999999996
           },
           "capabilities": {
             "supports_streaming": true
@@ -1114,8 +1114,8 @@
           "context_window": 128000,
           "max_output": 128000,
           "pricing": {
-            "prompt_price_per_1m": 20000,
-            "completion_price_per_1m": 30000
+            "prompt_price_per_1m": 0.02,
+            "completion_price_per_1m": 0.03
           },
           "capabilities": {
             "supports_streaming": true
@@ -1127,8 +1127,8 @@
           "context_window": 131072,
           "max_output": 131072,
           "pricing": {
-            "prompt_price_per_1m": 140000,
-            "completion_price_per_1m": 140000
+            "prompt_price_per_1m": 0.14,
+            "completion_price_per_1m": 0.14
           },
           "capabilities": {
             "supports_streaming": true
@@ -1140,8 +1140,8 @@
           "context_window": 131072,
           "max_output": 16384,
           "pricing": {
-            "prompt_price_per_1m": 570000.0000000001,
-            "completion_price_per_1m": 2300000
+            "prompt_price_per_1m": 0.5700000000000001,
+            "completion_price_per_1m": 2.3
           },
           "capabilities": {
             "supports_streaming": true
@@ -1153,8 +1153,8 @@
           "context_window": 262144,
           "max_output": 16384,
           "pricing": {
-            "prompt_price_per_1m": 500000,
-            "completion_price_per_1m": 2000000
+            "prompt_price_per_1m": 0.5,
+            "completion_price_per_1m": 2
           },
           "capabilities": {
             "supports_streaming": true
@@ -1166,8 +1166,8 @@
           "context_window": 256000,
           "max_output": 262144,
           "pricing": {
-            "prompt_price_per_1m": 480000,
-            "completion_price_per_1m": 2000000
+            "prompt_price_per_1m": 0.48,
+            "completion_price_per_1m": 2
           },
           "capabilities": {
             "supports_streaming": true
@@ -1179,8 +1179,8 @@
           "context_window": 262144,
           "max_output": 16384,
           "pricing": {
-            "prompt_price_per_1m": 1200000,
-            "completion_price_per_1m": 1200000
+            "prompt_price_per_1m": 1.2,
+            "completion_price_per_1m": 1.2
           },
           "capabilities": {
             "supports_streaming": true
@@ -1192,8 +1192,8 @@
           "context_window": 32000,
           "max_output": 8192,
           "pricing": {
-            "prompt_price_per_1m": 30000,
-            "completion_price_per_1m": 90000
+            "prompt_price_per_1m": 0.03,
+            "completion_price_per_1m": 0.09
           },
           "capabilities": {
             "supports_streaming": true
@@ -1205,8 +1205,8 @@
           "context_window": 131072,
           "max_output": 40960,
           "pricing": {
-            "prompt_price_per_1m": 290000,
-            "completion_price_per_1m": 590000
+            "prompt_price_per_1m": 0.29,
+            "completion_price_per_1m": 0.59
           },
           "capabilities": {
             "supports_streaming": true
@@ -1218,8 +1218,8 @@
           "context_window": 41000,
           "max_output": 41000,
           "pricing": {
-            "prompt_price_per_1m": 80000,
-            "completion_price_per_1m": 290000
+            "prompt_price_per_1m": 0.08,
+            "completion_price_per_1m": 0.29
           },
           "capabilities": {
             "supports_streaming": true
@@ -1231,8 +1231,8 @@
           "context_window": 262144,
           "max_output": 16384,
           "pricing": {
-            "prompt_price_per_1m": 220000,
-            "completion_price_per_1m": 950000
+            "prompt_price_per_1m": 0.22,
+            "completion_price_per_1m": 0.95
           },
           "capabilities": {
             "supports_streaming": true
@@ -1244,8 +1244,8 @@
           "context_window": 262000,
           "max_output": 16384,
           "pricing": {
-            "prompt_price_per_1m": 140000,
-            "completion_price_per_1m": 1400000
+            "prompt_price_per_1m": 0.14,
+            "completion_price_per_1m": 1.4
           },
           "capabilities": {
             "supports_streaming": true
@@ -1257,8 +1257,8 @@
           "context_window": 262144,
           "max_output": 81920,
           "pricing": {
-            "prompt_price_per_1m": 300000,
-            "completion_price_per_1m": 2900000.0000000005
+            "prompt_price_per_1m": 0.3,
+            "completion_price_per_1m": 2.9000000000000004
           },
           "capabilities": {
             "supports_streaming": true
@@ -1270,8 +1270,8 @@
           "context_window": 256000,
           "max_output": 16384,
           "pricing": {
-            "prompt_price_per_1m": 300000,
-            "completion_price_per_1m": 1500000
+            "prompt_price_per_1m": 0.3,
+            "completion_price_per_1m": 1.5
           },
           "capabilities": {
             "supports_streaming": true
@@ -1283,8 +1283,8 @@
           "context_window": 262144,
           "max_output": 262144,
           "pricing": {
-            "prompt_price_per_1m": 99999.99999999999,
-            "completion_price_per_1m": 300000
+            "prompt_price_per_1m": 0.09999999999999999,
+            "completion_price_per_1m": 0.3
           },
           "capabilities": {
             "supports_streaming": true
@@ -1296,8 +1296,8 @@
           "context_window": 128000,
           "max_output": 4096,
           "pricing": {
-            "prompt_price_per_1m": 30000,
-            "completion_price_per_1m": 130000
+            "prompt_price_per_1m": 0.03,
+            "completion_price_per_1m": 0.13
           },
           "capabilities": {
             "supports_streaming": true
@@ -1309,8 +1309,8 @@
           "context_window": 128000,
           "max_output": 8192,
           "pricing": {
-            "prompt_price_per_1m": 270000,
-            "completion_price_per_1m": 1000000
+            "prompt_price_per_1m": 0.27,
+            "completion_price_per_1m": 1
           },
           "capabilities": {
             "supports_streaming": true
@@ -1322,8 +1322,8 @@
           "context_window": 128000,
           "max_output": 16384,
           "pricing": {
-            "prompt_price_per_1m": 270000,
-            "completion_price_per_1m": 1000000
+            "prompt_price_per_1m": 0.27,
+            "completion_price_per_1m": 1
           },
           "capabilities": {
             "supports_streaming": true
@@ -1335,8 +1335,8 @@
           "context_window": 163840,
           "max_output": 65536,
           "pricing": {
-            "prompt_price_per_1m": 260000,
-            "completion_price_per_1m": 399999.99999999994
+            "prompt_price_per_1m": 0.26,
+            "completion_price_per_1m": 0.39999999999999997
           },
           "capabilities": {
             "supports_streaming": true
@@ -1348,8 +1348,8 @@
           "context_window": 128000,
           "max_output": 64000,
           "pricing": {
-            "prompt_price_per_1m": 560000,
-            "completion_price_per_1m": 1680000
+            "prompt_price_per_1m": 0.56,
+            "completion_price_per_1m": 1.68
           },
           "capabilities": {
             "supports_streaming": true
@@ -1361,8 +1361,8 @@
           "context_window": 130000,
           "max_output": 163840,
           "pricing": {
-            "prompt_price_per_1m": 300000,
-            "completion_price_per_1m": 1200000
+            "prompt_price_per_1m": 0.3,
+            "completion_price_per_1m": 1.2
           },
           "capabilities": {
             "supports_streaming": true
@@ -1374,8 +1374,8 @@
           "context_window": 128000,
           "max_output": 16400,
           "pricing": {
-            "prompt_price_per_1m": 20000000,
-            "completion_price_per_1m": 40000000
+            "prompt_price_per_1m": 20,
+            "completion_price_per_1m": 40
           },
           "capabilities": {
             "supports_streaming": true
@@ -1387,8 +1387,8 @@
           "context_window": 128000,
           "max_output": 128000,
           "pricing": {
-            "prompt_price_per_1m": 75000000,
-            "completion_price_per_1m": 200000000
+            "prompt_price_per_1m": 75,
+            "completion_price_per_1m": 200
           },
           "capabilities": {
             "supports_streaming": true
@@ -1400,8 +1400,8 @@
           "context_window": 128000,
           "max_output": 32768,
           "pricing": {
-            "prompt_price_per_1m": 2000000,
-            "completion_price_per_1m": 6000000
+            "prompt_price_per_1m": 2,
+            "completion_price_per_1m": 6
           },
           "capabilities": {
             "supports_streaming": true
@@ -1413,8 +1413,8 @@
           "context_window": 204800,
           "max_output": 131072,
           "pricing": {
-            "prompt_price_per_1m": 449999.99999999994,
-            "completion_price_per_1m": 1500000
+            "prompt_price_per_1m": 0.44999999999999996,
+            "completion_price_per_1m": 1.5
           },
           "capabilities": {
             "supports_streaming": true
@@ -1426,8 +1426,8 @@
           "context_window": 204800,
           "max_output": 131072,
           "pricing": {
-            "prompt_price_per_1m": 430000,
-            "completion_price_per_1m": 1750000
+            "prompt_price_per_1m": 0.43,
+            "completion_price_per_1m": 1.75
           },
           "capabilities": {
             "supports_streaming": true
@@ -1439,8 +1439,8 @@
           "context_window": 128000,
           "max_output": 8000,
           "pricing": {
-            "prompt_price_per_1m": 70000,
-            "completion_price_per_1m": 280000
+            "prompt_price_per_1m": 0.07,
+            "completion_price_per_1m": 0.28
           },
           "capabilities": {
             "supports_streaming": true
@@ -1452,8 +1452,8 @@
           "context_window": 127000,
           "max_output": 4096,
           "pricing": {
-            "prompt_price_per_1m": 1000000,
-            "completion_price_per_1m": 1000000
+            "prompt_price_per_1m": 1,
+            "completion_price_per_1m": 1
           },
           "capabilities": {
             "supports_streaming": true
@@ -1465,8 +1465,8 @@
           "context_window": 200000,
           "max_output": 4096,
           "pricing": {
-            "prompt_price_per_1m": 3000000,
-            "completion_price_per_1m": 15000000
+            "prompt_price_per_1m": 3,
+            "completion_price_per_1m": 15
           },
           "capabilities": {
             "supports_streaming": true
@@ -1478,8 +1478,8 @@
           "context_window": 127000,
           "max_output": 4096,
           "pricing": {
-            "prompt_price_per_1m": 1000000,
-            "completion_price_per_1m": 5000000
+            "prompt_price_per_1m": 1,
+            "completion_price_per_1m": 5
           },
           "capabilities": {
             "supports_streaming": true
@@ -1491,8 +1491,8 @@
           "context_window": 127000,
           "max_output": 4096,
           "pricing": {
-            "prompt_price_per_1m": 2000000,
-            "completion_price_per_1m": 8000000
+            "prompt_price_per_1m": 2,
+            "completion_price_per_1m": 8
           },
           "capabilities": {
             "supports_streaming": true
@@ -1504,8 +1504,8 @@
           "context_window": 127000,
           "max_output": 4096,
           "pricing": {
-            "prompt_price_per_1m": 2000000,
-            "completion_price_per_1m": 8000000
+            "prompt_price_per_1m": 2,
+            "completion_price_per_1m": 8
           },
           "capabilities": {
             "supports_streaming": true
@@ -2217,8 +2217,9 @@
           "name": "Body Builder (beta)",
           "context_window": 128000,
           "pricing": {
-            "prompt_price_per_1m": -1000000,
-            "completion_price_per_1m": -1000000
+            "prompt_price_per_1m": 0,
+            "completion_price_per_1m": 0,
+            "is_free": true
           },
           "capabilities": {
             "supports_streaming": true
@@ -6642,8 +6643,9 @@
           "name": "Auto Router",
           "context_window": 2000000,
           "pricing": {
-            "prompt_price_per_1m": -1000000,
-            "completion_price_per_1m": -1000000
+            "prompt_price_per_1m": 0,
+            "completion_price_per_1m": 0,
+            "is_free": true
           },
           "capabilities": {
             "supports_streaming": true
