@@ -6,7 +6,6 @@ import (
 	"log/slog"
 
 	"github.com/jmylchreest/refyne-api/internal/crypto"
-	"github.com/jmylchreest/refyne-api/internal/llm"
 	"github.com/jmylchreest/refyne-api/internal/models"
 	"github.com/jmylchreest/refyne-api/internal/repository"
 )
@@ -41,12 +40,8 @@ func (s *UserLLMService) ListServiceKeys(ctx context.Context, userID string) ([]
 }
 
 // UpsertServiceKey creates or updates a user service key.
+// Note: Provider validation is done at the handler level against the registry.
 func (s *UserLLMService) UpsertServiceKey(ctx context.Context, userID string, input UserServiceKeyInput) (*models.UserServiceKey, error) {
-	// Validate provider
-	if !isValidUserProvider(input.Provider) {
-		return nil, fmt.Errorf("invalid provider: %s (must be openrouter, anthropic, openai, or ollama)", input.Provider)
-	}
-
 	// Get existing key if any
 	existing, err := s.repos.UserServiceKey.GetByUserAndProvider(ctx, userID, input.Provider)
 	if err != nil {
@@ -134,15 +129,11 @@ type UserFallbackChainEntryInput struct {
 }
 
 // SetFallbackChain replaces the user's fallback chain configuration.
+// Note: Provider validation is done at the handler level against the registry.
 func (s *UserLLMService) SetFallbackChain(ctx context.Context, userID string, entries []UserFallbackChainEntryInput) ([]*models.UserFallbackChainEntry, error) {
 	modelEntries := make([]*models.UserFallbackChainEntry, 0, len(entries))
 
 	for i, e := range entries {
-		// Validate provider
-		if !isValidUserProvider(e.Provider) {
-			return nil, fmt.Errorf("invalid provider at position %d: %s (must be openrouter, anthropic, openai, or ollama)", i+1, e.Provider)
-		}
-
 		// Validate model is not empty
 		if e.Model == "" {
 			return nil, fmt.Errorf("model at position %d cannot be empty", i+1)
@@ -196,7 +187,4 @@ func (s *UserLLMService) GetDecryptedKey(ctx context.Context, userID, provider s
 	return key.APIKeyEncrypted, nil
 }
 
-// isValidUserProvider checks if a provider name is valid for user keys.
-func isValidUserProvider(provider string) bool {
-	return llm.IsValidProvider(provider)
-}
+// Note: Provider validation is now done at the handler level against the LLM registry.

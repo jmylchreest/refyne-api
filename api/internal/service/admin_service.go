@@ -65,12 +65,8 @@ func (s *AdminService) ListServiceKeys(ctx context.Context) ([]*models.ServiceKe
 // UpsertServiceKey creates or updates a service key.
 // If APIKey is empty and a key already exists, the existing key is preserved.
 // If APIKey is empty and no key exists, an error is returned.
+// Note: Provider validation is done at the handler level against the registry.
 func (s *AdminService) UpsertServiceKey(ctx context.Context, input ServiceKeyInput) (*models.ServiceKey, error) {
-	// Validate provider
-	if !isValidProvider(input.Provider) {
-		return nil, fmt.Errorf("invalid provider: %s (must be openrouter, anthropic, or openai)", input.Provider)
-	}
-
 	// Check if key already exists
 	existingKey, err := s.repos.ServiceKey.GetByProvider(ctx, input.Provider)
 	if err != nil {
@@ -178,10 +174,7 @@ func (s *AdminService) SetFallbackChain(ctx context.Context, input FallbackChain
 	entries := make([]*models.FallbackChainEntry, 0, len(input.Entries))
 
 	for i, e := range input.Entries {
-		// Validate provider
-		if !isValidChainProvider(e.Provider) {
-			return nil, fmt.Errorf("invalid provider at position %d: %s (must be openrouter, anthropic, openai, or ollama)", i+1, e.Provider)
-		}
+		// Note: Provider validation is done at the handler level against the registry.
 
 		// Validate model is not empty
 		if e.Model == "" {
@@ -235,26 +228,8 @@ func normalizeTier(tier *string) *string {
 	return &normalized
 }
 
-// isValidProvider checks if a provider name is valid for service keys.
-func isValidProvider(provider string) bool {
-	switch provider {
-	case "openrouter", "anthropic", "openai":
-		return true
-	default:
-		return false
-	}
-}
-
-// isValidChainProvider checks if a provider name is valid for the fallback chain.
-// Includes ollama which doesn't require an API key.
-func isValidChainProvider(provider string) bool {
-	switch provider {
-	case "openrouter", "anthropic", "openai", "ollama":
-		return true
-	default:
-		return false
-	}
-}
+// Note: Provider validation is now done at the handler level against the LLM registry.
+// The isValidProvider and isValidChainProvider functions have been removed.
 
 // ProviderModel represents a model available from a provider.
 type ProviderModel struct {

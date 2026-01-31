@@ -441,20 +441,8 @@ func TestAdminService_UpsertServiceKey_Update(t *testing.T) {
 	}
 }
 
-func TestAdminService_UpsertServiceKey_InvalidProvider(t *testing.T) {
-	svc, _, _, _ := setupAdminService(t)
-	ctx := context.Background()
-
-	_, err := svc.UpsertServiceKey(ctx, ServiceKeyInput{
-		Provider:  "invalid-provider",
-		APIKey:    "test-key",
-		IsEnabled: true,
-	})
-
-	if err == nil {
-		t.Fatal("expected error for invalid provider")
-	}
-}
+// TestAdminService_UpsertServiceKey_InvalidProvider removed - provider validation
+// is now done at handler level against the LLM registry, not at service level
 
 func TestAdminService_UpsertServiceKey_NoEncryption(t *testing.T) {
 	svc, _, _ := setupAdminServiceNoEncryption(t)
@@ -735,20 +723,8 @@ func TestAdminService_SetFallbackChain_ReplacesExisting(t *testing.T) {
 	}
 }
 
-func TestAdminService_SetFallbackChain_InvalidProvider(t *testing.T) {
-	svc, _, _, _ := setupAdminService(t)
-	ctx := context.Background()
-
-	_, err := svc.SetFallbackChain(ctx, FallbackChainInput{
-		Entries: []FallbackChainEntryInput{
-			{Provider: "invalid-provider", Model: "model", IsEnabled: true},
-		},
-	})
-
-	if err == nil {
-		t.Fatal("expected error for invalid provider")
-	}
-}
+// TestAdminService_SetFallbackChain_InvalidProvider removed - provider validation
+// is now done at handler level against the LLM registry, not at service level
 
 func TestAdminService_SetFallbackChain_EmptyModel(t *testing.T) {
 	svc, _, _, _ := setupAdminService(t)
@@ -1039,37 +1015,6 @@ func TestFormatOpenAIModelName(t *testing.T) {
 	}
 }
 
-func TestIsValidProvider(t *testing.T) {
-	validProviders := []string{"openrouter", "anthropic", "openai"}
-	invalidProviders := []string{"ollama", "azure", "invalid", ""}
-
-	for _, p := range validProviders {
-		if !isValidProvider(p) {
-			t.Errorf("isValidProvider(%q) = false, want true", p)
-		}
-	}
-
-	for _, p := range invalidProviders {
-		if isValidProvider(p) {
-			t.Errorf("isValidProvider(%q) = true, want false", p)
-		}
-	}
-}
-
-func TestIsValidChainProvider(t *testing.T) {
-	validProviders := []string{"openrouter", "anthropic", "openai", "ollama"}
-	invalidProviders := []string{"azure", "invalid", ""}
-
-	for _, p := range validProviders {
-		if !isValidChainProvider(p) {
-			t.Errorf("isValidChainProvider(%q) = false, want true", p)
-		}
-	}
-
-	for _, p := range invalidProviders {
-		if isValidChainProvider(p) {
-			t.Errorf("isValidChainProvider(%q) = true, want false", p)
-		}
-	}
-}
+// TestIsValidProvider and TestIsValidChainProvider removed - provider validation
+// is now done at handler level against the LLM registry
 

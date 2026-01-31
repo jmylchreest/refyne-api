@@ -401,20 +401,8 @@ func TestUserLLMService_UpsertServiceKey_UpdateKeepsExistingKey(t *testing.T) {
 	}
 }
 
-func TestUserLLMService_UpsertServiceKey_InvalidProvider(t *testing.T) {
-	svc, _, _, _ := setupUserLLMService(t)
-	ctx := context.Background()
-
-	_, err := svc.UpsertServiceKey(ctx, "user-invalid", UserServiceKeyInput{
-		Provider:  "invalid-provider",
-		APIKey:    "some-key",
-		IsEnabled: true,
-	})
-
-	if err == nil {
-		t.Fatal("expected error for invalid provider")
-	}
-}
+// TestUserLLMService_UpsertServiceKey_InvalidProvider removed - provider validation
+// is now done at handler level against the LLM registry, not at service level
 
 func TestUserLLMService_UpsertServiceKey_ValidProviders(t *testing.T) {
 	svc, _, _, _ := setupUserLLMService(t)
@@ -689,19 +677,6 @@ func TestUserLLMService_SetFallbackChain_Empty(t *testing.T) {
 	}
 }
 
-func TestUserLLMService_SetFallbackChain_InvalidProvider(t *testing.T) {
-	svc, _, _, _ := setupUserLLMService(t)
-	ctx := context.Background()
-
-	_, err := svc.SetFallbackChain(ctx, "user-invalid", []UserFallbackChainEntryInput{
-		{Provider: "invalid-provider", Model: "model", IsEnabled: true},
-	})
-
-	if err == nil {
-		t.Fatal("expected error for invalid provider")
-	}
-}
-
 func TestUserLLMService_SetFallbackChain_EmptyModel(t *testing.T) {
 	svc, _, _, _ := setupUserLLMService(t)
 	ctx := context.Background()
@@ -712,21 +687,6 @@ func TestUserLLMService_SetFallbackChain_EmptyModel(t *testing.T) {
 
 	if err == nil {
 		t.Fatal("expected error for empty model")
-	}
-}
-
-func TestUserLLMService_SetFallbackChain_InvalidProviderAtPosition(t *testing.T) {
-	svc, _, _, _ := setupUserLLMService(t)
-	ctx := context.Background()
-
-	// Valid first entry, invalid second entry
-	_, err := svc.SetFallbackChain(ctx, "user-pos", []UserFallbackChainEntryInput{
-		{Provider: "openrouter", Model: "model-1", IsEnabled: true},
-		{Provider: "invalid", Model: "model-2", IsEnabled: true},
-	})
-
-	if err == nil {
-		t.Fatal("expected error for invalid provider at position 2")
 	}
 }
 
