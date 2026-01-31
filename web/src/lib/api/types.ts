@@ -197,7 +197,7 @@ export interface ServiceKey {
 }
 
 export interface ServiceKeyInput {
-  provider: 'openrouter' | 'anthropic' | 'openai' | 'helicone';
+  provider: string; // Validated against registry on backend
   api_key: string;
   is_enabled: boolean;
 }
@@ -213,7 +213,7 @@ export interface UserServiceKey {
 }
 
 export interface UserServiceKeyInput {
-  provider: 'openrouter' | 'anthropic' | 'openai' | 'ollama' | 'helicone';
+  provider: string; // Validated against registry on backend
   api_key?: string;
   base_url?: string;
   is_enabled: boolean;

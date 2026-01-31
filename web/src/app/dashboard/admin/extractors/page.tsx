@@ -26,11 +26,10 @@ import { Badge } from '@/components/ui/badge';
 import { FallbackChainEditor, ChainEntry, SavedChainEntry } from '@/components/fallback-chain-editor';
 import { toast } from 'sonner';
 
-const PROVIDER_LABELS: Record<string, string> = {
-  openrouter: 'OpenRouter',
-  anthropic: 'Anthropic',
-  openai: 'OpenAI',
-  ollama: 'Ollama',
+// Helper to get provider label - prefers API display_name, falls back to name
+const getProviderLabel = (providerName: string, providers: LLMProvider[]): string => {
+  const p = providers.find(lp => lp.name === providerName);
+  return p?.display_name || providerName;
 };
 
 type ModelStatusMap = Map<string, ModelValidationResult>;
@@ -134,7 +133,7 @@ export default function ExtractorsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTier, isSuperadmin]);
 
-  const handleSave = async (provider: 'openrouter' | 'anthropic' | 'openai') => {
+  const handleSave = async (provider: string) => {
     const existingKey = keys.find(k => k.provider === provider);
 
     // API key is required for new keys, optional for updates
@@ -149,7 +148,7 @@ export default function ExtractorsPage() {
         api_key: formData.api_key || '', // Empty string preserves existing key on backend
         is_enabled: formData.is_enabled ?? true,
       });
-      toast.success(`${PROVIDER_LABELS[provider]} key saved`);
+      toast.success(`${getProviderLabel(provider, availableProviders)} key saved`);
       setEditingProvider(null);
       setFormData({});
       loadData();
@@ -160,11 +159,11 @@ export default function ExtractorsPage() {
   };
 
   const handleDelete = async (provider: string) => {
-    if (!confirm(`Delete ${PROVIDER_LABELS[provider]} service key?`)) return;
+    if (!confirm(`Delete ${getProviderLabel(provider, availableProviders)} service key?`)) return;
 
     try {
       await deleteServiceKey(provider);
-      toast.success(`${PROVIDER_LABELS[provider]} key deleted`);
+      toast.success(`${getProviderLabel(provider, availableProviders)} key deleted`);
       loadData();
     } catch (err) {
       const error = err as { error?: string };
@@ -286,106 +285,112 @@ export default function ExtractorsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          {(['openrouter', 'anthropic', 'openai'] as const).map((provider) => {
-            const key = getKeyForProvider(provider);
-            const isEditing = editingProvider === provider;
+          {availableProviders.length === 0 ? (
+            <p className="text-sm text-zinc-500">Loading providers...</p>
+          ) : (
+            availableProviders
+              .filter(p => p.requires_key) // Only show providers that need API keys
+              .map((provider) => {
+                const key = getKeyForProvider(provider.name);
+                const isEditing = editingProvider === provider.name;
 
-            return (
-              <div key={provider} className="border rounded-lg p-4">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-3">
-                    <h3 className="font-medium">{PROVIDER_LABELS[provider]}</h3>
-                    {key ? (
-                      <Badge variant={key.is_enabled ? 'default' : 'secondary'}>
-                        {key.is_enabled ? 'Enabled' : 'Disabled'}
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline">Not configured</Badge>
-                    )}
-                  </div>
-                  {!isEditing && (
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => startEditing(provider)}
-                      >
-                        {key ? 'Update' : 'Configure'}
-                      </Button>
-                      {key && (
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          onClick={() => handleDelete(provider)}
-                        >
-                          Delete
-                        </Button>
+                return (
+                  <div key={provider.name} className="border rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-3">
+                        <h3 className="font-medium">{provider.display_name}</h3>
+                        {key ? (
+                          <Badge variant={key.is_enabled ? 'default' : 'secondary'}>
+                            {key.is_enabled ? 'Enabled' : 'Disabled'}
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline">Not configured</Badge>
+                        )}
+                      </div>
+                      {!isEditing && (
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => startEditing(provider.name)}
+                          >
+                            {key ? 'Update' : 'Configure'}
+                          </Button>
+                          {key && (
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => handleDelete(provider.name)}
+                            >
+                              Delete
+                            </Button>
+                          )}
+                        </div>
                       )}
                     </div>
-                  )}
-                </div>
 
-                {key && !isEditing && (
-                  <div className="text-sm text-zinc-500 space-y-1">
-                    <p>Updated: {new Date(key.updated_at).toLocaleString()}</p>
-                  </div>
-                )}
-
-                {isEditing && (
-                  <div className="space-y-4">
-                    <div>
-                      <Label htmlFor={`${provider}-key`}>API Key</Label>
-                      <div className="relative">
-                        <Input
-                          id={`${provider}-key`}
-                          type={showApiKey[provider] ? 'text' : 'password'}
-                          placeholder={key ? '(leave empty to keep existing key)' : 'Enter API key...'}
-                          value={formData.api_key || ''}
-                          onChange={(e) => setFormData({ ...formData, api_key: e.target.value })}
-                          className="pr-10"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setShowApiKey({ ...showApiKey, [provider]: !showApiKey[provider] })}
-                          className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
-                          tabIndex={-1}
-                        >
-                          {showApiKey[provider] ? (
-                            <EyeOffIcon className="h-5 w-5" />
-                          ) : (
-                            <EyeIcon className="h-5 w-5" />
-                          )}
-                        </button>
+                    {key && !isEditing && (
+                      <div className="text-sm text-zinc-500 space-y-1">
+                        <p>Updated: {new Date(key.updated_at).toLocaleString()}</p>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        id={`${provider}-enabled`}
-                        checked={formData.is_enabled ?? true}
-                        onChange={(e) => setFormData({ ...formData, is_enabled: e.target.checked })}
-                        className="rounded"
-                      />
-                      <Label htmlFor={`${provider}-enabled`}>Enabled</Label>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button onClick={() => handleSave(provider)}>Save</Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => {
-                          setEditingProvider(null);
-                          setFormData({});
-                          setShowApiKey({});
-                        }}
-                      >
-                        Cancel
-                      </Button>
-                    </div>
+                    )}
+
+                    {isEditing && (
+                      <div className="space-y-4">
+                        <div>
+                          <Label htmlFor={`${provider.name}-key`}>API Key</Label>
+                          <div className="relative">
+                            <Input
+                              id={`${provider.name}-key`}
+                              type={showApiKey[provider.name] ? 'text' : 'password'}
+                              placeholder={key ? '(leave empty to keep existing key)' : 'Enter API key...'}
+                              value={formData.api_key || ''}
+                              onChange={(e) => setFormData({ ...formData, api_key: e.target.value })}
+                              className="pr-10"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowApiKey({ ...showApiKey, [provider.name]: !showApiKey[provider.name] })}
+                              className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+                              tabIndex={-1}
+                            >
+                              {showApiKey[provider.name] ? (
+                                <EyeOffIcon className="h-5 w-5" />
+                              ) : (
+                                <EyeIcon className="h-5 w-5" />
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            id={`${provider.name}-enabled`}
+                            checked={formData.is_enabled ?? true}
+                            onChange={(e) => setFormData({ ...formData, is_enabled: e.target.checked })}
+                            className="rounded"
+                          />
+                          <Label htmlFor={`${provider.name}-enabled`}>Enabled</Label>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button onClick={() => handleSave(provider.name)}>Save</Button>
+                          <Button
+                            variant="outline"
+                            onClick={() => {
+                              setEditingProvider(null);
+                              setFormData({});
+                              setShowApiKey({});
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            );
-          })}
+                );
+              })
+          )}
         </CardContent>
       </Card>
 
