@@ -469,18 +469,28 @@ func listHeliconeModels(ctx context.Context, baseURL, apiKey string) ([]ModelInf
 }
 
 // getStaticHeliconeModels returns static fallback models for Helicone.
+// Updated 2026-01-31 from https://api.helicone.ai/v1/public/model-registry/models
 func getStaticHeliconeModels() []ModelInfo {
 	staticModels := []struct {
 		id      string
 		name    string
 		context int
 	}{
-		{"gpt-4o", "GPT-4o", 128000},
-		{"gpt-4o-mini", "GPT-4o Mini", 128000},
-		{"gpt-4-turbo", "GPT-4 Turbo", 128000},
-		{"claude-3-5-sonnet-20241022", "Claude 3.5 Sonnet", 200000},
-		{"claude-3-haiku-20240307", "Claude 3 Haiku", 200000},
-		{"gemini-1.5-pro", "Gemini 1.5 Pro", 1000000},
+		// OpenAI
+		{"gpt-4o", "OpenAI GPT-4o", 128000},
+		{"gpt-4o-mini", "OpenAI GPT-4o Mini", 128000},
+		{"gpt-5-nano", "OpenAI GPT-5 Nano", 400000},
+		{"o3-mini", "OpenAI o3 Mini", 200000},
+		// Anthropic
+		{"claude-sonnet-4", "Anthropic: Claude Sonnet 4", 200000},
+		{"claude-3.5-haiku", "Anthropic: Claude 3.5 Haiku", 200000},
+		// Google
+		{"gemini-2.5-flash", "Google Gemini 2.5 Flash", 1048576},
+		{"gemini-2.5-pro", "Google Gemini 2.5 Pro", 1048576},
+		// DeepSeek
+		{"deepseek-v3", "DeepSeek V3", 65536},
+		// Meta
+		{"llama-4-scout", "Meta Llama 4 Scout", 512000},
 	}
 
 	models := make([]ModelInfo, 0, len(staticModels))
