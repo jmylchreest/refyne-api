@@ -131,6 +131,8 @@ func main() {
 	// Wire the registry to services that need capability lookups
 	// PricingService populates the registry's capability cache when fetching OpenRouter data
 	services.Pricing.SetCapabilitiesCache(providerRegistry)
+	// PricingService uses registry to check provider pricing capabilities
+	services.Pricing.SetRegistry(providerRegistry)
 	// LLMConfigResolver uses the registry for StrictMode determination (shared by ExtractionService and AnalyzerService)
 	services.LLMConfigResolver.SetRegistry(providerRegistry)
 	// LLMConfigResolver uses PricingService for dynamic max_completion_tokens from OpenRouter API

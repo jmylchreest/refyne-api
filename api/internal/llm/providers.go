@@ -38,6 +38,10 @@ func InitRegistry(cfg *config.Config, logger *slog.Logger) *Registry {
 				"HTTP-Referer": "https://refyne.io",
 				"X-Title":      "Refyne",
 			},
+			// OpenRouter has full pricing support via API
+			SupportsPricing:        true,
+			SupportsGenerationCost: true,
+			SupportsDynamicPricing: true,
 		},
 		Status: ProviderStatusActive,
 	})
@@ -65,6 +69,10 @@ func InitRegistry(cfg *config.Config, logger *slog.Logger) *Registry {
 			ExtraHeaders: map[string]string{
 				"anthropic-version": "2023-06-01",
 			},
+			// Anthropic has static pricing (no public API)
+			SupportsPricing:        true,
+			SupportsGenerationCost: false,
+			SupportsDynamicPricing: false,
 		},
 		Status: ProviderStatusActive,
 	})
@@ -88,6 +96,10 @@ func InitRegistry(cfg *config.Config, logger *slog.Logger) *Registry {
 			AuthType:             AuthTypeBearer,
 			APIFormat:            APIFormatOpenAI,
 			AllowBaseURLOverride: false,
+			// OpenAI has static pricing (no public pricing API)
+			SupportsPricing:        true,
+			SupportsGenerationCost: false,
+			SupportsDynamicPricing: false,
 		},
 		Status: ProviderStatusActive,
 	})
@@ -111,6 +123,10 @@ func InitRegistry(cfg *config.Config, logger *slog.Logger) *Registry {
 			AuthType:             AuthTypeNone,
 			APIFormat:            APIFormatOllama,
 			AllowBaseURLOverride: true, // Self-hosted, allow custom URLs
+			// Ollama is free (local), no pricing needed
+			SupportsPricing:        false,
+			SupportsGenerationCost: false,
+			SupportsDynamicPricing: false,
 		},
 		Status: ProviderStatusActive,
 	})
@@ -135,6 +151,11 @@ func InitRegistry(cfg *config.Config, logger *slog.Logger) *Registry {
 			AuthType:             AuthTypeBearer,
 			APIFormat:            APIFormatOpenAI,
 			AllowBaseURLOverride: true, // Self-hostable
+			// Helicone proxies to other providers - pricing depends on underlying provider
+			// TODO: Add Helicone pricing API support when available
+			SupportsPricing:        false,
+			SupportsGenerationCost: false,
+			SupportsDynamicPricing: false,
 		},
 		Status: ProviderStatusActive,
 	})

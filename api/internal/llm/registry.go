@@ -67,6 +67,11 @@ type ProviderAPIConfig struct {
 	ExtraHeaders         map[string]string // Additional static headers
 	APIFormat            APIFormat         // Response parsing format
 	AllowBaseURLOverride bool              // True for self-hostable providers (Ollama, Helicone)
+
+	// Pricing capabilities (uses refyne's CostEstimator interface)
+	SupportsPricing        bool // Provider can estimate costs via refyne's EstimateCost
+	SupportsGenerationCost bool // Provider can fetch actual generation costs
+	SupportsDynamicPricing bool // Provider fetches pricing from API (vs static)
 }
 
 // ProviderInfo contains metadata about an LLM provider for API responses.
@@ -420,4 +425,54 @@ func (r *Registry) GetMaxCompletionTokens(ctx context.Context, provider, model s
 func (r *Registry) GetContextLength(ctx context.Context, provider, model string) int {
 	caps := r.GetModelCapabilities(ctx, provider, model)
 	return caps.ContextLength
+}
+
+// SupportsPricing returns true if the provider can estimate costs.
+func (r *Registry) SupportsPricing(provider string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	reg, ok := r.providers[provider]
+	if !ok {
+		return false
+	}
+	return reg.APIConfig.SupportsPricing
+}
+
+// SupportsGenerationCost returns true if the provider can fetch actual generation costs.
+func (r *Registry) SupportsGenerationCost(provider string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	reg, ok := r.providers[provider]
+	if !ok {
+		return false
+	}
+	return reg.APIConfig.SupportsGenerationCost
+}
+
+// SupportsDynamicPricing returns true if the provider fetches pricing from API.
+func (r *Registry) SupportsDynamicPricing(provider string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	reg, ok := r.providers[provider]
+	if !ok {
+		return false
+	}
+	return reg.APIConfig.SupportsDynamicPricing
+}
+
+// ListPricingProviders returns all providers that support pricing estimation.
+func (r *Registry) ListPricingProviders() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var providers []string
+	for name, reg := range r.providers {
+		if reg.APIConfig.SupportsPricing {
+			providers = append(providers, name)
+		}
+	}
+	return providers
 }

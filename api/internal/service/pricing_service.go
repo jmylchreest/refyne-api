@@ -33,7 +33,10 @@ type KeyResolverFunc func(ctx context.Context) (openRouterKey string)
 type PricingService struct {
 	logger *slog.Logger
 
-	// OpenRouter pricing cache
+	// Registry for provider capability lookups
+	registry *llm.Registry
+
+	// OpenRouter pricing cache (TODO: generalize to multi-provider)
 	openRouterAPIKey string      // Static fallback key (from config at startup)
 	keyResolver      KeyResolverFunc // Dynamic key resolver (preferred)
 	openRouterPrices map[string]*ModelPricing
@@ -55,6 +58,11 @@ type PricingServiceConfig struct {
 // This is typically called after the registry is created.
 func (s *PricingService) SetCapabilitiesCache(cache llm.CapabilitiesCache) {
 	s.capCache = cache
+}
+
+// SetRegistry sets the LLM provider registry for capability lookups.
+func (s *PricingService) SetRegistry(registry *llm.Registry) {
+	s.registry = registry
 }
 
 // SetOpenRouterAPIKey sets/updates the static OpenRouter API key fallback.
@@ -227,18 +235,26 @@ func (s *PricingService) RefreshOpenRouterPricing(ctx context.Context) error {
 // GetModelPricing returns pricing for a specific model.
 // Returns nil if model not found.
 func (s *PricingService) GetModelPricing(provider, model string) *ModelPricing {
-	switch provider {
-	case "openrouter":
+	// Check if provider supports dynamic pricing via registry
+	supportsDynamic := false
+	if s.registry != nil {
+		supportsDynamic = s.registry.SupportsDynamicPricing(provider)
+	} else {
+		// Fallback: only OpenRouter has dynamic pricing currently
+		supportsDynamic = provider == llm.ProviderOpenRouter
+	}
+
+	if supportsDynamic && provider == llm.ProviderOpenRouter {
 		// Ensure cache is fresh (uses TTL-based refresh on access)
 		s.ensureFresh(context.Background())
 
 		s.openRouterMu.RLock()
 		defer s.openRouterMu.RUnlock()
 		return s.openRouterPrices[model]
-	default:
-		// For other providers, return nil (use estimation)
-		return nil
 	}
+
+	// For other providers, return nil (use estimation)
+	return nil
 }
 
 // GetMaxCompletionTokens returns the maximum output tokens for a model from cached provider data.
@@ -311,9 +327,23 @@ func (s *PricingService) EstimateCost(provider, model string, inputTokens, outpu
 
 // estimateCostViaRefyne uses refyne's CostEstimator interface.
 func (s *PricingService) estimateCostViaRefyne(provider, model string, inputTokens, outputTokens int) (float64, error) {
+	// Check if provider supports pricing via registry
+	supportsPricing := false
+	if s.registry != nil {
+		supportsPricing = s.registry.SupportsPricing(provider)
+	} else {
+		// Fallback: only OpenRouter supports pricing currently
+		supportsPricing = provider == llm.ProviderOpenRouter
+	}
+
+	if !supportsPricing {
+		return 0, fmt.Errorf("provider %s does not support pricing", provider)
+	}
+
 	// Get the API key for the provider (needed to create provider instance)
+	// Currently only OpenRouter has dynamic pricing API - others use static estimates
 	var apiKey string
-	if provider == "openrouter" {
+	if provider == llm.ProviderOpenRouter {
 		apiKey = s.getOpenRouterKey(context.Background())
 	}
 
@@ -381,13 +411,27 @@ func (s *PricingService) GetActualCost(ctx context.Context, provider, generation
 		return 0, fmt.Errorf("generation ID required for cost lookup")
 	}
 
+	// Check if provider supports generation cost lookup via registry
+	supportsGenCost := false
+	if s.registry != nil {
+		supportsGenCost = s.registry.SupportsGenerationCost(provider)
+	} else {
+		// Fallback: only OpenRouter supports generation cost lookup currently
+		supportsGenCost = provider == llm.ProviderOpenRouter
+	}
+
+	if !supportsGenCost {
+		return 0, fmt.Errorf("actual cost lookup not supported for provider: %s", provider)
+	}
+
 	// Use provided API key (from resolved LLM config) - this should be populated
 	// by the LLMConfigResolver with either user's BYOK key or system service key
 	key := apiKey
 	keySource := "resolved_config"
 
 	// Fall back to service key only if no key was passed
-	if key == "" && provider == "openrouter" {
+	// Currently only OpenRouter has generation cost API
+	if key == "" && provider == llm.ProviderOpenRouter {
 		key = s.openRouterAPIKey
 		keySource = "service_fallback"
 		if key != "" {
