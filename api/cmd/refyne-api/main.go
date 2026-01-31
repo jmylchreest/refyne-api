@@ -249,6 +249,15 @@ func main() {
 			Logger:   logger,
 		})
 
+		// Model pricing fallbacks (for cost estimation when dynamic pricing unavailable)
+		llm.InitGlobalModelPricing(llm.ModelPricingConfig{
+			S3Client: services.Storage.Client(),
+			Bucket:   bucket,
+			Key:      "config/model_pricing.json",
+			Logger:   logger,
+		})
+		services.Pricing.SetPricingLoader(llm.GlobalModelPricing())
+
 		// Tier settings (override hardcoded tier limits from S3)
 		constants.InitTierLoader(constants.TierSettingsConfig{
 			S3Client: services.Storage.Client(),

@@ -36,6 +36,9 @@ type PricingService struct {
 	// Registry for provider capability lookups
 	registry *llm.Registry
 
+	// S3-backed fallback pricing for when dynamic pricing is unavailable
+	pricingLoader *llm.ModelPricingLoader
+
 	// OpenRouter pricing cache (TODO: generalize to multi-provider)
 	openRouterAPIKey string      // Static fallback key (from config at startup)
 	keyResolver      KeyResolverFunc // Dynamic key resolver (preferred)
@@ -63,6 +66,11 @@ func (s *PricingService) SetCapabilitiesCache(cache llm.CapabilitiesCache) {
 // SetRegistry sets the LLM provider registry for capability lookups.
 func (s *PricingService) SetRegistry(registry *llm.Registry) {
 	s.registry = registry
+}
+
+// SetPricingLoader sets the S3-backed pricing loader for fallback pricing.
+func (s *PricingService) SetPricingLoader(loader *llm.ModelPricingLoader) {
+	s.pricingLoader = loader
 }
 
 // SetOpenRouterAPIKey sets/updates the static OpenRouter API key fallback.
@@ -370,35 +378,15 @@ func (s *PricingService) estimateCostViaRefyne(provider, model string, inputToke
 }
 
 // estimateCostFallback provides rough cost estimates when pricing data isn't available.
+// Uses S3-backed pricing loader if configured, otherwise falls back to hardcoded estimates.
 func (s *PricingService) estimateCostFallback(model string, inputTokens, outputTokens int) float64 {
-	// Per million tokens
-	inputPricePer1M := 0.25
-	outputPricePer1M := 1.00
-
-	modelLower := strings.ToLower(model)
-	switch {
-	case strings.Contains(modelLower, "gpt-4") && !strings.Contains(modelLower, "mini"):
-		inputPricePer1M = 15.0
-		outputPricePer1M = 60.0
-	case strings.Contains(modelLower, "claude-3-opus"):
-		inputPricePer1M = 15.0
-		outputPricePer1M = 75.0
-	case strings.Contains(modelLower, "gpt-3.5"), strings.Contains(modelLower, "claude-3-sonnet"), strings.Contains(modelLower, "claude-3.5"):
-		inputPricePer1M = 3.0
-		outputPricePer1M = 15.0
-	case strings.Contains(modelLower, "gpt-4o-mini"), strings.Contains(modelLower, "claude-3-haiku"):
-		inputPricePer1M = 0.15
-		outputPricePer1M = 0.60
-	case strings.Contains(modelLower, "llama"), strings.Contains(modelLower, "mixtral"), strings.Contains(modelLower, "gemma"):
-		inputPricePer1M = 0.10
-		outputPricePer1M = 0.40
-	case strings.Contains(modelLower, ":free"):
-		return 0
+	// Use S3-backed pricing loader if available
+	if s.pricingLoader != nil {
+		return s.pricingLoader.GetFallbackPricing(model, inputTokens, outputTokens)
 	}
 
-	inputCost := float64(inputTokens) * inputPricePer1M / 1_000_000
-	outputCost := float64(outputTokens) * outputPricePer1M / 1_000_000
-	return inputCost + outputCost
+	// Use global pricing loader as fallback
+	return llm.GlobalModelPricing().GetFallbackPricing(model, inputTokens, outputTokens)
 }
 
 // GetActualCost retrieves the actual cost from a provider for a specific generation.

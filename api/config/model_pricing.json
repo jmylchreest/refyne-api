@@ -1,0 +1,125 @@
+{
+  "provider_defaults": {
+    "openrouter": {
+      "prompt_price_per_1m": 0.50,
+      "completion_price_per_1m": 1.50
+    },
+    "openai": {
+      "prompt_price_per_1m": 2.50,
+      "completion_price_per_1m": 10.0
+    },
+    "anthropic": {
+      "prompt_price_per_1m": 3.00,
+      "completion_price_per_1m": 15.0
+    },
+    "ollama": {
+      "prompt_price_per_1m": 0.0,
+      "completion_price_per_1m": 0.0,
+      "is_free": true
+    },
+    "helicone": {
+      "prompt_price_per_1m": 0.50,
+      "completion_price_per_1m": 1.50
+    }
+  },
+  "model_overrides": {
+    "gpt-4o": {
+      "prompt_price_per_1m": 2.50,
+      "completion_price_per_1m": 10.0
+    },
+    "gpt-4o-mini": {
+      "prompt_price_per_1m": 0.15,
+      "completion_price_per_1m": 0.60
+    },
+    "gpt-4-turbo": {
+      "prompt_price_per_1m": 10.0,
+      "completion_price_per_1m": 30.0
+    },
+    "gpt-3.5-turbo": {
+      "prompt_price_per_1m": 0.50,
+      "completion_price_per_1m": 1.50
+    },
+    "openai/gpt-4o": {
+      "prompt_price_per_1m": 2.50,
+      "completion_price_per_1m": 10.0
+    },
+    "openai/gpt-4o-mini": {
+      "prompt_price_per_1m": 0.15,
+      "completion_price_per_1m": 0.60
+    },
+    "claude-3-opus-20240229": {
+      "prompt_price_per_1m": 15.0,
+      "completion_price_per_1m": 75.0
+    },
+    "claude-3-sonnet-20240229": {
+      "prompt_price_per_1m": 3.0,
+      "completion_price_per_1m": 15.0
+    },
+    "claude-3-5-sonnet-20241022": {
+      "prompt_price_per_1m": 3.0,
+      "completion_price_per_1m": 15.0
+    },
+    "claude-3-haiku-20240307": {
+      "prompt_price_per_1m": 0.25,
+      "completion_price_per_1m": 1.25
+    },
+    "anthropic/claude-3.5-sonnet": {
+      "prompt_price_per_1m": 3.0,
+      "completion_price_per_1m": 15.0
+    },
+    "anthropic/claude-3-haiku": {
+      "prompt_price_per_1m": 0.25,
+      "completion_price_per_1m": 1.25
+    },
+    "anthropic/claude-3-opus": {
+      "prompt_price_per_1m": 15.0,
+      "completion_price_per_1m": 75.0
+    },
+    "meta-llama/llama-3.1-70b-instruct": {
+      "prompt_price_per_1m": 0.35,
+      "completion_price_per_1m": 0.40
+    },
+    "meta-llama/llama-3.1-8b-instruct": {
+      "prompt_price_per_1m": 0.05,
+      "completion_price_per_1m": 0.08
+    },
+    "meta-llama/llama-3.2-90b-instruct": {
+      "prompt_price_per_1m": 0.40,
+      "completion_price_per_1m": 0.50
+    },
+    "mistralai/mistral-large": {
+      "prompt_price_per_1m": 2.0,
+      "completion_price_per_1m": 6.0
+    },
+    "mistralai/mistral-nemo": {
+      "prompt_price_per_1m": 0.13,
+      "completion_price_per_1m": 0.13
+    },
+    "deepseek/deepseek-chat": {
+      "prompt_price_per_1m": 0.14,
+      "completion_price_per_1m": 0.28
+    },
+    "qwen/qwen-2.5-72b-instruct": {
+      "prompt_price_per_1m": 0.35,
+      "completion_price_per_1m": 0.40
+    },
+    "google/gemini-2.0-flash-001": {
+      "prompt_price_per_1m": 0.10,
+      "completion_price_per_1m": 0.40
+    },
+    "google/gemini-pro-1.5": {
+      "prompt_price_per_1m": 1.25,
+      "completion_price_per_1m": 5.0
+    },
+    "google/gemini-2.0-flash-exp:free": {
+      "prompt_price_per_1m": 0.0,
+      "completion_price_per_1m": 0.0,
+      "is_free": true
+    },
+    "google/gemma-3-27b-it:free": {
+      "prompt_price_per_1m": 0.0,
+      "completion_price_per_1m": 0.0,
+      "is_free": true
+    }
+  }
+}
