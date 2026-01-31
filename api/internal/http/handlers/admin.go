@@ -2,10 +2,13 @@ package handlers
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/jmylchreest/refyne-api/internal/http/mw"
+	"github.com/jmylchreest/refyne-api/internal/llm"
 	"github.com/jmylchreest/refyne-api/internal/models"
 	"github.com/jmylchreest/refyne-api/internal/service"
 )
@@ -14,19 +17,30 @@ import (
 type AdminHandler struct {
 	adminSvc    *service.AdminService
 	tierSyncSvc *service.TierSyncService
+	registry    *llm.Registry
 }
 
 // NewAdminHandler creates a new admin handler.
-func NewAdminHandler(adminSvc *service.AdminService, tierSyncSvc *service.TierSyncService) *AdminHandler {
+func NewAdminHandler(adminSvc *service.AdminService, tierSyncSvc *service.TierSyncService, registry *llm.Registry) *AdminHandler {
 	return &AdminHandler{
 		adminSvc:    adminSvc,
 		tierSyncSvc: tierSyncSvc,
+		registry:    registry,
 	}
+}
+
+// validateProvider checks if a provider is valid using the registry.
+func (h *AdminHandler) validateProvider(provider string) error {
+	if _, ok := h.registry.GetProvider(provider); !ok {
+		allProviders := h.registry.AllProviderNames()
+		return fmt.Errorf("unknown provider: %s (available: %s)", provider, strings.Join(allProviders, ", "))
+	}
+	return nil
 }
 
 // ServiceKeyInput represents a service key in API requests.
 type ServiceKeyInput struct {
-	Provider  string `json:"provider" enum:"openrouter,anthropic,openai" doc:"LLM provider name"`
+	Provider  string `json:"provider" doc:"LLM provider name (see /llm/providers for available options)"`
 	APIKey    string `json:"api_key,omitempty" doc:"API key for the provider (required for new keys, optional for updates)"`
 	IsEnabled bool   `json:"is_enabled" doc:"Whether this provider is enabled"`
 }
@@ -92,6 +106,11 @@ func (h *AdminHandler) UpsertServiceKey(ctx context.Context, input *UpsertServic
 	claims := mw.GetUserClaims(ctx)
 	if claims == nil || !claims.GlobalSuperadmin {
 		return nil, huma.Error403Forbidden("superadmin access required")
+	}
+
+	// Validate provider against registry
+	if err := h.validateProvider(input.Body.Provider); err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
 	}
 
 	key, err := h.adminSvc.UpsertServiceKey(ctx, service.ServiceKeyInput{
@@ -228,7 +247,7 @@ func (h *AdminHandler) GetFallbackChain(ctx context.Context, input *GetFallbackC
 
 // FallbackChainEntryInput represents a fallback chain entry in API requests.
 type FallbackChainEntryInput struct {
-	Provider    string   `json:"provider" enum:"openrouter,anthropic,openai,ollama" doc:"LLM provider name"`
+	Provider    string   `json:"provider" doc:"LLM provider name (see /llm/providers for available options)"`
 	Model       string   `json:"model" minLength:"1" doc:"Model identifier"`
 	Temperature *float64 `json:"temperature,omitempty" doc:"Temperature setting (0.0-1.0, nil for default)"`
 	MaxTokens   *int     `json:"max_tokens,omitempty" doc:"Max output tokens (nil for default)"`
@@ -255,6 +274,13 @@ func (h *AdminHandler) SetFallbackChain(ctx context.Context, input *SetFallbackC
 	claims := mw.GetUserClaims(ctx)
 	if claims == nil || !claims.GlobalSuperadmin {
 		return nil, huma.Error403Forbidden("superadmin access required")
+	}
+
+	// Validate all providers against registry
+	for i, e := range input.Body.Chain {
+		if err := h.validateProvider(e.Provider); err != nil {
+			return nil, huma.Error400BadRequest(fmt.Sprintf("entry %d: %s", i+1, err.Error()))
+		}
 	}
 
 	// Convert to service input
@@ -311,7 +337,7 @@ type ProviderModelResponse struct {
 
 // ListModelsInput represents the list models request.
 type ListModelsInput struct {
-	Provider string `path:"provider" enum:"openrouter,anthropic,openai,ollama" doc:"Provider to list models for"`
+	Provider string `path:"provider" doc:"Provider to list models for (see /llm/providers for available options)"`
 }
 
 // ListModelsOutput represents the list models response.
@@ -326,6 +352,11 @@ func (h *AdminHandler) ListModels(ctx context.Context, input *ListModelsInput) (
 	claims := mw.GetUserClaims(ctx)
 	if claims == nil || !claims.GlobalSuperadmin {
 		return nil, huma.Error403Forbidden("superadmin access required")
+	}
+
+	// Validate provider against registry
+	if err := h.validateProvider(input.Provider); err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
 	}
 
 	models, err := h.adminSvc.ListModels(ctx, input.Provider)

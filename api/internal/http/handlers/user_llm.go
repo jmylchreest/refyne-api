@@ -25,7 +25,7 @@ func NewUserLLMHandler(userLLMSvc *service.UserLLMService, adminSvc *service.Adm
 
 // UserServiceKeyInput represents a service key in API requests.
 type UserServiceKeyInput struct {
-	Provider  string `json:"provider" enum:"openrouter,anthropic,openai,ollama" doc:"LLM provider name"`
+	Provider  string `json:"provider" doc:"LLM provider name (see /llm/providers for available options)"`
 	APIKey    string `json:"api_key,omitempty" doc:"API key for the provider (leave empty to keep existing)"`
 	BaseURL   string `json:"base_url,omitempty" doc:"Base URL for the provider (for Ollama or custom endpoints)"`
 	IsEnabled bool   `json:"is_enabled" doc:"Whether this provider is enabled"`
@@ -256,7 +256,7 @@ func (h *UserLLMHandler) GetFallbackChain(ctx context.Context, input *struct{}) 
 
 // UserFallbackChainEntryInput represents a fallback chain entry in API requests.
 type UserFallbackChainEntryInput struct {
-	Provider    string   `json:"provider" enum:"openrouter,anthropic,openai,ollama" doc:"LLM provider name"`
+	Provider    string   `json:"provider" doc:"LLM provider name (see /llm/providers for available options)"`
 	Model       string   `json:"model" minLength:"1" doc:"Model identifier"`
 	Temperature *float64 `json:"temperature,omitempty" doc:"Temperature setting (0.0-1.0, nil for default)"`
 	MaxTokens   *int     `json:"max_tokens,omitempty" doc:"Max output tokens (nil for default)"`

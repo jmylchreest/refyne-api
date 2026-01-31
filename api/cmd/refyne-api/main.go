@@ -333,7 +333,7 @@ func main() {
 	jobHandler := handlers.NewJobHandlerWithWebhook(services.Job, services.Storage, services.Webhook)
 	usageHandler := handlers.NewUsageHandler(services.Usage)
 	userLLMHandler := handlers.NewUserLLMHandler(services.UserLLM, services.Admin, providerRegistry)
-	adminHandler := handlers.NewAdminHandler(services.Admin, services.TierSync)
+	adminHandler := handlers.NewAdminHandler(services.Admin, services.TierSync, providerRegistry)
 	adminAnalyticsHandler := handlers.NewAdminAnalyticsHandler(repos.Analytics, services.Storage)
 	metricsHandler := handlers.NewMetricsHandler(repos)
 	schemaCatalogHandler := handlers.NewSchemaCatalogHandler(repos.SchemaCatalog)
