@@ -15,6 +15,7 @@ export const PROVIDER_DEFAULTS: Record<string, ModelSettings> = {
   openai: { temperature: 0.2, maxTokens: 8192, strictMode: true },
   openrouter: { temperature: 0.2, maxTokens: 6144, strictMode: false },
   ollama: { temperature: 0.1, maxTokens: 4096, strictMode: false },
+  helicone: { temperature: 0.2, maxTokens: 8192, strictMode: true }, // Helicone proxies OpenAI-compatible APIs
 };
 
 // Model-specific overrides for models that need different defaults

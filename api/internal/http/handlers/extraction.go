@@ -64,10 +64,12 @@ type ExtractInput struct {
 
 // LLMConfigInput represents LLM config in request.
 type LLMConfigInput struct {
-	Provider string `json:"provider,omitempty" enum:"anthropic,openai,openrouter,ollama,credits" doc:"LLM provider"`
-	APIKey   string `json:"api_key,omitempty" doc:"API key for the provider"`
-	BaseURL  string `json:"base_url,omitempty" doc:"Custom base URL (for Ollama)"`
-	Model    string `json:"model,omitempty" doc:"Model to use"`
+	Provider       string `json:"provider,omitempty" enum:"anthropic,openai,openrouter,ollama,helicone,credits" doc:"LLM provider"`
+	APIKey         string `json:"api_key,omitempty" doc:"API key for the provider"`
+	BaseURL        string `json:"base_url,omitempty" doc:"Custom base URL (for Ollama or self-hosted Helicone)"`
+	Model          string `json:"model,omitempty" doc:"Model to use"`
+	TargetProvider string `json:"target_provider,omitempty" doc:"Underlying provider for Helicone self-hosted mode"`
+	TargetAPIKey   string `json:"target_api_key,omitempty" doc:"Underlying provider's API key for Helicone self-hosted mode"`
 }
 
 // WebhookHeaderInput represents a custom header in webhook requests.

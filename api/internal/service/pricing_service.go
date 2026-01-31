@@ -207,10 +207,14 @@ func (s *PricingService) RefreshOpenRouterPricing(ctx context.Context) error {
 	s.openRouterMu.Unlock()
 
 	// Populate the capabilities cache if configured
+	// Include MaxCompletionTokens and ContextLength in the capabilities
 	if s.capCache != nil {
 		capMap := make(map[string]llm.ModelCapabilities, len(prices))
 		for id, pricing := range prices {
-			capMap[id] = pricing.Capabilities
+			caps := pricing.Capabilities
+			caps.MaxCompletionTokens = pricing.MaxCompletionTokens
+			caps.ContextLength = pricing.ContextLength
+			capMap[id] = caps
 		}
 		s.capCache.SetModelCapabilitiesBulk("openrouter", capMap)
 		s.logger.Debug("capabilities cache populated", "provider", "openrouter", "model_count", len(capMap))

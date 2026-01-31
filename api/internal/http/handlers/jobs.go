@@ -199,17 +199,8 @@ func (h *JobHandler) CreateCrawlJob(ctx context.Context, input *CreateCrawlJobIn
 				cfg.MaxTokens = *injected.MaxTokens
 			}
 
-			// Use system keys for the specified provider
-			switch injected.Provider {
-			case "openrouter":
-				cfg.APIKey = serviceKeys.OpenRouterKey
-			case "anthropic":
-				cfg.APIKey = serviceKeys.AnthropicKey
-			case "openai":
-				cfg.APIKey = serviceKeys.OpenAIKey
-			case "ollama":
-				// Ollama doesn't require an API key
-			}
+			// Use system keys for the specified provider (provider-agnostic)
+			cfg.APIKey = serviceKeys.Get(injected.Provider)
 
 			configs = append(configs, cfg)
 		}

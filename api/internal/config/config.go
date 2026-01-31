@@ -43,6 +43,7 @@ type Config struct {
 	ServiceAnthropicKey  string
 	ServiceOpenAIKey     string
 	ServiceOpenRouterKey string
+	ServiceHeliconeKey   string
 
 	// CORS
 	CORSOrigins []string
@@ -108,6 +109,7 @@ func Load() (*Config, error) {
 		ServiceAnthropicKey:  getEnv("SERVICE_ANTHROPIC_KEY", ""),
 		ServiceOpenAIKey:     getEnv("SERVICE_OPENAI_KEY", ""),
 		ServiceOpenRouterKey: getEnv("SERVICE_OPENROUTER_KEY", ""),
+		ServiceHeliconeKey:   getEnv("SERVICE_HELICONE_KEY", ""),
 
 		ClerkIssuerURL:     getEnv("CLERK_ISSUER_URL", ""),
 		ClerkSecretKey:     getEnv("CLERK_SECRET_KEY", ""),

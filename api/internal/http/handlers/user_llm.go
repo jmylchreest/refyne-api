@@ -81,6 +81,11 @@ func (h *UserLLMHandler) ListServiceKeys(ctx context.Context, input *struct{}) (
 	}, nil
 }
 
+// ListProvidersInput represents the list providers request parameters.
+type ListProvidersInput struct {
+	IncludeDecommissioned bool `query:"include_decommissioned" default:"false" doc:"Include decommissioned providers in the response"`
+}
+
 // ListProvidersOutput represents the list providers response.
 type ListProvidersOutput struct {
 	Body struct {
@@ -89,13 +94,13 @@ type ListProvidersOutput struct {
 }
 
 // ListProviders returns all LLM providers available to the user.
-func (h *UserLLMHandler) ListProviders(ctx context.Context, input *struct{}) (*ListProvidersOutput, error) {
+func (h *UserLLMHandler) ListProviders(ctx context.Context, input *ListProvidersInput) (*ListProvidersOutput, error) {
 	claims := mw.GetUserClaims(ctx)
 	if claims == nil {
 		return nil, huma.Error401Unauthorized("authentication required")
 	}
 
-	providers := h.registry.ListProviders(claims)
+	providers := h.registry.ListProvidersWithStatus(claims, input.IncludeDecommissioned)
 
 	return &ListProvidersOutput{
 		Body: struct {

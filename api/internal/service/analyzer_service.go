@@ -953,7 +953,7 @@ func (s *AnalyzerService) analyzeWithLLM(ctx context.Context, mainURL string, ma
 	prompt := s.buildAnalysisPrompt(mainContent, detailContents, detailURLs, links, hints)
 
 	// Call LLM API using shared client
-	llmClient := NewLLMClient(s.logger)
+	llmClient := NewLLMClient(s.logger, s.resolver.GetRegistry())
 	opts := DefaultLLMCallOptions()
 	// Enable JSON mode if the model supports response_format parameter
 	// This hints the model to output JSON, improving structured output compliance

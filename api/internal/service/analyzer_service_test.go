@@ -564,7 +564,7 @@ func TestAnalyzerService_ParsePageType(t *testing.T) {
 // ----------------------------------------
 
 func TestLLMClient_ParseResponse_OpenAI(t *testing.T) {
-	client := NewLLMClient(slog.Default())
+	client := NewLLMClient(slog.Default(), nil)
 
 	body := []byte(`{
 		"choices": [
@@ -597,7 +597,7 @@ func TestLLMClient_ParseResponse_OpenAI(t *testing.T) {
 }
 
 func TestLLMClient_ParseResponse_OpenRouter(t *testing.T) {
-	client := NewLLMClient(slog.Default())
+	client := NewLLMClient(slog.Default(), nil)
 
 	body := []byte(`{
 		"choices": [
@@ -627,7 +627,7 @@ func TestLLMClient_ParseResponse_OpenRouter(t *testing.T) {
 }
 
 func TestLLMClient_ParseResponse_Anthropic(t *testing.T) {
-	client := NewLLMClient(slog.Default())
+	client := NewLLMClient(slog.Default(), nil)
 
 	body := []byte(`{
 		"content": [
@@ -658,7 +658,7 @@ func TestLLMClient_ParseResponse_Anthropic(t *testing.T) {
 }
 
 func TestLLMClient_ParseResponse_EmptyChoices(t *testing.T) {
-	client := NewLLMClient(slog.Default())
+	client := NewLLMClient(slog.Default(), nil)
 
 	body := []byte(`{"choices": [], "usage": {}}`)
 
@@ -669,7 +669,7 @@ func TestLLMClient_ParseResponse_EmptyChoices(t *testing.T) {
 }
 
 func TestLLMClient_ParseResponse_EmptyContent(t *testing.T) {
-	client := NewLLMClient(slog.Default())
+	client := NewLLMClient(slog.Default(), nil)
 
 	body := []byte(`{"content": [], "usage": {}}`)
 
@@ -680,7 +680,7 @@ func TestLLMClient_ParseResponse_EmptyContent(t *testing.T) {
 }
 
 func TestLLMClient_ParseResponse_InvalidJSON(t *testing.T) {
-	client := NewLLMClient(slog.Default())
+	client := NewLLMClient(slog.Default(), nil)
 
 	_, err := client.ParseResponse("openai", []byte("not json"))
 	if err == nil {

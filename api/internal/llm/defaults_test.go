@@ -32,7 +32,7 @@ func TestModelSettings_Fields(t *testing.T) {
 
 func TestProviderDefaults(t *testing.T) {
 	// Verify expected providers exist
-	expectedProviders := []string{"anthropic", "openai", "openrouter", "ollama"}
+	expectedProviders := []string{"anthropic", "openai", "openrouter", "ollama", "helicone"}
 	for _, p := range expectedProviders {
 		if _, ok := ProviderDefaults[p]; !ok {
 			t.Errorf("expected ProviderDefaults to contain %q", p)
@@ -45,6 +45,9 @@ func TestProviderDefaults(t *testing.T) {
 	}
 	if ProviderDefaults["anthropic"].StrictMode != false {
 		t.Error("expected Anthropic to have StrictMode=false")
+	}
+	if ProviderDefaults["helicone"].StrictMode != true {
+		t.Error("expected Helicone to have StrictMode=true")
 	}
 }
 

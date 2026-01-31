@@ -4,8 +4,8 @@ import "testing"
 
 func TestValidProviders(t *testing.T) {
 	providers := ValidProviders()
-	if len(providers) != 4 {
-		t.Errorf("expected 4 providers, got %d", len(providers))
+	if len(providers) != 5 {
+		t.Errorf("expected 5 providers, got %d", len(providers))
 	}
 
 	expected := map[string]bool{
@@ -13,6 +13,7 @@ func TestValidProviders(t *testing.T) {
 		ProviderAnthropic:  true,
 		ProviderOpenAI:     true,
 		ProviderOllama:     true,
+		ProviderHelicone:   true,
 	}
 
 	for _, p := range providers {
@@ -31,10 +32,12 @@ func TestIsValidProvider(t *testing.T) {
 		{ProviderAnthropic, true},
 		{ProviderOpenAI, true},
 		{ProviderOllama, true},
+		{ProviderHelicone, true},
 		{"openrouter", true},
 		{"anthropic", true},
 		{"openai", true},
 		{"ollama", true},
+		{"helicone", true},
 		{"invalid", false},
 		{"", false},
 		{"OpenRouter", false}, // case sensitive
@@ -64,5 +67,8 @@ func TestProviderConstants(t *testing.T) {
 	}
 	if ProviderOllama != "ollama" {
 		t.Errorf("ProviderOllama = %q, want %q", ProviderOllama, "ollama")
+	}
+	if ProviderHelicone != "helicone" {
+		t.Errorf("ProviderHelicone = %q, want %q", ProviderHelicone, "helicone")
 	}
 }

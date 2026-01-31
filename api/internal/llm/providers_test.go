@@ -101,6 +101,32 @@ func TestGetOllamaCapabilities(t *testing.T) {
 	}
 }
 
+func TestGetHeliconeCapabilities(t *testing.T) {
+	ctx := context.Background()
+
+	models := []string{"gpt-4o", "gpt-4o-mini", "claude-3-5-sonnet"}
+
+	for _, model := range models {
+		t.Run(model, func(t *testing.T) {
+			caps := getHeliconeCapabilities(ctx, model)
+
+			// Helicone proxies OpenAI-compatible APIs, supports structured outputs
+			if !caps.SupportsStructuredOutputs {
+				t.Error("Helicone should support structured outputs")
+			}
+			if !caps.SupportsTools {
+				t.Error("Helicone should support tools")
+			}
+			if !caps.SupportsStreaming {
+				t.Error("Helicone should support streaming")
+			}
+			if !caps.SupportsResponseFormat {
+				t.Error("Helicone should support response_format")
+			}
+		})
+	}
+}
+
 func TestGetStaticOpenRouterCapabilities(t *testing.T) {
 	tests := []struct {
 		model                   string
@@ -208,6 +234,47 @@ func TestListOpenAIModels(t *testing.T) {
 	}
 	if !foundGPT {
 		t.Error("expected at least one GPT model")
+	}
+}
+
+func TestListHeliconeModels(t *testing.T) {
+	ctx := context.Background()
+
+	models, err := listHeliconeModels(ctx, "", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(models) == 0 {
+		t.Fatal("expected at least one model")
+	}
+
+	// Verify all models have required fields
+	for _, m := range models {
+		if m.ID == "" {
+			t.Error("model ID should not be empty")
+		}
+		if m.Name == "" {
+			t.Error("model Name should not be empty")
+		}
+		if m.Provider != "helicone" {
+			t.Errorf("Provider = %q, want %q", m.Provider, "helicone")
+		}
+	}
+
+	// Verify common models are present
+	expectedModels := []string{"gpt-4o", "gpt-4o-mini"}
+	for _, expected := range expectedModels {
+		found := false
+		for _, m := range models {
+			if m.ID == expected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected model %q to be present", expected)
+		}
 	}
 }
 

@@ -22,6 +22,53 @@ type CapabilitiesCache interface {
 	SetModelCapabilitiesBulk(provider string, models map[string]ModelCapabilities)
 }
 
+// APIFormat defines how to parse provider API responses.
+type APIFormat string
+
+const (
+	// APIFormatOpenAI is for OpenAI-compatible APIs (choices[].message.content).
+	APIFormatOpenAI APIFormat = "openai"
+	// APIFormatAnthropic is for Anthropic format (content[].text).
+	APIFormatAnthropic APIFormat = "anthropic"
+	// APIFormatOllama is for Ollama format (message.content).
+	APIFormatOllama APIFormat = "ollama"
+)
+
+// AuthType defines authentication method for a provider.
+type AuthType string
+
+const (
+	// AuthTypeBearer uses Authorization: Bearer <key>.
+	AuthTypeBearer AuthType = "bearer"
+	// AuthTypeAPIKey uses a custom header (e.g., x-api-key: <key>).
+	AuthTypeAPIKey AuthType = "api_key"
+	// AuthTypeNone means no authentication required (e.g., local Ollama).
+	AuthTypeNone AuthType = "none"
+)
+
+// ProviderStatus indicates lifecycle state of a provider.
+type ProviderStatus string
+
+const (
+	// ProviderStatusActive means the provider is fully supported.
+	ProviderStatusActive ProviderStatus = "active"
+	// ProviderStatusDecommissioned means the provider is retired but configs still work.
+	ProviderStatusDecommissioned ProviderStatus = "decommissioned"
+	// ProviderStatusBeta means the provider is in beta testing.
+	ProviderStatusBeta ProviderStatus = "beta"
+)
+
+// ProviderAPIConfig contains all API interaction configuration for a provider.
+type ProviderAPIConfig struct {
+	BaseURL              string            // Default base URL (can be overridden by user)
+	ChatEndpoint         string            // Chat completions path (e.g., "/v1/chat/completions")
+	AuthType             AuthType          // How to authenticate
+	AuthHeader           string            // Custom auth header name (for AuthTypeAPIKey)
+	ExtraHeaders         map[string]string // Additional static headers
+	APIFormat            APIFormat         // Response parsing format
+	AllowBaseURLOverride bool              // True for self-hostable providers (Ollama, Helicone)
+}
+
 // ProviderInfo contains metadata about an LLM provider for API responses.
 type ProviderInfo struct {
 	Name             string   `json:"name"`                        // Database key: "ollama", "openai", etc.
@@ -32,6 +79,12 @@ type ProviderInfo struct {
 	BaseURLHint      string   `json:"base_url_hint,omitempty"`     // Default/example base URL
 	DocsURL          string   `json:"docs_url,omitempty"`          // Link to provider docs
 	RequiredFeatures []string `json:"required_features,omitempty"` // Features needed to access this provider
+
+	// Lifecycle fields
+	Status            ProviderStatus `json:"status"`                       // Provider lifecycle status
+	DecommissionNote  string         `json:"decommission_note,omitempty"`  // Message shown when decommissioned
+	SuccessorProvider string         `json:"successor_provider,omitempty"` // Suggested replacement provider
+	AllowBaseURLOverride bool        `json:"allow_base_url_override"`      // For self-hosted providers
 }
 
 // ModelInfo contains metadata about an LLM model.
@@ -59,6 +112,14 @@ type ProviderRegistration struct {
 	RequiredFeatures  []string           // Features required to access this provider (empty = always available)
 	ListModels        ModelLister        // Function to list available models
 	GetCapabilities   CapabilitiesLookup // Function to get capabilities for a model (no auth needed)
+
+	// API configuration for registry-driven LLM calls
+	APIConfig ProviderAPIConfig
+
+	// Lifecycle status
+	Status            ProviderStatus // Provider lifecycle status (active, decommissioned, beta)
+	DecommissionNote  string         // Message shown to users when decommissioned
+	SuccessorProvider string         // Suggested replacement provider
 }
 
 // Registry manages LLM provider registrations and caches model capabilities.
@@ -83,12 +144,17 @@ func NewRegistry(cfg *config.Config, logger *slog.Logger) *Registry {
 	}
 }
 
+// capsCacheKey returns the cache key for a provider/model combination.
+func capsCacheKey(provider, model string) string {
+	return provider + "/" + model
+}
+
 // SetModelCapabilities stores capabilities in the registry's cache.
 // This is called by external services (like PricingService) when they fetch model data.
 func (r *Registry) SetModelCapabilities(provider, model string, caps ModelCapabilities) {
 	r.capsMu.Lock()
 	defer r.capsMu.Unlock()
-	r.caps[provider+"/"+model] = caps
+	r.caps[capsCacheKey(provider, model)] = caps
 }
 
 // SetModelCapabilitiesBulk stores multiple model capabilities at once.
@@ -96,7 +162,7 @@ func (r *Registry) SetModelCapabilitiesBulk(provider string, models map[string]M
 	r.capsMu.Lock()
 	defer r.capsMu.Unlock()
 	for model, caps := range models {
-		r.caps[provider+"/"+model] = caps
+		r.caps[capsCacheKey(provider, model)] = caps
 	}
 }
 
@@ -104,7 +170,7 @@ func (r *Registry) SetModelCapabilitiesBulk(provider string, models map[string]M
 func (r *Registry) getCachedCapabilities(provider, model string) (ModelCapabilities, bool) {
 	r.capsMu.RLock()
 	defer r.capsMu.RUnlock()
-	caps, ok := r.caps[provider+"/"+model]
+	caps, ok := r.caps[capsCacheKey(provider, model)]
 	return caps, ok
 }
 
@@ -117,22 +183,66 @@ func (r *Registry) Register(name string, reg ProviderRegistration) {
 	reg.Info.Name = name
 	reg.Info.RequiredFeatures = reg.RequiredFeatures
 
+	// Copy lifecycle fields to Info for API responses
+	reg.Info.Status = reg.Status
+	reg.Info.DecommissionNote = reg.DecommissionNote
+	reg.Info.SuccessorProvider = reg.SuccessorProvider
+	reg.Info.AllowBaseURLOverride = reg.APIConfig.AllowBaseURLOverride
+
+	// Default to active status if not specified
+	if reg.Status == "" {
+		reg.Status = ProviderStatusActive
+		reg.Info.Status = ProviderStatusActive
+	}
+
 	r.providers[name] = &reg
 }
 
 // ListProviders returns all providers the user has access to.
+// By default, decommissioned providers are excluded.
 func (r *Registry) ListProviders(checker FeatureChecker) []ProviderInfo {
+	return r.ListProvidersWithStatus(checker, false)
+}
+
+// ListProvidersWithStatus returns providers filtered by access and optionally including decommissioned.
+func (r *Registry) ListProvidersWithStatus(checker FeatureChecker, includeDecommissioned bool) []ProviderInfo {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	var providers []ProviderInfo
 	for _, reg := range r.providers {
+		// Skip decommissioned providers unless explicitly requested
+		if !includeDecommissioned && reg.Status == ProviderStatusDecommissioned {
+			continue
+		}
 		if r.isProviderAllowedLocked(reg, checker) {
 			providers = append(providers, reg.Info)
 		}
 	}
 
 	return providers
+}
+
+// IsProviderDecommissioned checks if a provider has been decommissioned.
+func (r *Registry) IsProviderDecommissioned(provider string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	reg, ok := r.providers[provider]
+	return ok && reg.Status == ProviderStatusDecommissioned
+}
+
+// GetProviderAPIConfig returns the API configuration for a provider.
+// Returns nil if provider not found.
+func (r *Registry) GetProviderAPIConfig(provider string) *ProviderAPIConfig {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	reg, ok := r.providers[provider]
+	if !ok {
+		return nil
+	}
+	return &reg.APIConfig
 }
 
 // GetProvider returns a provider registration by name.
@@ -295,4 +405,19 @@ func (r *Registry) GetModelCapabilities(ctx context.Context, provider, model str
 // SupportsStructuredOutputs is a convenience method to check if a model supports structured outputs.
 func (r *Registry) SupportsStructuredOutputs(ctx context.Context, provider, model string) bool {
 	return r.GetModelCapabilities(ctx, provider, model).SupportsStructuredOutputs
+}
+
+// GetMaxCompletionTokens returns the max output tokens for a model.
+// Returns 0 if unknown (caller should use a default).
+// This is populated by provider APIs (e.g., OpenRouter) or static defaults.
+func (r *Registry) GetMaxCompletionTokens(ctx context.Context, provider, model string) int {
+	caps := r.GetModelCapabilities(ctx, provider, model)
+	return caps.MaxCompletionTokens
+}
+
+// GetContextLength returns the context window size for a model.
+// Returns 0 if unknown.
+func (r *Registry) GetContextLength(ctx context.Context, provider, model string) int {
+	caps := r.GetModelCapabilities(ctx, provider, model)
+	return caps.ContextLength
 }

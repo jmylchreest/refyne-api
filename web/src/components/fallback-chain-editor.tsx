@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { ModelSelector } from '@/components/model-selector';
 import { getModelDefaults } from '@/lib/model-defaults';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { ChevronUp, ChevronDown, Trash2, Plus, Settings2, AlertCircle } from 'lucide-react';
+import { ChevronUp, ChevronDown, Trash2, Plus, Settings2, AlertCircle, AlertTriangle } from 'lucide-react';
 import type { LLMProvider } from '@/lib/api';
 
 const DEFAULT_MODELS: Record<string, string> = {
@@ -16,6 +16,7 @@ const DEFAULT_MODELS: Record<string, string> = {
   anthropic: 'claude-sonnet-4-5-20250514',
   openai: 'gpt-4o-mini',
   ollama: 'llama3.2',
+  helicone: 'gpt-4o-mini',
 };
 
 export interface ChainEntry {
@@ -84,6 +85,20 @@ export function FallbackChainEditor({
     if (availableProviders.length === 0) return null;
     if (availableProviderNames.has(providerName)) return null;
     return `The ${providerName} provider is not available on your current plan. Upgrade to re-enable this entry.`;
+  };
+
+  const isProviderDecommissioned = (providerName: string) => {
+    const p = availableProviders.find(lp => lp.name === providerName);
+    return p?.status === 'decommissioned';
+  };
+
+  const getDecommissionInfo = (providerName: string) => {
+    const p = availableProviders.find(lp => lp.name === providerName);
+    if (p?.status !== 'decommissioned') return null;
+    return {
+      note: p.decommission_note || 'This provider has been decommissioned.',
+      successor: p.successor_provider,
+    };
   };
 
   const startEditing = () => {
@@ -249,6 +264,25 @@ export function FallbackChainEditor({
                       {entry.model}
                     </code>
                     {getModelStatusBadge?.(entry.provider, entry.model)}
+                    {isProviderDecommissioned(entry.provider) && (() => {
+                      const info = getDecommissionInfo(entry.provider);
+                      return (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Badge variant="outline" className="text-xs gap-1 cursor-help text-orange-600 border-orange-300">
+                              <AlertTriangle className="h-3 w-3" />
+                              Decommissioned
+                            </Badge>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-[250px]">
+                            <p>{info?.note}</p>
+                            {info?.successor && (
+                              <p className="mt-1 font-medium">Consider migrating to: {info.successor}</p>
+                            )}
+                          </TooltipContent>
+                        </Tooltip>
+                      );
+                    })()}
                     {!providerAvailable && unavailableReason && (
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -325,9 +359,13 @@ export function FallbackChainEditor({
                 onChange={(e) => updateEntry(index, { provider: e.target.value })}
                 className="h-8 px-2 text-sm border rounded bg-white dark:bg-zinc-900"
               >
-                {availableProviders.map(p => (
-                  <option key={p.name} value={p.name}>{p.display_name}</option>
-                ))}
+                {availableProviders
+                  .filter(p => p.status !== 'decommissioned' || p.name === entry.provider)
+                  .map(p => (
+                    <option key={p.name} value={p.name}>
+                      {p.display_name}{p.status === 'decommissioned' ? ' (Decommissioned)' : ''}
+                    </option>
+                  ))}
               </select>
 
               <div className="flex-1 min-w-0">

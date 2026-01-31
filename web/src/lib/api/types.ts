@@ -197,7 +197,7 @@ export interface ServiceKey {
 }
 
 export interface ServiceKeyInput {
-  provider: 'openrouter' | 'anthropic' | 'openai';
+  provider: 'openrouter' | 'anthropic' | 'openai' | 'helicone';
   api_key: string;
   is_enabled: boolean;
 }
@@ -213,11 +213,13 @@ export interface UserServiceKey {
 }
 
 export interface UserServiceKeyInput {
-  provider: 'openrouter' | 'anthropic' | 'openai' | 'ollama';
+  provider: 'openrouter' | 'anthropic' | 'openai' | 'ollama' | 'helicone';
   api_key?: string;
   base_url?: string;
   is_enabled: boolean;
 }
+
+export type ProviderStatus = 'active' | 'decommissioned' | 'beta';
 
 export interface LLMProvider {
   name: string;
@@ -228,6 +230,12 @@ export interface LLMProvider {
   base_url_hint?: string;
   docs_url?: string;
   required_features?: string[];
+
+  // Lifecycle fields
+  status: ProviderStatus;
+  decommission_note?: string;
+  successor_provider?: string;
+  allow_base_url_override: boolean;
 }
 
 export interface ProviderModel {

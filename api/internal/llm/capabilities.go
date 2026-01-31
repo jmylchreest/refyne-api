@@ -12,4 +12,8 @@ type ModelCapabilities struct {
 	SupportsStreaming         bool `json:"supports_streaming"`          // Streaming responses
 	SupportsReasoning         bool `json:"supports_reasoning"`          // Reasoning tokens (o1-style)
 	SupportsResponseFormat    bool `json:"supports_response_format"`    // response_format parameter
+
+	// Token limits - populated by provider APIs or static defaults
+	MaxCompletionTokens int `json:"max_completion_tokens,omitempty"` // Max output tokens (0 = unknown, use default)
+	ContextLength       int `json:"context_length,omitempty"`        // Context window size (0 = unknown)
 }

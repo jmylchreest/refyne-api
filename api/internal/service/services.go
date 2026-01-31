@@ -11,6 +11,7 @@ import (
 	"github.com/jmylchreest/refyne-api/internal/auth"
 	"github.com/jmylchreest/refyne-api/internal/config"
 	"github.com/jmylchreest/refyne-api/internal/crypto"
+	"github.com/jmylchreest/refyne-api/internal/llm"
 	"github.com/jmylchreest/refyne-api/internal/repository"
 )
 
@@ -87,11 +88,12 @@ func NewServices(cfg *config.Config, repos *repository.Repositories, logger *slo
 
 	// Also try to set static key now as initial value (may be empty at startup)
 	serviceKeys := llmResolver.GetServiceKeys(context.Background())
-	if serviceKeys.OpenRouterKey != "" {
-		pricingSvc.SetOpenRouterAPIKey(serviceKeys.OpenRouterKey)
+	if serviceKeys.Has(llm.ProviderOpenRouter) {
+		openRouterKey := serviceKeys.Get(llm.ProviderOpenRouter)
+		pricingSvc.SetOpenRouterAPIKey(openRouterKey)
 		logger.Info("pricing service initialized with OpenRouter key",
 			"key_source", "resolver (DB or env)",
-			"key_length", len(serviceKeys.OpenRouterKey),
+			"key_length", len(openRouterKey),
 		)
 	} else {
 		logger.Info("pricing service will resolve OpenRouter key dynamically on first use")

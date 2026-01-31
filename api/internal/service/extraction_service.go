@@ -141,6 +141,10 @@ type LLMConfigInput struct {
 	MaxTokens     int    `json:"max_tokens,omitempty"`      // Max output tokens for LLM responses
 	ContextLength int    `json:"context_length,omitempty"`  // Total context window size (input + output)
 	StrictMode    bool   `json:"strict_mode,omitempty"`     // Whether to use strict JSON schema mode
+
+	// For Helicone self-hosted proxy mode
+	TargetProvider string `json:"target_provider,omitempty"` // Underlying provider (e.g., "openai", "anthropic")
+	TargetAPIKey   string `json:"target_api_key,omitempty"`  // Underlying provider's API key
 }
 
 // InputFormat represents the detected input format for extraction.
@@ -719,7 +723,7 @@ func (s *ExtractionService) resolveLLMConfigChain(ctx context.Context, userID st
 		)
 
 		configs := make([]*LLMConfigInput, 0, len(injectedConfigs))
-		var serviceKeys ServiceKeys
+		var serviceKeys *ServiceKeys
 		if s.resolver != nil {
 			serviceKeys = s.resolver.GetServiceKeys(ctx)
 		}
@@ -733,17 +737,8 @@ func (s *ExtractionService) resolveLLMConfigChain(ctx context.Context, userID st
 				StrictMode:    s.getStrictMode(ctx, injected.Provider, injected.Model, nil),
 			}
 
-			// Use system keys for the specified provider
-			switch injected.Provider {
-			case "openrouter":
-				cfg.APIKey = serviceKeys.OpenRouterKey
-			case "anthropic":
-				cfg.APIKey = serviceKeys.AnthropicKey
-			case "openai":
-				cfg.APIKey = serviceKeys.OpenAIKey
-			case "ollama":
-				// Ollama doesn't require an API key
-			}
+			// Use system keys for the specified provider (provider-agnostic)
+			cfg.APIKey = serviceKeys.Get(injected.Provider)
 
 			configs = append(configs, cfg)
 		}
@@ -768,19 +763,10 @@ func (s *ExtractionService) resolveLLMConfigChain(ctx context.Context, userID st
 			StrictMode:    s.getStrictMode(ctx, injectedProvider, injectedModel, nil),
 		}
 
-		// Use system keys for the specified provider
+		// Use system keys for the specified provider (provider-agnostic)
 		if s.resolver != nil {
 			serviceKeys := s.resolver.GetServiceKeys(ctx)
-			switch injectedProvider {
-			case "openrouter":
-				cfg.APIKey = serviceKeys.OpenRouterKey
-			case "anthropic":
-				cfg.APIKey = serviceKeys.AnthropicKey
-			case "openai":
-				cfg.APIKey = serviceKeys.OpenAIKey
-			case "ollama":
-				// Ollama doesn't require an API key
-			}
+			cfg.APIKey = serviceKeys.Get(injectedProvider)
 		}
 
 		return NewLLMConfigChain([]*LLMConfigInput{cfg}, false) // Not BYOK - using system keys
@@ -888,9 +874,14 @@ func (s *ExtractionService) createRefyneInstanceWithFetchMode(llmCfg *LLMConfigI
 	if llmCfg.Model != "" {
 		opts = append(opts, refyne.WithModel(llmCfg.Model))
 	}
-	if llmCfg.MaxTokens > 0 {
-		opts = append(opts, refyne.WithMaxTokens(llmCfg.MaxTokens))
+	// Always pass MaxTokens to refyne to override its hardcoded default of 8192.
+	// If MaxTokens is not set (0), use a reasonable default - 16k is about the minimum
+	// that modern LLM models support.
+	maxTokens := llmCfg.MaxTokens
+	if maxTokens == 0 {
+		maxTokens = 16384 // 16k is the minimum most modern models support
 	}
+	opts = append(opts, refyne.WithMaxTokens(maxTokens))
 
 	r, err := refyne.New(opts...)
 	if err != nil {

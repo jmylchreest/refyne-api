@@ -18,6 +18,15 @@ const (
 
 	// ProviderOllama is the Ollama provider name.
 	ProviderOllama = "ollama"
+
+	// ProviderHelicone is the Helicone provider name.
+	ProviderHelicone = "helicone"
+)
+
+// Helicone URL constants.
+const (
+	// HeliconeCloudBaseURL is the default Helicone cloud gateway URL.
+	HeliconeCloudBaseURL = "https://gateway.helicone.ai"
 )
 
 // Timeout constants for LLM operations.
@@ -34,13 +43,14 @@ func ValidProviders() []string {
 		ProviderAnthropic,
 		ProviderOpenAI,
 		ProviderOllama,
+		ProviderHelicone,
 	}
 }
 
 // IsValidProvider returns true if the provider name is valid.
 func IsValidProvider(provider string) bool {
 	switch provider {
-	case ProviderOpenRouter, ProviderAnthropic, ProviderOpenAI, ProviderOllama:
+	case ProviderOpenRouter, ProviderAnthropic, ProviderOpenAI, ProviderOllama, ProviderHelicone:
 		return true
 	default:
 		return false

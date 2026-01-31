@@ -10,6 +10,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/jmylchreest/refyne-api/internal/llm"
 )
 
 // ErrOutputTruncated is returned when the LLM response was truncated due to hitting
@@ -80,12 +82,13 @@ func (r *LLMCallResult) TruncationError() error {
 
 // LLMClient handles direct LLM API calls.
 type LLMClient struct {
-	logger *slog.Logger
+	logger   *slog.Logger
+	registry *llm.Registry
 }
 
-// NewLLMClient creates a new LLM client.
-func NewLLMClient(logger *slog.Logger) *LLMClient {
-	return &LLMClient{logger: logger}
+// NewLLMClient creates a new LLM client with registry for provider configuration.
+func NewLLMClient(logger *slog.Logger, registry *llm.Registry) *LLMClient {
+	return &LLMClient{logger: logger, registry: registry}
 }
 
 // Call makes a direct call to an LLM API and returns the response with token usage.
@@ -214,34 +217,112 @@ func (c *LLMClient) Call(ctx context.Context, config *LLMConfigInput, prompt str
 	return result, nil
 }
 
-// getAPIURL returns the API endpoint for a provider.
+// getAPIURL returns the API endpoint for a provider using registry configuration.
 func (c *LLMClient) getAPIURL(config *LLMConfigInput) string {
+	// Try registry-driven configuration first
+	if c.registry != nil {
+		apiConfig := c.registry.GetProviderAPIConfig(config.Provider)
+		if apiConfig != nil {
+			baseURL := apiConfig.BaseURL
+
+			// Allow config override for base URL if provider supports it
+			if apiConfig.AllowBaseURLOverride && config.BaseURL != "" {
+				baseURL = config.BaseURL
+			}
+
+			// Special handling for Helicone self-hosted mode
+			if config.Provider == llm.ProviderHelicone && c.isHeliconeSelfHosted(config) {
+				targetProvider := config.TargetProvider
+				if targetProvider == "" {
+					targetProvider = "oai" // Default to OpenAI
+				}
+				// Self-hosted: /v1/gateway/{provider}/v1/chat/completions
+				return baseURL + "/v1/gateway/" + targetProvider + "/v1/chat/completions"
+			}
+
+			return baseURL + apiConfig.ChatEndpoint
+		}
+	}
+
+	// Fallback to hardcoded defaults for backwards compatibility
 	switch config.Provider {
-	case "openrouter":
+	case llm.ProviderOpenRouter:
 		return "https://openrouter.ai/api/v1/chat/completions"
-	case "anthropic":
+	case llm.ProviderAnthropic:
 		return "https://api.anthropic.com/v1/messages"
-	case "openai":
+	case llm.ProviderOpenAI:
 		return "https://api.openai.com/v1/chat/completions"
-	case "ollama":
+	case llm.ProviderOllama:
 		baseURL := config.BaseURL
 		if baseURL == "" {
 			baseURL = "http://localhost:11434"
 		}
 		return baseURL + "/api/chat"
+	case llm.ProviderHelicone:
+		baseURL := config.BaseURL
+		if baseURL == "" {
+			baseURL = llm.HeliconeCloudBaseURL
+		}
+		return baseURL + "/v1/chat/completions"
 	default:
 		return "https://openrouter.ai/api/v1/chat/completions"
 	}
 }
 
-// setAuthHeaders sets appropriate authentication headers for the provider.
+// isHeliconeSelfHosted detects if Helicone is configured in self-hosted mode.
+func (c *LLMClient) isHeliconeSelfHosted(config *LLMConfigInput) bool {
+	if config.Provider != llm.ProviderHelicone {
+		return false
+	}
+	// Self-hosted if custom base URL provided that's not the cloud URL
+	return config.BaseURL != "" && config.BaseURL != llm.HeliconeCloudBaseURL
+}
+
+// setAuthHeaders sets appropriate authentication headers for the provider using registry configuration.
 func (c *LLMClient) setAuthHeaders(req *http.Request, config *LLMConfigInput) {
+	// Special handling for Helicone self-hosted mode
+	if c.isHeliconeSelfHosted(config) {
+		// Self-hosted: Helicone-Auth + provider Authorization
+		req.Header.Set("Helicone-Auth", "Bearer "+config.APIKey)
+		if config.TargetAPIKey != "" {
+			req.Header.Set("Authorization", "Bearer "+config.TargetAPIKey)
+		}
+		return
+	}
+
+	// Try registry-driven configuration first
+	if c.registry != nil {
+		apiConfig := c.registry.GetProviderAPIConfig(config.Provider)
+		if apiConfig != nil {
+			// Set auth based on type
+			switch apiConfig.AuthType {
+			case llm.AuthTypeBearer:
+				req.Header.Set("Authorization", "Bearer "+config.APIKey)
+			case llm.AuthTypeAPIKey:
+				headerName := apiConfig.AuthHeader
+				if headerName == "" {
+					headerName = "x-api-key"
+				}
+				req.Header.Set(headerName, config.APIKey)
+			case llm.AuthTypeNone:
+				// No auth needed
+			}
+
+			// Add extra headers
+			for k, v := range apiConfig.ExtraHeaders {
+				req.Header.Set(k, v)
+			}
+			return
+		}
+	}
+
+	// Fallback to hardcoded defaults for backwards compatibility
 	switch config.Provider {
-	case "openrouter":
+	case llm.ProviderOpenRouter:
 		req.Header.Set("Authorization", "Bearer "+config.APIKey)
 		req.Header.Set("HTTP-Referer", "https://refyne.io")
 		req.Header.Set("X-Title", "Refyne")
-	case "anthropic":
+	case llm.ProviderAnthropic:
 		req.Header.Set("x-api-key", config.APIKey)
 		req.Header.Set("anthropic-version", "2023-06-01")
 	default:
@@ -250,82 +331,125 @@ func (c *LLMClient) setAuthHeaders(req *http.Request, config *LLMConfigInput) {
 }
 
 // ParseResponse extracts the text response and token usage from different LLM provider formats.
+// Uses registry configuration to determine the API format when available.
 // Exported for testing.
 func (c *LLMClient) ParseResponse(provider string, body []byte) (*LLMCallResult, error) {
-	result := &LLMCallResult{}
-
-	switch provider {
-	case "anthropic":
-		var resp struct {
-			Content []struct {
-				Text string `json:"text"`
-			} `json:"content"`
-			StopReason string `json:"stop_reason"` // "end_turn", "max_tokens", "stop_sequence"
-			Usage      struct {
-				InputTokens  int `json:"input_tokens"`
-				OutputTokens int `json:"output_tokens"`
-			} `json:"usage"`
+	// Determine API format from registry
+	apiFormat := llm.APIFormatOpenAI // default
+	if c.registry != nil {
+		apiConfig := c.registry.GetProviderAPIConfig(provider)
+		if apiConfig != nil {
+			apiFormat = apiConfig.APIFormat
 		}
-		if err := json.Unmarshal(body, &resp); err != nil {
-			return nil, fmt.Errorf("failed to parse Anthropic response: %w", err)
-		}
-		if len(resp.Content) == 0 {
-			return nil, fmt.Errorf("empty response from LLM")
-		}
-		result.Content = resp.Content[0].Text
-		result.InputTokens = resp.Usage.InputTokens
-		result.OutputTokens = resp.Usage.OutputTokens
-		// Normalize Anthropic's stop_reason to OpenAI-style finish_reason
-		switch resp.StopReason {
-		case "max_tokens":
-			result.FinishReason = "length"
-		case "end_turn", "stop_sequence":
-			result.FinishReason = "stop"
+	} else {
+		// Fallback to hardcoded format detection
+		switch provider {
+		case llm.ProviderAnthropic:
+			apiFormat = llm.APIFormatAnthropic
+		case llm.ProviderOllama:
+			apiFormat = llm.APIFormatOllama
 		default:
-			result.FinishReason = resp.StopReason
+			apiFormat = llm.APIFormatOpenAI
 		}
+	}
 
-	case "ollama":
-		var resp struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-			DoneReason      string `json:"done_reason"` // "stop", "length"
-			PromptEvalCount int    `json:"prompt_eval_count"`
-			EvalCount       int    `json:"eval_count"`
-		}
-		if err := json.Unmarshal(body, &resp); err != nil {
-			return nil, fmt.Errorf("failed to parse Ollama response: %w", err)
-		}
-		result.Content = resp.Message.Content
-		result.InputTokens = resp.PromptEvalCount
-		result.OutputTokens = resp.EvalCount
-		result.FinishReason = resp.DoneReason
+	// Parse based on API format
+	switch apiFormat {
+	case llm.APIFormatAnthropic:
+		return c.parseAnthropicFormat(body)
+	case llm.APIFormatOllama:
+		return c.parseOllamaFormat(body)
+	default:
+		return c.parseOpenAIFormat(body)
+	}
+}
 
-	default: // OpenAI-compatible (OpenRouter, OpenAI)
-		var resp struct {
-			Choices []struct {
-				Message struct {
-					Content string `json:"content"`
-				} `json:"message"`
-				FinishReason string `json:"finish_reason"` // "stop", "length", "content_filter"
-			} `json:"choices"`
-			Usage struct {
-				PromptTokens     int `json:"prompt_tokens"`
-				CompletionTokens int `json:"completion_tokens"`
-			} `json:"usage"`
-		}
-		if err := json.Unmarshal(body, &resp); err != nil {
-			return nil, fmt.Errorf("failed to parse OpenAI response: %w", err)
-		}
-		if len(resp.Choices) == 0 {
-			return nil, fmt.Errorf("empty response from LLM")
-		}
-		result.Content = resp.Choices[0].Message.Content
-		result.InputTokens = resp.Usage.PromptTokens
-		result.OutputTokens = resp.Usage.CompletionTokens
-		result.FinishReason = resp.Choices[0].FinishReason
+// parseAnthropicFormat parses Anthropic API response format.
+func (c *LLMClient) parseAnthropicFormat(body []byte) (*LLMCallResult, error) {
+	var resp struct {
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+		StopReason string `json:"stop_reason"` // "end_turn", "max_tokens", "stop_sequence"
+		Usage      struct {
+			InputTokens  int `json:"input_tokens"`
+			OutputTokens int `json:"output_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse Anthropic response: %w", err)
+	}
+	if len(resp.Content) == 0 {
+		return nil, fmt.Errorf("empty response from LLM")
+	}
+
+	result := &LLMCallResult{
+		Content:      resp.Content[0].Text,
+		InputTokens:  resp.Usage.InputTokens,
+		OutputTokens: resp.Usage.OutputTokens,
+	}
+
+	// Normalize Anthropic's stop_reason to OpenAI-style finish_reason
+	switch resp.StopReason {
+	case "max_tokens":
+		result.FinishReason = "length"
+	case "end_turn", "stop_sequence":
+		result.FinishReason = "stop"
+	default:
+		result.FinishReason = resp.StopReason
 	}
 
 	return result, nil
+}
+
+// parseOllamaFormat parses Ollama API response format.
+func (c *LLMClient) parseOllamaFormat(body []byte) (*LLMCallResult, error) {
+	var resp struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+		DoneReason      string `json:"done_reason"` // "stop", "length"
+		PromptEvalCount int    `json:"prompt_eval_count"`
+		EvalCount       int    `json:"eval_count"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse Ollama response: %w", err)
+	}
+
+	return &LLMCallResult{
+		Content:      resp.Message.Content,
+		InputTokens:  resp.PromptEvalCount,
+		OutputTokens: resp.EvalCount,
+		FinishReason: resp.DoneReason,
+	}, nil
+}
+
+// parseOpenAIFormat parses OpenAI-compatible API response format.
+// Used for OpenAI, OpenRouter, Helicone, and other compatible APIs.
+func (c *LLMClient) parseOpenAIFormat(body []byte) (*LLMCallResult, error) {
+	var resp struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+			FinishReason string `json:"finish_reason"` // "stop", "length", "content_filter"
+		} `json:"choices"`
+		Usage struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse OpenAI response: %w", err)
+	}
+	if len(resp.Choices) == 0 {
+		return nil, fmt.Errorf("empty response from LLM")
+	}
+
+	return &LLMCallResult{
+		Content:      resp.Choices[0].Message.Content,
+		InputTokens:  resp.Usage.PromptTokens,
+		OutputTokens: resp.Usage.CompletionTokens,
+		FinishReason: resp.Choices[0].FinishReason,
+	}, nil
 }

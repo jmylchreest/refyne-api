@@ -126,7 +126,7 @@ extractAttempt:
 
 	// 4. Build prompt and call LLM
 	extractPrompt := e.svc.buildPromptExtractionPrompt(pageContent, e.promptText)
-	llmClient := NewLLMClient(e.svc.logger)
+	llmClient := NewLLMClient(e.svc.logger, e.svc.resolver.GetRegistry())
 
 	// Estimate input tokens (~3.5 chars per token for English text, conservative)
 	estimatedInputTokens := len(extractPrompt) / 3

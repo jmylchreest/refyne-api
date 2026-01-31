@@ -123,7 +123,7 @@ func (s *stubUsageHandlers) GetUsage(_ context.Context, _ *handlers.GetUsageInpu
 
 type stubUserLLMHandlers struct{}
 
-func (s *stubUserLLMHandlers) ListProviders(_ context.Context, _ *struct{}) (*handlers.ListProvidersOutput, error) {
+func (s *stubUserLLMHandlers) ListProviders(_ context.Context, _ *handlers.ListProvidersInput) (*handlers.ListProvidersOutput, error) {
 	return nil, nil
 }
 

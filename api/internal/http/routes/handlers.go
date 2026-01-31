@@ -36,7 +36,7 @@ type UsageHandlers interface {
 
 // UserLLMHandlers defines the interface for user LLM provider operations.
 type UserLLMHandlers interface {
-	ListProviders(ctx context.Context, input *struct{}) (*handlers.ListProvidersOutput, error)
+	ListProviders(ctx context.Context, input *handlers.ListProvidersInput) (*handlers.ListProvidersOutput, error)
 	ListModels(ctx context.Context, input *handlers.UserListModelsInput) (*handlers.UserListModelsOutput, error)
 	ListServiceKeys(ctx context.Context, input *struct{}) (*handlers.ListUserServiceKeysOutput, error)
 	UpsertServiceKey(ctx context.Context, input *handlers.UpsertUserServiceKeyInput) (*handlers.UpsertUserServiceKeyOutput, error)

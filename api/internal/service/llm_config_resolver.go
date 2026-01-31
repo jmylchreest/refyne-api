@@ -13,11 +13,62 @@ import (
 	"github.com/jmylchreest/refyne-api/internal/repository"
 )
 
-// ServiceKeys holds decrypted service API keys for LLM providers.
+// ServiceKeys holds decrypted service API keys for all LLM providers.
+// Uses a map for provider-agnostic key storage.
 type ServiceKeys struct {
+	keys map[string]string // provider name -> decrypted key
+
+	// Legacy fields for backward compatibility (deprecated, use Get/Set methods)
 	OpenRouterKey string
 	AnthropicKey  string
 	OpenAIKey     string
+}
+
+// NewServiceKeys creates a new ServiceKeys instance.
+func NewServiceKeys() *ServiceKeys {
+	return &ServiceKeys{keys: make(map[string]string)}
+}
+
+// Get returns the API key for a provider.
+func (sk *ServiceKeys) Get(provider string) string {
+	if sk.keys != nil {
+		if key, ok := sk.keys[provider]; ok {
+			return key
+		}
+	}
+	// Fallback to legacy fields for backward compatibility
+	switch provider {
+	case llm.ProviderOpenRouter:
+		return sk.OpenRouterKey
+	case llm.ProviderAnthropic:
+		return sk.AnthropicKey
+	case llm.ProviderOpenAI:
+		return sk.OpenAIKey
+	}
+	return ""
+}
+
+// Set stores an API key for a provider.
+func (sk *ServiceKeys) Set(provider, key string) {
+	if sk.keys == nil {
+		sk.keys = make(map[string]string)
+	}
+	sk.keys[provider] = key
+	// Also set legacy fields for backward compatibility
+	switch provider {
+	case llm.ProviderOpenRouter:
+		sk.OpenRouterKey = key
+	case llm.ProviderAnthropic:
+		sk.AnthropicKey = key
+	case llm.ProviderOpenAI:
+		sk.OpenAIKey = key
+	}
+}
+
+// Has returns true if a key exists and is non-empty for the provider.
+func (sk *ServiceKeys) Has(provider string) bool {
+	key := sk.Get(provider)
+	return key != ""
 }
 
 // LLMConfigResolver handles LLM configuration resolution for all services.
@@ -47,14 +98,19 @@ func (r *LLMConfigResolver) SetRegistry(registry *llm.Registry) {
 	r.registry = registry
 }
 
+// GetRegistry returns the LLM provider registry.
+func (r *LLMConfigResolver) GetRegistry() *llm.Registry {
+	return r.registry
+}
+
 // SetPricingService sets the pricing service for dynamic max_completion_tokens lookups.
 func (r *LLMConfigResolver) SetPricingService(pricing *PricingService) {
 	r.pricing = pricing
 }
 
 // GetServiceKeys retrieves service keys, preferring DB over env vars.
-func (r *LLMConfigResolver) GetServiceKeys(ctx context.Context) ServiceKeys {
-	keys := ServiceKeys{}
+func (r *LLMConfigResolver) GetServiceKeys(ctx context.Context) *ServiceKeys {
+	keys := NewServiceKeys()
 
 	// Try to load from database first
 	if r.repos != nil && r.repos.ServiceKey != nil {
@@ -79,38 +135,31 @@ func (r *LLMConfigResolver) GetServiceKeys(ctx context.Context) ServiceKeys {
 					apiKey = decrypted
 				}
 
-				switch k.Provider {
-				case llm.ProviderOpenRouter:
-					keys.OpenRouterKey = apiKey
-					r.logger.Debug("loaded OpenRouter key from database", "key_length", len(apiKey))
-				case llm.ProviderAnthropic:
-					keys.AnthropicKey = apiKey
-					r.logger.Debug("loaded Anthropic key from database", "key_length", len(apiKey))
-				case llm.ProviderOpenAI:
-					keys.OpenAIKey = apiKey
-					r.logger.Debug("loaded OpenAI key from database", "key_length", len(apiKey))
-				}
+				// Use Set method for all providers (provider-agnostic)
+				keys.Set(k.Provider, apiKey)
+				r.logger.Debug("loaded service key from database",
+					"provider", k.Provider,
+					"key_length", len(apiKey),
+				)
 			}
 		}
 	}
 
 	// Fall back to env vars for any missing keys
-	if keys.OpenRouterKey == "" {
-		keys.OpenRouterKey = r.cfg.ServiceOpenRouterKey
-		if keys.OpenRouterKey != "" {
-			r.logger.Debug("using OpenRouter key from environment variable")
-		}
+	// Map of provider -> env var value
+	envMappings := map[string]string{
+		llm.ProviderOpenRouter: r.cfg.ServiceOpenRouterKey,
+		llm.ProviderAnthropic:  r.cfg.ServiceAnthropicKey,
+		llm.ProviderOpenAI:     r.cfg.ServiceOpenAIKey,
+		llm.ProviderHelicone:   r.cfg.ServiceHeliconeKey,
 	}
-	if keys.AnthropicKey == "" {
-		keys.AnthropicKey = r.cfg.ServiceAnthropicKey
-		if keys.AnthropicKey != "" {
-			r.logger.Debug("using Anthropic key from environment variable")
-		}
-	}
-	if keys.OpenAIKey == "" {
-		keys.OpenAIKey = r.cfg.ServiceOpenAIKey
-		if keys.OpenAIKey != "" {
-			r.logger.Debug("using OpenAI key from environment variable")
+
+	for provider, envKey := range envMappings {
+		if !keys.Has(provider) && envKey != "" {
+			keys.Set(provider, envKey)
+			r.logger.Debug("using service key from environment variable",
+				"provider", provider,
+			)
 		}
 	}
 
@@ -150,10 +199,11 @@ func (r *LLMConfigResolver) SupportsResponseFormat(ctx context.Context, provider
 
 // DefaultMaxOutputTokens is the fallback when model's max_completion_tokens is unknown.
 // This is only used when we can't determine the actual limit from the provider.
-const DefaultMaxOutputTokens = 8192
+// 16k is about the minimum that modern LLM models support.
+const DefaultMaxOutputTokens = 16384
 
 // GetMaxTokens returns the model's max output tokens capability.
-// Priority: 1) chain config override (S3), 2) OpenRouter API max_completion_tokens, 3) provider defaults
+// Priority: 1) chain config override (S3), 2) registry/provider API, 3) static defaults
 // NOTE: This returns the model's capability, not necessarily what we'll use.
 // Use CalculateDynamicMaxTokens at extraction time to get the effective limit
 // based on actual input size and context window.
@@ -163,10 +213,23 @@ func (r *LLMConfigResolver) GetMaxTokens(ctx context.Context, provider, model st
 		return *chainMaxTokens
 	}
 
-	// For OpenRouter, check the cached max_completion_tokens from the API
+	// Check the registry for cached max_completion_tokens (populated by provider APIs)
+	// This works for ALL providers, not just OpenRouter
+	if r.registry != nil {
+		if apiMaxTokens := r.registry.GetMaxCompletionTokens(ctx, provider, model); apiMaxTokens > 0 {
+			r.logger.Debug("using registry max_completion_tokens",
+				"provider", provider,
+				"model", model,
+				"max_completion_tokens", apiMaxTokens,
+			)
+			return apiMaxTokens
+		}
+	}
+
+	// Legacy fallback: check pricing service for OpenRouter (will be deprecated)
 	if provider == llm.ProviderOpenRouter && r.pricing != nil {
 		if apiMaxTokens := r.pricing.GetMaxCompletionTokens(provider, model); apiMaxTokens > 0 {
-			r.logger.Debug("using OpenRouter API max_completion_tokens",
+			r.logger.Debug("using OpenRouter pricing service max_completion_tokens",
 				"model", model,
 				"max_completion_tokens", apiMaxTokens,
 			)
@@ -235,7 +298,15 @@ const ContextCapacityThreshold = 0.80
 // GetContextLength returns the context window size for a model.
 // Returns 0 if unknown (no pre-validation will be performed).
 func (r *LLMConfigResolver) GetContextLength(ctx context.Context, provider, model string) int {
-	// For OpenRouter, check the cached context_length from the API
+	// Check the registry for cached context_length (populated by provider APIs)
+	// This works for ALL providers, not just OpenRouter
+	if r.registry != nil {
+		if contextLen := r.registry.GetContextLength(ctx, provider, model); contextLen > 0 {
+			return contextLen
+		}
+	}
+
+	// Legacy fallback: check pricing service for OpenRouter (will be deprecated)
 	if provider == llm.ProviderOpenRouter && r.pricing != nil {
 		if contextLen := r.pricing.GetContextLength(provider, model); contextLen > 0 {
 			return contextLen
@@ -573,17 +644,8 @@ func (r *LLMConfigResolver) BuildUserChainWithSystemKeys(ctx context.Context, us
 			StrictMode:    r.GetStrictMode(ctx, entry.Provider, entry.Model, entry.StrictMode),
 		}
 
-		// Use SYSTEM keys for the provider
-		switch entry.Provider {
-		case llm.ProviderOpenRouter:
-			config.APIKey = serviceKeys.OpenRouterKey
-		case llm.ProviderAnthropic:
-			config.APIKey = serviceKeys.AnthropicKey
-		case llm.ProviderOpenAI:
-			config.APIKey = serviceKeys.OpenAIKey
-		case llm.ProviderOllama:
-			// Ollama doesn't require a key
-		}
+		// Use SYSTEM keys for the provider (provider-agnostic)
+		config.APIKey = serviceKeys.Get(entry.Provider)
 
 		// Skip if no system key available for non-Ollama providers
 		if config.APIKey == "" && entry.Provider != llm.ProviderOllama {
@@ -697,9 +759,10 @@ func (r *LLMConfigResolver) GetDefaultConfigsForTier(ctx context.Context, tier s
 		if err == nil && len(chain) > 0 {
 			serviceKeys := r.GetServiceKeys(ctx)
 			r.logger.Debug("service keys status for fallback chain",
-				"has_openrouter", serviceKeys.OpenRouterKey != "",
-				"has_anthropic", serviceKeys.AnthropicKey != "",
-				"has_openai", serviceKeys.OpenAIKey != "",
+				"has_openrouter", serviceKeys.Has(llm.ProviderOpenRouter),
+				"has_anthropic", serviceKeys.Has(llm.ProviderAnthropic),
+				"has_openai", serviceKeys.Has(llm.ProviderOpenAI),
+				"has_helicone", serviceKeys.Has(llm.ProviderHelicone),
 				"chain_entries", len(chain),
 			)
 			configs := make([]*LLMConfigInput, 0, len(chain))
@@ -714,14 +777,8 @@ func (r *LLMConfigResolver) GetDefaultConfigsForTier(ctx context.Context, tier s
 					StrictMode:    r.GetStrictMode(ctx, entry.Provider, entry.Model, entry.StrictMode),
 				}
 
-				switch entry.Provider {
-				case llm.ProviderOpenRouter:
-					config.APIKey = serviceKeys.OpenRouterKey
-				case llm.ProviderAnthropic:
-					config.APIKey = serviceKeys.AnthropicKey
-				case llm.ProviderOpenAI:
-					config.APIKey = serviceKeys.OpenAIKey
-				}
+				// Use provider-agnostic key lookup
+				config.APIKey = serviceKeys.Get(entry.Provider)
 
 				if config.APIKey != "" || entry.Provider == llm.ProviderOllama {
 					configs = append(configs, config)

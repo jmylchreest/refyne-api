@@ -28,6 +28,18 @@ func InitRegistry(cfg *config.Config, logger *slog.Logger) *Registry {
 		RequiredFeatures: nil,
 		ListModels:       listOpenRouterModels(r),
 		GetCapabilities:  getOpenRouterCapabilities(r),
+		APIConfig: ProviderAPIConfig{
+			BaseURL:              "https://openrouter.ai/api",
+			ChatEndpoint:         "/v1/chat/completions",
+			AuthType:             AuthTypeBearer,
+			APIFormat:            APIFormatOpenAI,
+			AllowBaseURLOverride: false,
+			ExtraHeaders: map[string]string{
+				"HTTP-Referer": "https://refyne.io",
+				"X-Title":      "Refyne",
+			},
+		},
+		Status: ProviderStatusActive,
 	})
 
 	// Anthropic - always available
@@ -43,6 +55,18 @@ func InitRegistry(cfg *config.Config, logger *slog.Logger) *Registry {
 		RequiredFeatures: nil,
 		ListModels:       listAnthropicModels,
 		GetCapabilities:  getAnthropicCapabilities,
+		APIConfig: ProviderAPIConfig{
+			BaseURL:              "https://api.anthropic.com",
+			ChatEndpoint:         "/v1/messages",
+			AuthType:             AuthTypeAPIKey,
+			AuthHeader:           "x-api-key",
+			APIFormat:            APIFormatAnthropic,
+			AllowBaseURLOverride: false,
+			ExtraHeaders: map[string]string{
+				"anthropic-version": "2023-06-01",
+			},
+		},
+		Status: ProviderStatusActive,
 	})
 
 	// OpenAI - always available
@@ -58,6 +82,14 @@ func InitRegistry(cfg *config.Config, logger *slog.Logger) *Registry {
 		RequiredFeatures: nil,
 		ListModels:       listOpenAIModels,
 		GetCapabilities:  getOpenAICapabilities,
+		APIConfig: ProviderAPIConfig{
+			BaseURL:              "https://api.openai.com",
+			ChatEndpoint:         "/v1/chat/completions",
+			AuthType:             AuthTypeBearer,
+			APIFormat:            APIFormatOpenAI,
+			AllowBaseURLOverride: false,
+		},
+		Status: ProviderStatusActive,
 	})
 
 	// Ollama - requires provider_ollama feature (self-hosted only)
@@ -73,6 +105,38 @@ func InitRegistry(cfg *config.Config, logger *slog.Logger) *Registry {
 		RequiredFeatures: []string{constants.FeatureProviderOllama},
 		ListModels:       listOllamaModels,
 		GetCapabilities:  getOllamaCapabilities,
+		APIConfig: ProviderAPIConfig{
+			BaseURL:              "http://localhost:11434",
+			ChatEndpoint:         "/api/chat",
+			AuthType:             AuthTypeNone,
+			APIFormat:            APIFormatOllama,
+			AllowBaseURLOverride: true, // Self-hosted, allow custom URLs
+		},
+		Status: ProviderStatusActive,
+	})
+
+	// Helicone - LLM gateway with observability (cloud or self-hosted)
+	r.Register("helicone", ProviderRegistration{
+		Info: ProviderInfo{
+			Name:           "helicone",
+			DisplayName:    "Helicone",
+			Description:    "LLM gateway with observability (cloud or self-hosted)",
+			RequiresKey:    true,
+			KeyPlaceholder: "sk-helicone-...",
+			BaseURLHint:    "Leave empty for cloud, or enter self-hosted URL",
+			DocsURL:        "https://docs.helicone.ai",
+		},
+		RequiredFeatures: nil,
+		ListModels:       listHeliconeModels,
+		GetCapabilities:  getHeliconeCapabilities,
+		APIConfig: ProviderAPIConfig{
+			BaseURL:              HeliconeCloudBaseURL,
+			ChatEndpoint:         "/v1/chat/completions",
+			AuthType:             AuthTypeBearer,
+			APIFormat:            APIFormatOpenAI,
+			AllowBaseURLOverride: true, // Self-hostable
+		},
+		Status: ProviderStatusActive,
 	})
 
 	return r
@@ -361,5 +425,53 @@ func getOllamaCapabilities(_ context.Context, _ string) ModelCapabilities {
 		SupportsStreaming:         true,
 		SupportsReasoning:         false,
 		SupportsResponseFormat:    false,
+	}
+}
+
+// listHeliconeModels returns available models through Helicone.
+// Helicone Cloud provides access to multiple provider models.
+func listHeliconeModels(ctx context.Context, baseURL, apiKey string) ([]ModelInfo, error) {
+	// Helicone is a gateway - it proxies to underlying providers
+	// Return common models available through the gateway
+	staticModels := []struct {
+		id      string
+		name    string
+		context int
+	}{
+		{"gpt-4o", "GPT-4o", 128000},
+		{"gpt-4o-mini", "GPT-4o Mini", 128000},
+		{"gpt-4-turbo", "GPT-4 Turbo", 128000},
+		{"claude-3-5-sonnet-20241022", "Claude 3.5 Sonnet", 200000},
+		{"claude-3-haiku-20240307", "Claude 3 Haiku", 200000},
+		{"gemini-1.5-pro", "Gemini 1.5 Pro", 1000000},
+	}
+
+	models := make([]ModelInfo, 0, len(staticModels))
+	for _, m := range staticModels {
+		settings := GetDefaultSettings("helicone", m.id)
+		models = append(models, ModelInfo{
+			ID:               m.id,
+			Name:             m.name,
+			Provider:         "helicone",
+			ContextWindow:    m.context,
+			Capabilities:     getHeliconeCapabilities(ctx, m.id),
+			DefaultTemp:      settings.Temperature,
+			DefaultMaxTokens: settings.MaxTokens,
+		})
+	}
+
+	return models, nil
+}
+
+// getHeliconeCapabilities returns capabilities for Helicone models.
+// Since Helicone proxies to OpenAI-compatible APIs, most support standard features.
+func getHeliconeCapabilities(_ context.Context, model string) ModelCapabilities {
+	// Models proxied through Helicone generally support OpenAI-style features
+	return ModelCapabilities{
+		SupportsStructuredOutputs: true,
+		SupportsTools:             true,
+		SupportsStreaming:         true,
+		SupportsReasoning:         false,
+		SupportsResponseFormat:    true,
 	}
 }

@@ -16,6 +16,7 @@ var ProviderDefaults = map[string]ModelSettings{
 	"openai":     {Temperature: 0.2, MaxTokens: 8192, StrictMode: true},  // Native OpenAI supports strict
 	"openrouter": {Temperature: 0.2, MaxTokens: 6144, StrictMode: false}, // Default false, override per model
 	"ollama":     {Temperature: 0.1, MaxTokens: 4096, StrictMode: false}, // Local models don't support strict
+	"helicone":   {Temperature: 0.2, MaxTokens: 8192, StrictMode: true},  // Helicone proxies OpenAI-compatible APIs
 }
 
 // ModelOverrides contains essential fallback settings for models.
