@@ -29,6 +29,14 @@ RUN --mount=type=secret,id=GH_TOKEN \
 # Copy source code
 COPY . .
 
+# Refresh provider models from APIs (falls back to committed file on failure)
+RUN echo "Fetching fresh provider models from APIs..." && \
+    if go run ./cmd/generate_fallbacks 2>&1; then \
+        echo "✓ Provider models refreshed successfully"; \
+    else \
+        echo "⚠ Failed to refresh models, using committed fallback"; \
+    fi
+
 # Build the binary with CGO enabled and version info injected
 RUN echo "Building version: ${VERSION} (commit: ${COMMIT}, dirty: ${DIRTY})" && \
     CGO_ENABLED=1 GOOS=linux go build \
