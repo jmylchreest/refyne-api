@@ -8,9 +8,9 @@ type ModelSettings struct {
 	StrictMode  bool // Whether the model supports strict JSON schema mode
 }
 
-// ProviderDefaults contains default settings per provider.
-// Used when a model is not in the ModelOverrides map.
-// StrictMode defaults: OpenAI supports it, others generally don't via OpenRouter.
+// ProviderDefaults contains minimal default settings per provider.
+// These are used only as last-resort fallbacks when S3 config is unavailable.
+// Model-specific settings should be configured via S3 config file: config/model_defaults.json
 var ProviderDefaults = map[string]ModelSettings{
 	"anthropic":  {Temperature: 0.2, MaxTokens: 8192, StrictMode: false}, // Anthropic uses tool_use, not strict
 	"openai":     {Temperature: 0.2, MaxTokens: 8192, StrictMode: true},  // Native OpenAI supports strict
@@ -19,17 +19,9 @@ var ProviderDefaults = map[string]ModelSettings{
 	"helicone":   {Temperature: 0.2, MaxTokens: 8192, StrictMode: true},  // Helicone proxies OpenAI-compatible APIs
 }
 
-// ModelOverrides contains essential fallback settings for models.
-// Additional model settings should be configured via S3 config file: config/model_defaults.json
-// StrictMode: true = supports OpenAI structured outputs with strict validation
-var ModelOverrides = map[string]ModelSettings{
-	// OpenAI models - support strict JSON schema mode
-	"openai/gpt-4o":      {Temperature: 0.2, MaxTokens: 8192, StrictMode: true},
-	"openai/gpt-4o-mini": {Temperature: 0.2, MaxTokens: 4096, StrictMode: true},
-
-	// Common Ollama models (local fallback)
-	"llama3.2": {Temperature: 0.1, MaxTokens: 4096, StrictMode: false},
-}
+// ModelOverrides is deprecated - model settings should come from S3 config.
+// This is kept minimal for bootstrapping only.
+var ModelOverrides = map[string]ModelSettings{}
 
 // GetModelSettings returns the recommended settings for a model.
 // Priority: chain config override > model override > provider default

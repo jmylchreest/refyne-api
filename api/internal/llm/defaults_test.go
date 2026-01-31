@@ -56,23 +56,13 @@ func TestProviderDefaults(t *testing.T) {
 // ========================================
 
 func TestModelOverrides(t *testing.T) {
-	// Verify OpenAI models support strict mode
-	gpt4o, ok := ModelOverrides["openai/gpt-4o"]
-	if !ok {
-		t.Fatal("expected openai/gpt-4o in ModelOverrides")
+	// ModelOverrides is now empty - model settings come from S3 config
+	// This test verifies the map exists and is initialized
+	if ModelOverrides == nil {
+		t.Fatal("ModelOverrides should be initialized (empty map)")
 	}
-	if !gpt4o.StrictMode {
-		t.Error("expected gpt-4o to have StrictMode=true")
-	}
-
-	// Verify ollama models don't support strict mode
-	llama, ok := ModelOverrides["llama3.2"]
-	if !ok {
-		t.Fatal("expected llama3.2 in ModelOverrides")
-	}
-	if llama.StrictMode {
-		t.Error("expected llama3.2 to have StrictMode=false")
-	}
+	// ModelOverrides being empty is the expected behavior
+	// Model-specific settings are loaded from S3 configuration
 }
 
 // ========================================
@@ -95,19 +85,18 @@ func TestGetModelSettings_ProviderDefault(t *testing.T) {
 }
 
 func TestGetModelSettings_ModelOverride(t *testing.T) {
-	temp, maxTokens, strictMode := GetModelSettings("openrouter", "openai/gpt-4o", nil, nil, nil)
+	// With no S3 config, model-specific settings fall back to provider defaults
+	temp, maxTokens, _ := GetModelSettings("openrouter", "openai/gpt-4o", nil, nil, nil)
 
-	// Should use model-specific override
-	override := ModelOverrides["openai/gpt-4o"]
-	if temp != override.Temperature {
-		t.Errorf("Temperature = %f, want %f (from model override)", temp, override.Temperature)
+	// Without S3 config, should use openrouter provider defaults
+	providerDefaults := ProviderDefaults["openrouter"]
+	if temp != providerDefaults.Temperature {
+		t.Errorf("Temperature = %f, want %f (from provider default)", temp, providerDefaults.Temperature)
 	}
-	if maxTokens != override.MaxTokens {
-		t.Errorf("MaxTokens = %d, want %d (from model override)", maxTokens, override.MaxTokens)
+	if maxTokens != providerDefaults.MaxTokens {
+		t.Errorf("MaxTokens = %d, want %d (from provider default)", maxTokens, providerDefaults.MaxTokens)
 	}
-	if strictMode != override.StrictMode {
-		t.Errorf("StrictMode = %v, want %v (from model override)", strictMode, override.StrictMode)
-	}
+	// Model-specific settings like StrictMode now come from S3 config
 }
 
 func TestGetModelSettings_ChainOverride(t *testing.T) {
@@ -149,17 +138,16 @@ func TestGetModelSettings_UnknownProvider(t *testing.T) {
 // ========================================
 
 func TestGetDefaultSettings_KnownModel(t *testing.T) {
+	// Without S3 config, model settings fall back to provider defaults
 	settings := GetDefaultSettings("openrouter", "openai/gpt-4o")
 
-	expected := ModelOverrides["openai/gpt-4o"]
+	// Should use openrouter provider defaults since no S3 config is loaded
+	expected := ProviderDefaults["openrouter"]
 	if settings.Temperature != expected.Temperature {
-		t.Errorf("Temperature = %f, want %f", settings.Temperature, expected.Temperature)
+		t.Errorf("Temperature = %f, want %f (from provider default)", settings.Temperature, expected.Temperature)
 	}
 	if settings.MaxTokens != expected.MaxTokens {
-		t.Errorf("MaxTokens = %d, want %d", settings.MaxTokens, expected.MaxTokens)
-	}
-	if settings.StrictMode != expected.StrictMode {
-		t.Errorf("StrictMode = %v, want %v", settings.StrictMode, expected.StrictMode)
+		t.Errorf("MaxTokens = %d, want %d (from provider default)", settings.MaxTokens, expected.MaxTokens)
 	}
 }
 

@@ -476,3 +476,9 @@ func (r *Registry) ListPricingProviders() []string {
 	}
 	return providers
 }
+
+// getModelsFromLoader returns models from the S3-backed provider models loader.
+// This is used as a fallback when provider APIs are unavailable.
+func (r *Registry) getModelsFromLoader(provider string) []ModelInfo {
+	return GlobalProviderModels().GetModels(provider)
+}

@@ -39,7 +39,7 @@ type ModelDefaultsFile struct {
 }
 
 // NewModelDefaultsLoader creates a new model defaults loader.
-// If S3 is not configured, falls back to hardcoded defaults.
+// If S3 is not configured, uses minimal provider-level defaults.
 func NewModelDefaultsLoader(cfg ModelDefaultsConfig) *ModelDefaultsLoader {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -59,12 +59,10 @@ func NewModelDefaultsLoader(cfg ModelDefaultsConfig) *ModelDefaultsLoader {
 		logger:         cfg.Logger,
 	}
 
-	// Copy hardcoded defaults as initial values
+	// Copy minimal provider defaults as initial values
+	// Model-specific settings come from S3 config
 	for k, v := range ProviderDefaults {
 		loader.providerDefs[k] = v
-	}
-	for k, v := range ModelOverrides {
-		loader.modelOverrides[k] = v
 	}
 
 	return loader
@@ -102,19 +100,16 @@ func (m *ModelDefaultsLoader) refresh(ctx context.Context) {
 		return
 	}
 
-	// Merge with hardcoded defaults (S3 overrides hardcoded)
+	// Use S3 config with minimal provider defaults as fallback
 	providerDefs := make(map[string]ModelSettings)
 	modelOverrides := make(map[string]ModelSettings)
 
-	// Start with hardcoded defaults
+	// Start with minimal provider defaults
 	for k, v := range ProviderDefaults {
 		providerDefs[k] = v
 	}
-	for k, v := range ModelOverrides {
-		modelOverrides[k] = v
-	}
 
-	// Override with S3 values
+	// Override with S3 values (S3 is the primary source)
 	for k, v := range defaults.ProviderDefaults {
 		providerDefs[k] = v
 	}

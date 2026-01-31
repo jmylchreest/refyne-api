@@ -1,7 +1,5 @@
 package llm
 
-//go:generate go run ./generate_fallbacks -output model_fallbacks_gen.go
-
 import (
 	"context"
 	"log/slog"
@@ -167,31 +165,32 @@ func InitRegistry(cfg *config.Config, logger *slog.Logger) *Registry {
 }
 
 // listOpenRouterModels returns a ModelLister that fetches models from OpenRouter.
-// It uses refyne's OpenRouter provider when an API key is available.
+// It uses refyne's OpenRouter provider. Models are fetched dynamically from the API.
 func listOpenRouterModels(r *Registry) ModelLister {
 	return func(ctx context.Context, baseURL, apiKey string) ([]ModelInfo, error) {
-		// If we have an API key, use refyne's provider to fetch live models
-		if apiKey != "" {
-			cfg := refynellm.ProviderConfig{
-				APIKey:  apiKey,
-				BaseURL: baseURL,
-			}
-			provider, err := refynellm.NewOpenRouterProvider(cfg)
-			if err == nil {
-				models, err := provider.ListModels(ctx)
-				if err == nil && len(models) > 0 {
-					// Convert refyne models to refyne-api format
-					result := make([]ModelInfo, 0, len(models))
-					for _, m := range models {
-						result = append(result, ConvertModelInfo("openrouter", m))
-					}
-					return result, nil
-				}
-			}
+		// OpenRouter's models API is public - try without API key first
+		cfg := refynellm.ProviderConfig{
+			APIKey:  apiKey,
+			BaseURL: baseURL,
+		}
+		provider, err := refynellm.NewOpenRouterProvider(cfg)
+		if err != nil {
+			// Return models from S3-backed loader if available
+			return r.getModelsFromLoader("openrouter"), nil
 		}
 
-		// Fall back to static models with cached capabilities
-		return getStaticOpenRouterModels(r), nil
+		models, err := provider.ListModels(ctx)
+		if err != nil || len(models) == 0 {
+			// Return models from S3-backed loader if available
+			return r.getModelsFromLoader("openrouter"), nil
+		}
+
+		// Convert refyne models to refyne-api format
+		result := make([]ModelInfo, 0, len(models))
+		for _, m := range models {
+			result = append(result, ConvertModelInfo("openrouter", m))
+		}
+		return result, nil
 	}
 }
 
@@ -224,73 +223,19 @@ func getStaticOpenRouterCapabilities(model string) ModelCapabilities {
 	}
 }
 
-func getStaticOpenRouterModels(r *Registry) []ModelInfo {
-	fallbacks := GetStaticFallbacks("openrouter")
-	models := make([]ModelInfo, 0, len(fallbacks))
-	for _, m := range fallbacks {
-		settings := GetDefaultSettings("openrouter", m.ID)
-		caps := r.GetModelCapabilities(context.Background(), "openrouter", m.ID)
-		models = append(models, ModelInfo{
-			ID:               m.ID,
-			Name:             m.Name,
-			Provider:         "openrouter",
-			ContextWindow:    m.ContextWindow,
-			Capabilities:     caps,
-			DefaultTemp:      settings.Temperature,
-			DefaultMaxTokens: settings.MaxTokens,
-		})
-	}
-	return models
-}
 
-// listAnthropicModels returns static Anthropic models (no public API).
+// listAnthropicModels returns Anthropic models from S3-backed config.
+// Anthropic doesn't have a public models API, so models come from configuration.
 func listAnthropicModels(ctx context.Context, baseURL, apiKey string) ([]ModelInfo, error) {
-	fallbacks := GetStaticFallbacks("anthropic")
-
-	// Anthropic uses tool_use for structured outputs, not response_format
-	anthropicCaps := ModelCapabilities{
-		SupportsStructuredOutputs: false,
-		SupportsTools:             true,
-		SupportsStreaming:         true,
-	}
-
-	models := make([]ModelInfo, 0, len(fallbacks))
-	for _, m := range fallbacks {
-		settings := GetDefaultSettings("anthropic", m.ID)
-		models = append(models, ModelInfo{
-			ID:               m.ID,
-			Name:             m.Name,
-			Provider:         "anthropic",
-			ContextWindow:    m.ContextWindow,
-			Capabilities:     anthropicCaps,
-			DefaultTemp:      settings.Temperature,
-			DefaultMaxTokens: settings.MaxTokens,
-		})
-	}
-
-	return models, nil
+	// Models are loaded from S3-backed config via GlobalProviderModels()
+	return GlobalProviderModels().GetModels("anthropic"), nil
 }
 
-// listOpenAIModels returns static OpenAI models.
+// listOpenAIModels returns OpenAI models from S3-backed config.
+// OpenAI's models API requires auth, so models come from configuration.
 func listOpenAIModels(ctx context.Context, baseURL, apiKey string) ([]ModelInfo, error) {
-	fallbacks := GetStaticFallbacks("openai")
-
-	models := make([]ModelInfo, 0, len(fallbacks))
-	for _, m := range fallbacks {
-		settings := GetDefaultSettings("openai", m.ID)
-		caps := getOpenAICapabilities(ctx, m.ID)
-		models = append(models, ModelInfo{
-			ID:               m.ID,
-			Name:             m.Name,
-			Provider:         "openai",
-			ContextWindow:    m.ContextWindow,
-			Capabilities:     caps,
-			DefaultTemp:      settings.Temperature,
-			DefaultMaxTokens: settings.MaxTokens,
-		})
-	}
-
-	return models, nil
+	// Models are loaded from S3-backed config via GlobalProviderModels()
+	return GlobalProviderModels().GetModels("openai"), nil
 }
 
 // listOllamaModels fetches models from a local Ollama instance using refyne's provider.
@@ -305,13 +250,14 @@ func listOllamaModels(ctx context.Context, baseURL, apiKey string) ([]ModelInfo,
 	}
 	provider, err := refynellm.NewOllamaProvider(cfg)
 	if err != nil {
-		return getStaticOllamaModels(), nil
+		// Ollama not available - return models from S3-backed config
+		return GlobalProviderModels().GetModels("ollama"), nil
 	}
 
 	models, err := provider.ListModels(ctx)
 	if err != nil || len(models) == 0 {
-		// Ollama not running or no models - return defaults
-		return getStaticOllamaModels(), nil
+		// Ollama not running or no models - return models from S3-backed config
+		return GlobalProviderModels().GetModels("ollama"), nil
 	}
 
 	// Convert refyne models to refyne-api format
@@ -325,24 +271,6 @@ func listOllamaModels(ctx context.Context, baseURL, apiKey string) ([]ModelInfo,
 	})
 
 	return result, nil
-}
-
-func getStaticOllamaModels() []ModelInfo {
-	fallbacks := GetStaticFallbacks("ollama")
-	models := make([]ModelInfo, 0, len(fallbacks))
-	for _, m := range fallbacks {
-		settings := GetDefaultSettings("ollama", m.ID)
-		models = append(models, ModelInfo{
-			ID:               m.ID,
-			Name:             m.Name,
-			Provider:         "ollama",
-			ContextWindow:    m.ContextWindow,
-			Capabilities:     getOllamaCapabilities(context.Background(), m.ID),
-			DefaultTemp:      settings.Temperature,
-			DefaultMaxTokens: settings.MaxTokens,
-		})
-	}
-	return models
 }
 
 // Provider capability lookup functions
@@ -410,28 +338,8 @@ func listHeliconeModels(ctx context.Context, baseURL, apiKey string) ([]ModelInf
 		return result, nil
 	}
 
-	// Fall back to static models on error
-	return getStaticHeliconeModels(), nil
-}
-
-// getStaticHeliconeModels returns static fallback models for Helicone.
-// Models are generated from https://api.helicone.ai/v1/public/model-registry/models
-func getStaticHeliconeModels() []ModelInfo {
-	fallbacks := GetStaticFallbacks("helicone")
-	models := make([]ModelInfo, 0, len(fallbacks))
-	for _, m := range fallbacks {
-		settings := GetDefaultSettings("helicone", m.ID)
-		models = append(models, ModelInfo{
-			ID:               m.ID,
-			Name:             m.Name,
-			Provider:         "helicone",
-			ContextWindow:    m.ContextWindow,
-			Capabilities:     getHeliconeCapabilities(context.Background(), m.ID),
-			DefaultTemp:      settings.Temperature,
-			DefaultMaxTokens: settings.MaxTokens,
-		})
-	}
-	return models
+	// Fall back to S3-backed config on error
+	return GlobalProviderModels().GetModels("helicone"), nil
 }
 
 // getHeliconeCapabilities returns capabilities for Helicone models.
