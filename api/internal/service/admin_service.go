@@ -14,6 +14,7 @@ import (
 	"github.com/jmylchreest/refyne-api/internal/auth"
 	"github.com/jmylchreest/refyne-api/internal/constants"
 	"github.com/jmylchreest/refyne-api/internal/crypto"
+	"github.com/jmylchreest/refyne-api/internal/llm"
 	"github.com/jmylchreest/refyne-api/internal/models"
 	"github.com/jmylchreest/refyne-api/internal/repository"
 )
@@ -23,6 +24,7 @@ type AdminService struct {
 	repos       *repository.Repositories
 	encryptor   *crypto.Encryptor
 	clerkClient *auth.ClerkBackendClient
+	registry    *llm.Registry
 	logger      *slog.Logger
 }
 
@@ -48,6 +50,11 @@ func NewAdminServiceWithClerk(repos *repository.Repositories, encryptor *crypto.
 		clerkClient: clerkClient,
 		logger:      logger,
 	}
+}
+
+// SetRegistry sets the LLM provider registry for dynamic model listing.
+func (s *AdminService) SetRegistry(registry *llm.Registry) {
+	s.registry = registry
 }
 
 // ServiceKeyInput represents input for creating/updating a service key.
@@ -242,6 +249,7 @@ type ProviderModel struct {
 
 // ListModels returns available models for a given provider.
 func (s *AdminService) ListModels(ctx context.Context, provider string) ([]ProviderModel, error) {
+	// Provider-specific implementations for known providers
 	switch provider {
 	case "openrouter":
 		return s.listOpenRouterModels(ctx)
@@ -252,8 +260,32 @@ func (s *AdminService) ListModels(ctx context.Context, provider string) ([]Provi
 	case "ollama":
 		return s.listOllamaModels(ctx)
 	default:
+		// Try registry for other providers (helicone, future providers, etc.)
+		if s.registry != nil {
+			if _, ok := s.registry.GetProvider(provider); ok {
+				models, err := s.registry.ListModels(ctx, provider, nil, "", "")
+				if err == nil {
+					return s.convertToProviderModels(models), nil
+				}
+				// Log error but fall through to unknown provider error
+				s.logger.Warn("registry ListModels failed", "provider", provider, "error", err)
+			}
+		}
 		return nil, fmt.Errorf("unknown provider: %s", provider)
 	}
+}
+
+// convertToProviderModels converts registry ModelInfo to ProviderModel format.
+func (s *AdminService) convertToProviderModels(models []llm.ModelInfo) []ProviderModel {
+	result := make([]ProviderModel, 0, len(models))
+	for _, m := range models {
+		result = append(result, ProviderModel{
+			ID:          m.ID,
+			Name:        m.Name,
+			ContextSize: m.ContextWindow,
+		})
+	}
+	return result
 }
 
 // listOpenRouterModels fetches models from the OpenRouter API.

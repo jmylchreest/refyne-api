@@ -135,6 +135,8 @@ func main() {
 	services.LLMConfigResolver.SetRegistry(providerRegistry)
 	// LLMConfigResolver uses PricingService for dynamic max_completion_tokens from OpenRouter API
 	services.LLMConfigResolver.SetPricingService(services.Pricing)
+	// AdminService uses the registry for dynamic model listing
+	services.Admin.SetRegistry(providerRegistry)
 
 	// Initialize Clerk verifier for JWT validation (hosted mode)
 	var clerkVerifier *auth.ClerkVerifier
